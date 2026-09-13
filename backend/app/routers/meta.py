@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from backend.app import db
 
@@ -35,10 +35,14 @@ async def factors() -> list[dict]:
                d.verdict, d.verdict_reason, d.flags
         FROM ref_factor f
         LEFT JOIN (
+            -- Coverage and volatility from the raw excess-return series, matching
+            -- the Factor Explorer. The orthogonalised column would report the
+            -- residual's volatility, which is a property of the block hierarchy
+            -- rather than of the factor.
             SELECT factor_id, min(date) AS first_date, max(date) AS last_date,
                    count(*) AS n_obs,
-                   stddev_samp(ret_orth) * sqrt(252) AS sd_ann
-            FROM fact_factor_return WHERE ret_orth IS NOT NULL GROUP BY 1
+                   stddev_samp(ret_excess) * sqrt(252) AS sd_ann
+            FROM fact_factor_return WHERE ret_excess IS NOT NULL GROUP BY 1
         ) c USING (factor_id)
         LEFT JOIN (
             SELECT DISTINCT ON (series_key) series_key, verdict, verdict_reason, flags
@@ -53,27 +57,33 @@ async def factors() -> list[dict]:
 
 
 @router.get("/factor-sparklines")
-async def factor_sparklines(points: int = 60) -> dict:
+async def factor_sparklines(points: int = 60, basis: str = "excess") -> dict:
     """A downsampled cumulative path per factor, for the sidebar sparklines.
 
     One query for all forty factors rather than forty requests: `ntile` buckets each
     factor's history into equal counts, the returns are summed within a bucket, and
     the running total gives the shape. Measured at about 150 ms for the full panel.
 
-    The values are cumulative log returns, the same quantity the Factor Explorer's
-    cumulative chart draws, so a sparkline and the full chart cannot disagree.
+    Defaults to the raw excess-return series, matching every chart on the Factor
+    Explorer. Drawn from the orthogonalised column instead, a sparkline would show
+    the residual — for eq_us a flat 4% line rather than the 17%-volatility series
+    the rest of the page describes — and the sidebar would quietly disagree with
+    everything it links to.
     """
+    col = {"excess": "ret_excess", "orth": "ret_orth"}.get(basis)
+    if col is None:
+        raise HTTPException(400, f"basis must be 'excess' or 'orth', not {basis!r}")
     n = max(10, min(points, 200))
     rows = await db.fetch(
-        """
+        f"""
         WITH bucketed AS (
-            SELECT factor_id, ret_orth,
+            SELECT factor_id, {col} AS ret,
                    ntile($1) OVER (PARTITION BY factor_id ORDER BY date) AS bucket
             FROM fact_factor_return
-            WHERE ret_orth IS NOT NULL
+            WHERE {col} IS NOT NULL
         ),
         summed AS (
-            SELECT factor_id, bucket, sum(ret_orth) AS r
+            SELECT factor_id, bucket, sum(ret) AS r
             FROM bucketed GROUP BY 1, 2
         )
         SELECT factor_id,

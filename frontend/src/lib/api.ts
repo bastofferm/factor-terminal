@@ -7,7 +7,10 @@
 
 const BASE = "";
 
-async function get<T>(path: string, params?: Record<string, unknown>): Promise<T> {
+// `object` rather than Record<string, unknown>: the typed query interfaces below
+// have no index signature, and giving them one to satisfy this would throw away
+// the checking they exist for.
+async function get<T>(path: string, params?: object): Promise<T> {
   const qs = params
     ? "?" +
       Object.entries(params)
@@ -45,6 +48,22 @@ async function describeError(res: Response, path: string): Promise<string> {
 // --- types ---------------------------------------------------------------
 
 export type Verdict = "pass" | "warn" | "fail";
+
+/**
+ * Which stored series a factor request is about.
+ *
+ * "excess" is the factor itself — a log excess return over cash. "orth" is that
+ * series after block-hierarchy orthogonalisation, which is what the regression
+ * consumes. They are far apart: eq_us returns 12.9% a year at 17.3% volatility,
+ * its residual -0.2% at 4.2%.
+ */
+export type Basis = "excess" | "orth";
+
+export interface FactorQuery {
+  start?: string;
+  end?: string;
+  basis?: Basis;
+}
 
 export interface FactorMeta {
   factor_id: string;
@@ -180,24 +199,27 @@ export const api = {
     get<Instrument[]>("/api/meta/instruments", { role, live_only: liveOnly }),
   specs: () => get<Spec[]>("/api/meta/specs"),
   dataHealth: () => get<any>("/api/meta/data-health"),
-  factorSparklines: () =>
+  factorSparklines: (basis: Basis = "excess") =>
     get<{ points: number; series: Record<string, number[]> }>(
-      "/api/meta/factor-sparklines"),
+      "/api/meta/factor-sparklines", { basis }),
 
-  factorSeries: (id: string, p?: { start?: string; end?: string }) =>
-    get<{ dates: string[]; returns: number[]; cumulative: number[] }>(
-      `/api/factors/${id}/series`, p),
-  factorStats: (id: string, p?: { start?: string; end?: string }) =>
+  factorSeries: (id: string, p?: FactorQuery) =>
+    get<{
+      basis: Basis; dates: string[]; returns: number[];
+      cumulative: number[]; compounded: number[];
+    }>(`/api/factors/${id}/series`, p),
+  factorStats: (id: string, p?: FactorQuery) =>
     get<any>(`/api/factors/${id}/stats`, p),
-  factorRollingRisk: (id: string, windows = "21,63,252", p?: { start?: string }) =>
+  factorRollingRisk: (id: string, windows = "21,63,252", p?: FactorQuery) =>
     get<{ dates: string[]; series: Record<string, (number | null)[]> }>(
       `/api/factors/${id}/rolling-risk`, { windows, ...p }),
   // bins is deliberately optional: omitting it lets the server pick the bin count
   // by the Freedman-Diaconis rule, which is the whole point of computing it there.
-  factorHistogram: (id: string, bins?: number) =>
-    get<any>(`/api/factors/${id}/histogram`, { bins }),
-  factorQQ: (id: string) => get<any>(`/api/factors/${id}/qq`),
-  factorACF: (id: string, lags = 30) => get<any>(`/api/factors/${id}/acf`, { lags }),
+  factorHistogram: (id: string, p?: FactorQuery & { bins?: number }) =>
+    get<any>(`/api/factors/${id}/histogram`, p),
+  factorQQ: (id: string, p?: FactorQuery) => get<any>(`/api/factors/${id}/qq`, p),
+  factorACF: (id: string, p?: FactorQuery & { lags?: number }) =>
+    get<any>(`/api/factors/${id}/acf`, { lags: 30, ...p }),
   factorDiagnostics: (id: string) => get<any>(`/api/factors/${id}/diagnostics`),
   factorReference: (id: string) => get<any>(`/api/factors/${id}/reference-comparison`),
 

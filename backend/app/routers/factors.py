@@ -18,11 +18,36 @@ router = APIRouter()
 TRADING_DAYS = 252
 
 
-async def _series(factor_id: str, start: date | None, end: date | None) -> pd.Series:
+# Which of the two stored series a request is about.
+#
+#   excess  the factor itself: a log excess return over cash, stationary, and what
+#           an analyst means by "what did broad commodity do".
+#   orth    the same series after block-hierarchy orthogonalisation, which is what
+#           the regression consumes.
+#
+# The difference is not cosmetic. eq_us returns 12.9% a year at 17.3% volatility;
+# its residual after removing eq_global returns -0.2% at 4.2%. Describing a factor
+# with the second set of numbers answers a question nobody asked, so the
+# descriptive endpoints default to the raw series and take the residual only when
+# asked for it explicitly.
+_BASIS_COLUMN = {"excess": "ret_excess", "orth": "ret_orth"}
+
+
+def _column(basis: str) -> str:
+    col = _BASIS_COLUMN.get(basis)
+    if col is None:
+        raise HTTPException(
+            400, f"basis must be one of {sorted(_BASIS_COLUMN)}, not {basis!r}")
+    return col
+
+
+async def _series(factor_id: str, start: date | None, end: date | None,
+                  basis: str = "excess") -> pd.Series:
+    col = _column(basis)
     rows = await db.fetch(
-        """
-        SELECT date, ret_orth FROM fact_factor_return
-        WHERE factor_id = $1 AND ret_orth IS NOT NULL
+        f"""
+        SELECT date, {col} AS value FROM fact_factor_return
+        WHERE factor_id = $1 AND {col} IS NOT NULL
           AND ($2::date IS NULL OR date >= $2)
           AND ($3::date IS NULL OR date <= $3)
         ORDER BY date
@@ -30,37 +55,45 @@ async def _series(factor_id: str, start: date | None, end: date | None) -> pd.Se
         factor_id, start, end,
     )
     if not rows:
-        raise HTTPException(404, f"no returns for factor {factor_id!r}")
-    s = pd.Series({r["date"]: float(r["ret_orth"]) for r in rows})
+        raise HTTPException(404, f"no {basis} returns for factor {factor_id!r}")
+    s = pd.Series({r["date"]: float(r["value"]) for r in rows})
     s.index = pd.to_datetime(s.index)
     return s.sort_index()
 
 
 @router.get("/{factor_id}/series")
 async def series(factor_id: str, start: date | None = None, end: date | None = None,
-                 cumulative: bool = True) -> dict:
-    """Daily returns and, by default, the cumulative log-return path.
+                 cumulative: bool = True, basis: str = "excess") -> dict:
+    """Daily returns with both cumulative paths.
 
-    Cumulative sums of log returns are shown rather than compounded simple returns
-    because the factors are log excess returns; the two differ materially over
-    twenty years.
+    `cumulative` is the running sum of log returns; `compounded` is the same thing
+    turned back into a simple return, exp(sum) - 1, which is what an investor
+    actually ends up with. They are the same quantity expressed two ways and they
+    diverge by more than people expect: a log path that ends at +0.5 is a +65%
+    return, and one at -1.0 is -63%, not -100%.
+
+    Both are returned together so the two panels can never be computed from
+    different samples or a different basis.
     """
-    s = await _series(factor_id, start, end)
+    s = await _series(factor_id, start, end, basis)
     out = {
         "factor_id": factor_id,
+        "basis": basis,
         "dates": [d.date().isoformat() for d in s.index],
         "returns": s.round(8).tolist(),
     }
     if cumulative:
-        out["cumulative"] = s.cumsum().round(8).tolist()
+        log_path = s.cumsum()
+        out["cumulative"] = log_path.round(8).tolist()
+        out["compounded"] = np.expm1(log_path).round(8).tolist()
     return out
 
 
 @router.get("/{factor_id}/stats")
 async def summary_stats(factor_id: str, start: date | None = None,
-                        end: date | None = None) -> dict:
+                        end: date | None = None, basis: str = "excess") -> dict:
     """Annualised moments, drawdown and tail measures."""
-    s = await _series(factor_id, start, end)
+    s = await _series(factor_id, start, end, basis)
     x = s.to_numpy()
 
     # Drawdown is computed on the cumulative *log* return, then converted back to a
@@ -99,13 +132,14 @@ async def summary_stats(factor_id: str, start: date | None = None,
 
 @router.get("/{factor_id}/rolling-risk")
 async def rolling_risk(factor_id: str, windows: str = "21,63,252",
-                       start: date | None = None, end: date | None = None) -> dict:
+                       start: date | None = None, end: date | None = None,
+                       basis: str = "excess") -> dict:
     """Trailing annualised volatility at several window lengths.
 
     Short windows show the regime, long windows show the level. Plotting them
     together is how a drift in one becomes visible against the other.
     """
-    s = await _series(factor_id, start, end)
+    s = await _series(factor_id, start, end, basis)
     try:
         sizes = [int(w) for w in windows.split(",") if w.strip()]
     except ValueError:
@@ -125,7 +159,8 @@ async def rolling_risk(factor_id: str, windows: str = "21,63,252",
 @router.get("/{factor_id}/histogram")
 async def histogram(factor_id: str, bins: int | None = None,
                     tail_quantile: float = 0.001, grid: int = 400,
-                    start: date | None = None, end: date | None = None) -> dict:
+                    start: date | None = None, end: date | None = None,
+                    basis: str = "excess") -> dict:
     """Empirical distribution with a kernel density estimate and fitted overlays.
 
     `bins` defaults to the Freedman-Diaconis rule and the drawing range to the 0.1st
@@ -136,7 +171,7 @@ async def histogram(factor_id: str, bins: int | None = None,
     The Student-t fit is drawn alongside the normal because the gap between them in
     the tail is the clearest way to show why a normal VaR under-counts breaches.
     """
-    s = await _series(factor_id, start, end)
+    s = await _series(factor_id, start, end, basis)
     x = s.to_numpy()
     d = dist.estimate(x, bins=bins, tail_quantile=tail_quantile, grid_points=grid)
 
@@ -165,9 +200,10 @@ async def histogram(factor_id: str, bins: int | None = None,
 
 @router.get("/{factor_id}/qq")
 async def qq_plot(factor_id: str, start: date | None = None,
-                  end: date | None = None, points: int = 500) -> dict:
+                  end: date | None = None, points: int = 500,
+                  basis: str = "excess") -> dict:
     """Sample quantiles against Normal and Student-t theoretical quantiles."""
-    s = await _series(factor_id, start, end)
+    s = await _series(factor_id, start, end, basis)
     q = dist.qq_points(s.to_numpy(), max_points=points)
     return {
         "factor_id": factor_id,
@@ -180,14 +216,14 @@ async def qq_plot(factor_id: str, start: date | None = None,
 
 @router.get("/{factor_id}/acf")
 async def acf(factor_id: str, lags: int = 30, start: date | None = None,
-              end: date | None = None) -> dict:
+              end: date | None = None, basis: str = "excess") -> dict:
     """Autocorrelation of returns and of squared returns.
 
     The two answer different questions. Autocorrelation in returns is a stale-pricing
     warning. Autocorrelation in squared returns is volatility clustering, which is
     normal and is a reason to use HAC errors, not a defect.
     """
-    s = await _series(factor_id, start, end)
+    s = await _series(factor_id, start, end, basis)
     x = s.to_numpy() - s.mean()
     x2 = s.to_numpy() ** 2
     x2 = x2 - x2.mean()

@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Chart, ChartSkeleton, PALETTE, Panel, Skeleton, Stat, VerdictBadge }
   from "@/components/Chart";
 import { Sparkline } from "@/components/Sparkline";
-import { api, FactorMeta, num, pct, pval } from "@/lib/api";
+import { api, Basis, FactorMeta, num, pct, pval } from "@/lib/api";
 import { blockColour, blockStyle } from "@/lib/blocks";
 import { episodeLayout } from "@/lib/episodes";
 import { usePublishSnapshot } from "@/lib/chat-context";
@@ -30,6 +30,7 @@ export default function FactorsPage() {
   const [ref, setRef] = useState<any>(null);
   const [logY, setLogY] = useState(false);
   const [sparks, setSparks] = useState<Record<string, number[]>>({});
+  const [basis, setBasis] = useState<Basis>("excess");
 
   useEffect(() => {
     api.factors()
@@ -38,21 +39,28 @@ export default function FactorsPage() {
         if (f.length) setSelected(f[0].factor_id);
       })
       .catch((e) => setError(String(e.message ?? e)));
-    // One request for all forty sparklines; the sidebar would otherwise fire forty.
-    api.factorSparklines().then((d) => setSparks(d.series)).catch(() => {});
   }, []);
+
+  // One request for all forty sparklines; the sidebar would otherwise fire forty.
+  // Refetched with the basis so the mini-plots always show the same series as the
+  // charts they link to.
+  useEffect(() => {
+    api.factorSparklines(basis).then((d) => setSparks(d.series)).catch(() => {});
+  }, [basis]);
 
   useEffect(() => {
     if (!selected) return;
-    const p = start ? { start } : undefined;
+    // One query object for every panel, so no two can end up describing different
+    // samples or a different series.
+    const p = { basis, ...(start ? { start } : {}) };
     setError(null);
     Promise.all([
       api.factorSeries(selected, p),
       api.factorStats(selected, p),
       api.factorRollingRisk(selected, "21,63,252", p),
-      api.factorHistogram(selected),
-      api.factorQQ(selected),
-      api.factorACF(selected),
+      api.factorHistogram(selected, p),
+      api.factorQQ(selected, p),
+      api.factorACF(selected, p),
       api.factorDiagnostics(selected).catch(() => null),
       api.factorReference(selected).catch(() => null),
     ])
@@ -61,7 +69,7 @@ export default function FactorsPage() {
         setQQ(q); setACF(a); setDiag(d); setRef(rf);
       })
       .catch((e) => setError(String(e.message ?? e)));
-  }, [selected, start]);
+  }, [selected, start, basis]);
 
   const meta = useMemo(
     () => factors.find((f) => f.factor_id === selected),
@@ -253,10 +261,50 @@ export default function FactorsPage() {
                       </span>
                     </>
                   )}
+                  <div className="mt-1">
+                    {basis === "excess" ? (
+                      <>
+                        Figures describe the <b>factor itself</b> — its log excess
+                        return over cash. The orthogonalised view shows what is left
+                        after the factors above are removed, which is what the
+                        regression consumes but not what the factor earned.
+                      </>
+                    ) : (
+                      <>
+                        Figures describe the <b>residual</b> after removing{" "}
+                        <span className="font-mono">
+                          {meta.orthogonalize_against?.join(", ") || "nothing"}
+                        </span>
+                        . This is the series the regression uses; it is not what the
+                        factor earned.
+                      </>
+                    )}
+                  </div>
                   {meta.construction?.note && (
                     <div className="mt-1 italic">{meta.construction.note}</div>
                   )}
                 </>
+              }
+              actions={
+                meta.orthogonalize_against?.length > 0 ? (
+                  <div className="flex overflow-hidden rounded border border-line">
+                    {([["excess", "Factor"], ["orth", "Residual"]] as const).map(
+                      ([v, label]) => (
+                        <button
+                          key={v}
+                          onClick={() => setBasis(v)}
+                          className={`px-2.5 py-1 text-[11px] transition ${
+                            basis === v
+                              ? "bg-navy text-white"
+                              : "bg-white text-muted hover:text-navy"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      )
+                    )}
+                  </div>
+                ) : undefined
               }
             >
               {stats && (
@@ -299,8 +347,39 @@ export default function FactorsPage() {
 
         <div className="grid gap-4 xl:grid-cols-2">
           <Panel
+            index={2}
+            title="Compounded return"
+            caption={
+              <>
+                What an investor actually ends up with: exp(Σ log r) − 1. The same
+                series as the panel on the right, expressed as a simple return, which
+                is why the two shapes differ so much at the extremes — a log path
+                ending at −1.0 is a −63% loss, not −100%.
+              </>
+            }
+          >
+            {!series && <ChartSkeleton height={280} />}
+            {series && (
+              <Chart
+                height={280}
+                episodes={bands}
+                data={[{
+                  x: series.dates, y: series.compounded, type: "scatter", mode: "lines",
+                  name: selected, line: { color: accent, width: 1.5 },
+                  hovertemplate: "%{x|%Y-%m-%d}<br>%{y:+.1%}<extra></extra>",
+                }]}
+                layout={{
+                  yaxis: { title: "compounded return", tickformat: ".0%" },
+                  showlegend: false,
+                }}
+              />
+            )}
+          </Panel>
+
+          <Panel
+            index={3}
             title="Cumulative return"
-            caption="Sum of daily log excess returns, not compounded simple returns — the factors are log series and the two diverge materially over twenty years."
+            caption="Sum of daily log excess returns. Log returns add, which is what makes the rolling statistics and the regression well behaved; the panel on the left turns the same path back into money."
           >
             {!series && <ChartSkeleton height={280} />}
             {series && (
