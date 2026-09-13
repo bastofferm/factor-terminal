@@ -1,0 +1,31 @@
+# Pinned exactly. Both source repos use floating ranges with no lockfile, which is
+# how MZQA-Equity-Terminal ended up with an undeclared scikit-learn import.
+
+# --- API ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+asyncpg==0.30.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+python-dotenv==1.0.1
+
+# --- data layer ---
+psycopg2-binary==2.9.10
+pandas==2.2.3
+numpy==2.2.1
+scipy==1.15.0
+
+# --- statistics: the reason this project exists ---
+statsmodels==0.14.4     # adfuller, kpss, acorr_ljungbox, het_arch, OLS with HAC
+arch==7.2.0             # unitroot.{ADF,KPSS,PhillipsPerron,ZivotAndrews,VarianceRatio}
+scikit-learn==1.6.0     # Ridge/ElasticNet CV, hierarchical clustering for heatmap order
+
+# --- ingestion ---
+yfinance==1.5.1          # 0.2.x no longer works against Yahoo's current API
+httpx==0.28.1
+curl_cffi==0.7.4        # browser-impersonating session, for Yahoo 401/429 recovery
+APScheduler==3.11.0
+
+# --- tests ---
+pytest==8.3.4
+pytest-asyncio==0.25.0

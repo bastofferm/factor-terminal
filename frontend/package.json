@@ -1,0 +1,28 @@
+{
+  "name": "factors-terminal",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3100",
+    "build": "next build",
+    "start": "next start -p 3100",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "14.2.18",
+    "plotly.js-cartesian-dist-min": "2.35.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-markdown": "^9.0.1",
+    "react-plotly.js": "2.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/react": "18.3.17",
+    "@types/react-dom": "18.3.5",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.49",
+    "tailwindcss": "3.4.17",
+    "typescript": "5.7.2"
+  }
+}

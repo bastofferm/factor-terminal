@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+
+html, body {
+  background: #F5F4F0;
+  color: #2A2F3A;
+  font-size: 13px;
+}
+
+@layer components {
+  .label {
+    @apply text-2xs font-semibold uppercase tracking-label text-muted;
+  }
+  .field {
+    @apply w-full rounded border border-line bg-white px-2 py-1 text-[12px]
+           outline-none focus:border-navy2;
+  }
+  .btn {
+    @apply rounded border border-navy bg-navy px-3 py-1.5 text-[12px] font-medium
+           text-white transition hover:bg-navy2 disabled:cursor-not-allowed
+           disabled:border-line disabled:bg-line disabled:text-muted;
+  }
+  .btn-ghost {
+    @apply rounded border border-line bg-white px-2 py-1 text-[12px] text-navy
+           transition hover:border-navy2 hover:text-navy2;
+  }
+  .cell { @apply px-2 py-1 font-mono text-[11px] tabular-nums; }
+  .th {
+    @apply sticky top-0 z-10 bg-panel px-2 py-1 text-left text-2xs font-semibold
+           uppercase tracking-label text-muted;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* --- assistant markdown -------------------------------------------------- */
+/* Deliberately tight: answers are two or three paragraphs in a 420px column, so
+   the default prose rhythm leaves far too much air. */
+.chat-md > *:first-child { margin-top: 0; }
+.chat-md > *:last-child  { margin-bottom: 0; }
+.chat-md p               { margin: 0 0 0.6em; }
+.chat-md ul, .chat-md ol { margin: 0 0 0.6em; padding-left: 1.1em; }
+.chat-md li              { margin: 0.15em 0; }
+.chat-md ul              { list-style: disc; }
+.chat-md ol              { list-style: decimal; }
+.chat-md strong          { font-weight: 600; color: #2F4D73; }
+.chat-md code {
+  font-family: Consolas, ui-monospace, monospace;
+  font-size: 0.92em;
+  background: #EEECE5;
+  border-radius: 2px;
+  padding: 0.05em 0.3em;
+}
+.chat-md pre {
+  background: #EEECE5; border-radius: 3px; padding: 0.6em;
+  overflow-x: auto; margin: 0 0 0.6em;
+}
+.chat-md pre code { background: none; padding: 0; }
+.chat-md h1, .chat-md h2, .chat-md h3 {
+  font-size: 1em; font-weight: 600; color: #2F4D73; margin: 0.8em 0 0.3em;
+}
+.chat-md a { color: #476D99; text-decoration: underline; }
+
+/* --- loading and entrance ------------------------------------------------ */
+.skeleton {
+  background: linear-gradient(90deg, #EEECE5 25%, #F5F4F0 50%, #EEECE5 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: 3px;
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Panels fade in staggered by index, so a page of eight charts resolves in a
+   sequence rather than snapping into place all at once. */
+.enter {
+  animation: enter 0.36s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+@keyframes enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Every animation above is decoration. None of it carries meaning, so all of it
+   goes when the reader has asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; background: #EEECE5; }
+  .enter    { animation: none; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* --- numbers ------------------------------------------------------------- */
+.hero-number {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
