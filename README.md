@@ -11,8 +11,13 @@ that is tested rather than assumed.
 
 ![The five pages of the terminal](screenshots/factor-terminal.gif)
 
-*Data Health, Factor Explorer, Covariance & PCA, Loadings Lab, Risk Lens. Regenerate
-with `python -m scripts.capture_screenshots` while the app is running.*
+*Data Health, Factor Explorer, Raw Explorer, Covariance & PCA, Loadings Lab, Risk
+Lens. Regenerate with `python -m scripts.capture_screenshots` while the app is
+running.*
+
+**[Documentation/return-based-multi-asset-factor-model.md](Documentation/return-based-multi-asset-factor-model.md)**
+is the model write-up: what the concept note asked for, what the data actually
+supported, the decisions taken where the two differed, and the measured validation.
 
 ---
 

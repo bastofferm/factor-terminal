@@ -32,9 +32,10 @@ WIDTH, HEIGHT = 1600, 1000
 PAGES: list[tuple[str, str, str]] = [
     ("/",          "01-data-health",     "Data Health"),
     ("/factors",   "02-factor-explorer", "Factor Explorer"),
-    ("/matrix",    "03-covariance-pca",  "Covariance & PCA"),
-    ("/loadings",  "04-loadings-lab",    "Loadings Lab"),
-    ("/risk",      "05-risk-lens",       "Risk Lens"),
+    ("/raw",       "03-raw-explorer",    "Raw Explorer"),
+    ("/matrix",    "04-covariance-pca",  "Covariance & PCA"),
+    ("/loadings",  "05-loadings-lab",    "Loadings Lab"),
+    ("/risk",      "06-risk-lens",       "Risk Lens"),
 ]
 
 # Seconds each frame is held in the GIF. Long enough to read the panel headings.
