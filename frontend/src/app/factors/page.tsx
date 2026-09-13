@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Chart, ChartSkeleton, PALETTE, Panel, Skeleton, Stat, VerdictBadge }
   from "@/components/Chart";
 import { Sparkline } from "@/components/Sparkline";
+import { FactorProfile } from "@/components/FactorProfile";
 import { api, Basis, FactorMeta, num, pct, pval } from "@/lib/api";
 import { blockColour, blockStyle } from "@/lib/blocks";
 import { episodeLayout } from "@/lib/episodes";
@@ -31,6 +32,7 @@ export default function FactorsPage() {
   const [logY, setLogY] = useState(false);
   const [sparks, setSparks] = useState<Record<string, number[]>>({});
   const [basis, setBasis] = useState<Basis>("excess");
+  const [profileOf, setProfileOf] = useState<string | null>(null);
 
   useEffect(() => {
     api.factors()
@@ -184,6 +186,27 @@ export default function FactorsPage() {
                         verdict={f.verdict}
                         title={f.verdict_reason ?? undefined}
                       />
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`What is ${f.factor_id}?`}
+                        title="What is this, and where does it come from?"
+                        onClick={(e) => { e.stopPropagation(); setProfileOf(f.factor_id); }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault(); e.stopPropagation();
+                            setProfileOf(f.factor_id);
+                          }
+                        }}
+                        className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center
+                                    rounded-full border text-[9px] font-semibold leading-none
+                                    transition
+                          ${active
+                            ? "border-white/40 text-white/70 hover:border-white hover:text-white"
+                            : "border-line text-muted hover:border-navy2 hover:text-navy"}`}
+                      >
+                        i
+                      </span>
                     </button>
                   );
                 })}
@@ -265,20 +288,24 @@ export default function FactorsPage() {
                     {basis === "excess" ? (
                       <>
                         Figures describe the <b>factor itself</b> — its log excess
-                        return over cash. The orthogonalised view shows what is left
-                        after the factors above are removed, which is what the
-                        regression consumes but not what the factor earned.
+                        return over cash, which is what it earned.
                       </>
                     ) : (
                       <>
-                        Figures describe the <b>residual</b> after removing{" "}
+                        Figures describe only what this factor adds <b>beyond{" "}
                         <span className="font-mono">
                           {meta.orthogonalize_against?.join(", ") || "nothing"}
-                        </span>
-                        . This is the series the regression uses; it is not what the
-                        factor earned.
+                        </span></b>, once their overlap is removed. This is the series
+                        the regression uses, and it is not what the factor earned.
                       </>
-                    )}
+                    )}{" "}
+                    <button
+                      className="underline decoration-dotted underline-offset-2
+                                 hover:text-navy"
+                      onClick={() => setProfileOf(selected)}
+                    >
+                      What is this factor?
+                    </button>
                   </div>
                   {meta.construction?.note && (
                     <div className="mt-1 italic">{meta.construction.note}</div>
@@ -288,21 +315,26 @@ export default function FactorsPage() {
               actions={
                 meta.orthogonalize_against?.length > 0 ? (
                   <div className="flex overflow-hidden rounded border border-line">
-                    {([["excess", "Factor"], ["orth", "Residual"]] as const).map(
-                      ([v, label]) => (
-                        <button
-                          key={v}
-                          onClick={() => setBasis(v)}
-                          className={`px-2.5 py-1 text-[11px] transition ${
-                            basis === v
-                              ? "bg-navy text-white"
-                              : "bg-white text-muted hover:text-navy"
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      )
-                    )}
+                    {([
+                      ["excess", "Factor",
+                       "The series itself - what this factor earned."],
+                      ["orth", "Incremental",
+                       "What it adds beyond the factors above it, once their overlap "
+                       + "is removed. This is the series the regression uses."],
+                    ] as const).map(([v, label, tip]) => (
+                      <button
+                        key={v}
+                        title={tip}
+                        onClick={() => setBasis(v)}
+                        className={`px-2.5 py-1 text-[11px] transition ${
+                          basis === v
+                            ? "bg-navy text-white"
+                            : "bg-white text-muted hover:text-navy"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
                   </div>
                 ) : undefined
               }
@@ -502,6 +534,10 @@ export default function FactorsPage() {
 
         {window252 && <DiagnosticsPanel d={window252} all={diag?.windows ?? []} />}
       </div>
+
+      {profileOf && (
+        <FactorProfile factorId={profileOf} onClose={() => setProfileOf(null)} />
+      )}
     </div>
   );
 }

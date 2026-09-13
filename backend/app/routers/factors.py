@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import numpy as np
@@ -308,3 +309,165 @@ async def reference_comparison(factor_id: str) -> dict:
         factor_id,
     )
     return {"factor_id": factor_id, "comparisons": rows}
+
+
+# ---------------------------------------------------------------------------
+# profile
+# ---------------------------------------------------------------------------
+
+# Where each source table's data actually comes from, for the provenance line.
+_SOURCE_LABEL = {
+    "fact_cross_asset": "Yahoo Finance, via the xbrl_sec warehouse",
+    "yahoo": "Yahoo Finance",
+}
+
+_METHOD_PROSE = {
+    "single": "A single instrument's excess return over cash.",
+    "basket": "An equally weighted long basket against an equally weighted short "
+              "basket, so the common direction cancels and what is left is the "
+              "spread between them.",
+    "curve": "A yield-curve shape factor. Yield changes at the chosen tenors are "
+             "turned into returns with a synthetic bond of matching duration, so "
+             "the factor is a return rather than a change in a level.",
+    "spread": "The difference between two instruments' excess returns.",
+    "spread_level": "A standardised daily change in a quoted spread, not a price "
+                    "return — the underlying series is a level, so it is "
+                    "differenced before it can enter the model.",
+    "level_transform": "A level series made stationary by the transform recorded "
+                       "against it, then standardised.",
+    "synthetic_bond": "A yield series converted into a bond return using a "
+                      "duration assumption, because the raw series is a level.",
+    "fx_carry": "Policy-rate differentials against the base currency, weighted "
+                "equally across the available legs.",
+    "tsmom": "A rule-based time-series momentum strategy: each instrument is held "
+             "long or short according to the sign of its own trailing return.",
+    "xs_momentum": "A rule-based cross-sectional momentum strategy: the strongest "
+                   "instruments are held long against the weakest.",
+    "variance_premium": "Implied variance minus subsequently realised variance, "
+                        "the premium a variance seller earns on average.",
+    "realized_vol_change": "The change in realised volatility, differenced because "
+                           "the level itself is not stationary.",
+}
+
+
+def _walk_inputs(node, out: list[str]) -> None:
+    """Collect every identifier mentioned anywhere in a construction's inputs."""
+    if isinstance(node, str):
+        out.append(node)
+    elif isinstance(node, list):
+        for v in node:
+            _walk_inputs(v, out)
+    elif isinstance(node, dict):
+        for key, v in node.items():
+            # 'shape' and 'tenors' describe the recipe, not its ingredients.
+            if key in ("shape", "transform", "window", "lookback", "sparse"):
+                continue
+            _walk_inputs(v, out)
+
+
+@router.get("/{factor_id}/profile")
+async def profile(factor_id: str) -> dict:
+    """Everything needed to explain one factor: what it is, and where it comes from.
+
+    The sidebar shows forty identifiers. This resolves one of them into the
+    instruments and level series it is actually built from, with their providers
+    and coverage, so a reader does not have to open factor_defs.py to find out what
+    `liq_risk_off` contains.
+    """
+    row = await db.fetchrow(
+        """
+        SELECT f.factor_id, f.name, f.block_id, f.hierarchy_level, f.version,
+               f.construction, f.orthogonalize_against, b.name AS block_name,
+               b.description AS block_description
+        FROM ref_factor f
+        LEFT JOIN ref_factor_block b USING (block_id)
+        WHERE f.factor_id = $1
+        """,
+        factor_id,
+    )
+    if not row:
+        raise HTTPException(404, f"no such factor: {factor_id!r}")
+
+    construction = row["construction"]
+    if isinstance(construction, str):
+        construction = json.loads(construction)
+    construction = construction or {}
+    method = construction.get("method")
+    inputs = construction.get("inputs") or {}
+
+    names: list[str] = []
+    _walk_inputs(inputs, names)
+    unique = list(dict.fromkeys(names))
+
+    instruments = await db.fetch(
+        """
+        SELECT instrument_id, source_ticker, source_table, asset_class, currency,
+               is_total_return, is_live, first_obs, last_obs, n_obs, notes
+        FROM ref_instrument WHERE instrument_id = ANY($1::text[])
+        """,
+        unique,
+    ) if unique else []
+
+    levels = await db.fetch(
+        """
+        SELECT r.series_id, r.name, r.category, r.unit, r.transform,
+               r.tenor_years, r.curve_id, l.first_obs, l.last_obs, l.n_obs
+        FROM ref_level_series r
+        LEFT JOIN (SELECT series_id, min(date) AS first_obs, max(date) AS last_obs,
+                          count(*) AS n_obs
+                   FROM fact_input_level GROUP BY 1) l USING (series_id)
+        WHERE r.series_id = ANY($1::text[]) OR r.curve_id = ANY($1::text[])
+        ORDER BY r.tenor_years NULLS LAST, r.series_id
+        """,
+        unique,
+    ) if unique else []
+
+    # A curve factor names its curve and the tenors it uses; without this the whole
+    # curve is listed and rt_us_slope appears to read eleven maturities when it
+    # reads two.
+    tenors = inputs.get("tenors") if isinstance(inputs, dict) else None
+    if tenors:
+        wanted = {round(float(t), 4) for t in tenors}
+        levels = [l for l in levels
+                  if l["tenor_years"] is None
+                  or round(float(l["tenor_years"]), 4) in wanted]
+
+    for i in instruments:
+        i["source"] = _SOURCE_LABEL.get(i["source_table"], i["source_table"])
+    for l in levels:
+        # Level series ids are namespaced by provider: FRED:DGS10, ECB:BUND_10Y.
+        l["source"] = str(l["series_id"]).split(":", 1)[0]
+
+    coverage = await db.fetchrow(
+        """
+        SELECT min(date) AS first_date, max(date) AS last_date, count(*) AS n_obs,
+               stddev_samp(ret_excess) * sqrt(252) AS vol_ann
+        FROM fact_factor_return
+        WHERE factor_id = $1 AND ret_excess IS NOT NULL
+        """,
+        factor_id,
+    )
+
+    orth = await db.fetch(
+        "SELECT factor_id, name, block_id FROM ref_factor "
+        "WHERE factor_id = ANY($1::text[]) ORDER BY hierarchy_level, factor_id",
+        row["orthogonalize_against"] or [],
+    ) if row["orthogonalize_against"] else []
+
+    return {
+        "factor_id": row["factor_id"],
+        "name": row["name"],
+        "block_id": row["block_id"],
+        "block_name": row["block_name"],
+        "block_description": row["block_description"],
+        "hierarchy_level": row["hierarchy_level"],
+        "version": row["version"],
+        "method": method,
+        "method_prose": _METHOD_PROSE.get(method, ""),
+        "inputs": inputs,
+        "note": construction.get("note"),
+        "instruments": instruments,
+        "level_series": levels,
+        "orthogonalised_against": orth,
+        "coverage": dict(coverage) if coverage else None,
+    }

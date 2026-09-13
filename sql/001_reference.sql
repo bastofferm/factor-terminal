@@ -61,14 +61,14 @@ CREATE TABLE IF NOT EXISTS ref_calendar (
 );
 
 INSERT INTO ref_factor_block (block_id, name, sort_order, description) VALUES
-    ('equity',      'Aktienmarkt',              1, 'Global, regional and sector equity; total return minus cash'),
+    ('equity',      'Equity Market',              1, 'Global, regional and sector equity; total return minus cash'),
     ('style',       'Equity Style',             2, 'Value, Momentum, Quality, Low Vol, Size, Profitability'),
     ('rates',       'Rates',                    3, 'Level, slope, curvature per curve; duration-normalised returns'),
     ('credit',      'Credit',                   4, 'IG, HY, Loans, EM hard/local; excess over duration-matched govt'),
     ('fx',          'FX',                       5, 'Spot vs base currency plus carry basket'),
     ('commodity',   'Commodities',              6, 'Futures total return including roll yield'),
     ('volatility',  'Volatility',               7, 'VIX futures strategy return, variance premium, rates vol'),
-    ('liquidity',   'Liquiditaet und Stress',   8, 'Funding spreads, stress indices, cross-asset risk-off basket'),
+    ('liquidity',   'Liquidity & Stress',   8, 'Funding spreads, stress indices, cross-asset risk-off basket'),
     ('arp',         'Alternative Risk Premia',  9, 'Rule-based trend, carry, value, momentum across assets')
 ON CONFLICT (block_id) DO UPDATE
     SET name = EXCLUDED.name, sort_order = EXCLUDED.sort_order, description = EXCLUDED.description;

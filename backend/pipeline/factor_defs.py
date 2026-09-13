@@ -34,7 +34,7 @@ STANDARDIZED_TARGET_VOL = 0.10
 FACTORS: list[dict] = [
 
     # -----------------------------------------------------------------------
-    # 1. Aktienmarkt. Total return minus cash, in base currency.
+    # 1. Equity Market. Total return minus cash, in base currency.
     #    Built from total-return ETFs, never from the ^-prefixed index levels:
     #    those are price return and would bias every equity beta down by the
     #    dividend yield.
@@ -255,7 +255,7 @@ FACTORS: list[dict] = [
      "note": "Substitute for ^TYVIX, which CBOE discontinued in 2020."},
 
     # -----------------------------------------------------------------------
-    # 8. Liquiditaet und Stress. Standardised daily changes plus a cross-asset
+    # 8. Liquidity & Stress. Standardised daily changes plus a cross-asset
     #    risk-off basket return, per section 2.2.
     # -----------------------------------------------------------------------
     {"id": "liq_funding", "block": "liquidity", "name": "Funding Spread (SOFR-EFFR)", "level": 0,
