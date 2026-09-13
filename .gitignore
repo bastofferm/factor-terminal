@@ -35,3 +35,6 @@ desktop.ini
 # Runtime output
 *.log
 scratch/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
