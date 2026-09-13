@@ -1,12 +1,18 @@
 # Daily Multi-Asset Factor Model
 
-A fully return-based factor model implementing the nine daily proxy blocks of
-§2.2 of `Return_Based_Multi_Asset_Faktormodell.pdf`, with an analyst frontend for
+A fully return-based factor model implementing the nine daily proxy blocks of §2.2
+of a concept note on return-based multi-asset factor modelling (not included in
+this repository), with an analyst frontend for
 inspecting factors, the covariance structure, rolling loadings, and — the point of
 the exercise — whether the model's predicted risk for a security is actually right.
 
 No holdings, no look-through. Every model input is a stationary return series, and
 that is tested rather than assumed.
+
+![The five pages of the terminal](screenshots/factor-terminal.gif)
+
+*Data Health, Factor Explorer, Covariance & PCA, Loadings Lab, Risk Lens. Regenerate
+with `python -m scripts.capture_screenshots` while the app is running.*
 
 ---
 
@@ -61,14 +67,16 @@ python -m backend.pipeline.scheduler --once     # or omit --once to run as a dae
 ## Layout
 
 ```
-sql/            11 idempotent migrations, applied in order, fail-fast
+sql/            13 idempotent migrations, applied in order, fail-fast
 backend/
   core/         pure numpy — no database access, so every statistic is testable
-                stationarity · transforms · orthogonalize · regression · covariance · risk
+                stationarity · transforms · orthogonalize · regression
+                covariance · risk · distribution
   pipeline/     ingestion, construction and estimation jobs
-  app/          FastAPI: thin routers over raw SQL
-  tests/        168 tests, mostly against simulated data with known parameters
+  app/          FastAPI: thin routers over raw SQL, plus the DeepSeek assistant
+  tests/        221 tests, mostly against simulated data with known parameters
 frontend/       Next.js 14 + Plotly, five pages
+scripts/        one-off tooling: model probe, backfills, screenshot capture
 ```
 
 The `backend/core` boundary is the main design decision. Every statistical routine
@@ -137,6 +145,26 @@ not silently dropped or silently used.
 
 ---
 
+## The assistant
+
+The **Ask** panel answers questions about the methodology and about the numbers on
+the page in front of you. It runs on DeepSeek and is grounded two ways: a
+methodology corpus assembled at startup from the module docstrings in
+`backend/core/` and the `note` field on every factor in `backend/pipeline/
+factor_defs.py`, and a snapshot of exactly what the open page has rendered.
+
+It has no tools and no database access of its own, which is deliberate. The system
+prompt makes the supplied figures authoritative over the model's own arithmetic, so
+asked for something that is not in view it names the page that produces it rather
+than estimating. Three live tests hold it to that.
+
+Set `DEEPSEEK_API_KEY` in the environment. `python -m scripts.probe_deepseek` checks
+which model actually returns text with the full corpus in the prompt — worth running
+before changing `DEEPSEEK_MODEL`, since the reasoning tiers can spend their whole
+output budget on hidden reasoning and return nothing.
+
+---
+
 ## Stationarity
 
 A single ADF test is useless as a gate — on daily returns it rejects almost always.
@@ -159,7 +187,7 @@ break-or-heteroskedasticity, or inconclusive. Only the second blocks a series.
 ## Verification
 
 ```bash
-python -m pytest -q                                    # 168 tests
+python -m pytest -q                                    # 221 tests
 python -m pytest backend/tests/test_factor_validation.py   # needs a populated DB
 ```
 

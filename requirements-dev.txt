@@ -1,0 +1,9 @@
+# Tooling that is not needed to run the app, only to work on it.
+# Install alongside requirements.txt:
+#   pip install -r requirements-dev.txt && playwright install chromium
+
+# scripts/capture_screenshots.py — renders each page in headless Chromium and
+# assembles the README animation. Kept out of requirements.txt because the
+# browser download is ~115 MB and nothing at runtime touches it.
+playwright==1.49.1
+pillow==11.1.0
