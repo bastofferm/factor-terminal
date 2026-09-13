@@ -94,7 +94,21 @@ export default function MatrixPage() {
     <div className="space-y-4">
       <Panel
         title="Estimator"
-        caption="Shrinkage matters here: with 39 factors on a rolling window the sample covariance is badly conditioned, and an optimiser handed an indefinite matrix will happily build a portfolio out of the negative eigenvalue."
+        caption={
+          <>
+            <b>This page is the model&rsquo;s covariance, so it is computed on the
+            orthogonalised factors</b> — not the raw series the Factor Explorer
+            shows. It has to be: the loadings in the Loadings Lab are loadings on
+            the orthogonalised set, and portfolio risk is β&prime;Σβ, so Σ must be
+            the covariance of the same series the βs refer to. On the raw factors
+            the correlations would be far higher — that overlap is exactly what the
+            orthogonalisation removes.
+            <br />
+            Shrinkage matters here: with 39 factors on a rolling window the sample
+            covariance is badly conditioned, and an optimiser handed an indefinite
+            matrix will happily build a portfolio out of the negative eigenvalue.
+          </>
+        }
       >
         <div className="flex flex-wrap items-end gap-3">
           <div>
@@ -177,7 +191,7 @@ export default function MatrixPage() {
         <div className="space-y-4">
           <Panel
             title="Eigenvalue spectrum"
-            caption="Correlation-based, so a high-volatility factor cannot dominate the leading components through scale alone. A flat tail means the factors are genuinely distinct."
+            caption="Principal components of the orthogonalised factor panel, correlation-based so a high-volatility factor cannot dominate the leading components through scale alone. A flat tail means the factors are genuinely distinct — which is what the orthogonalisation is for."
           >
             {pca && (
               <Chart

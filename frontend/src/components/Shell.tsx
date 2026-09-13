@@ -16,6 +16,7 @@ import { ChatProvider, useChat } from "@/lib/chat-context";
 const NAV = [
   { href: "/", label: "Data Health" },
   { href: "/factors", label: "Factor Explorer" },
+  { href: "/raw", label: "Raw Explorer" },
   { href: "/matrix", label: "Covariance & PCA" },
   { href: "/loadings", label: "Loadings Lab" },
   { href: "/risk", label: "Risk Lens" },

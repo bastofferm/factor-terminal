@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app import db
-from backend.app.routers import chat, factors, loadings, matrix, meta, risk
+from backend.app.routers import chat, factors, loadings, matrix, meta, raw, risk
 from backend.app.settings import get_settings
 
 
@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(matrix.router, prefix="/api/matrix", tags=["matrix"])
     app.include_router(loadings.router, prefix="/api/loadings", tags=["loadings"])
     app.include_router(risk.router, prefix="/api/risk", tags=["risk"])
+    app.include_router(raw.router, prefix="/api/raw", tags=["raw"])
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 
     @app.get("/api/health")

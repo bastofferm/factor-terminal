@@ -35,14 +35,12 @@ async def factors() -> list[dict]:
                d.verdict, d.verdict_reason, d.flags
         FROM ref_factor f
         LEFT JOIN (
-            -- Coverage and volatility from the raw excess-return series, matching
-            -- the Factor Explorer. The orthogonalised column would report the
-            -- residual's volatility, which is a property of the block hierarchy
-            -- rather than of the factor.
+            -- Orthogonalised, matching the Factor Explorer. The raw figure is on
+            -- the /raw page and in each factor's profile.
             SELECT factor_id, min(date) AS first_date, max(date) AS last_date,
                    count(*) AS n_obs,
-                   stddev_samp(ret_excess) * sqrt(252) AS sd_ann
-            FROM fact_factor_return WHERE ret_excess IS NOT NULL GROUP BY 1
+                   stddev_samp(ret_orth) * sqrt(252) AS sd_ann
+            FROM fact_factor_return WHERE ret_orth IS NOT NULL GROUP BY 1
         ) c USING (factor_id)
         LEFT JOIN (
             SELECT DISTINCT ON (series_key) series_key, verdict, verdict_reason, flags
@@ -57,18 +55,17 @@ async def factors() -> list[dict]:
 
 
 @router.get("/factor-sparklines")
-async def factor_sparklines(points: int = 60, basis: str = "excess") -> dict:
+async def factor_sparklines(points: int = 60, basis: str = "orth") -> dict:
     """A downsampled cumulative path per factor, for the sidebar sparklines.
 
     One query for all forty factors rather than forty requests: `ntile` buckets each
     factor's history into equal counts, the returns are summed within a bucket, and
     the running total gives the shape. Measured at about 150 ms for the full panel.
 
-    Defaults to the raw excess-return series, matching every chart on the Factor
-    Explorer. Drawn from the orthogonalised column instead, a sparkline would show
-    the residual — for eq_us a flat 4% line rather than the 17%-volatility series
-    the rest of the page describes — and the sidebar would quietly disagree with
-    everything it links to.
+    Defaults to the orthogonalised series, matching the Factor Explorer it sits
+    beside. The raw explorer asks for basis=excess, so its sidebar shows the series
+    its charts show; a sparkline drawn from the other column would quietly disagree
+    with everything it links to.
     """
     col = {"excess": "ret_excess", "orth": "ret_orth"}.get(basis)
     if col is None:

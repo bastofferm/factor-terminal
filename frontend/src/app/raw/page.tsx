@@ -1,0 +1,413 @@
+"use client";
+
+/**
+ * Raw Explorer: the data before the model touches it.
+ *
+ * The Factor Explorer describes the model, so it shows orthogonalised factors —
+ * the series the regression, the covariance and the risk forecast all consume.
+ * This page answers the other question, and keeps it on its own screen so the two
+ * can never be confused: what does the underlying series actually do?
+ *
+ * Two kinds sit in one list. A factor here is its own excess return before the
+ * block hierarchy is removed; an instrument is a single input exactly as ingested,
+ * with no construction applied at all.
+ */
+
+import { useEffect, useMemo, useState } from "react";
+import { Chart, ChartSkeleton, PALETTE, Panel, Stat, VerdictBadge }
+  from "@/components/Chart";
+import { num, pct, pval } from "@/lib/api";
+import { blockStyle } from "@/lib/blocks";
+import { episodeLayout } from "@/lib/episodes";
+import { usePublishSnapshot } from "@/lib/chat-context";
+
+type Kind = "factor" | "instrument";
+
+interface CatalogEntry {
+  id: string;
+  name: string | null;
+  group_id: string;
+  group_name: string;
+  n_obs: number | null;
+  sd_ann: number | null;
+  last_date?: string | null;
+  n_orth?: number | null;
+  is_live?: boolean;
+  is_total_return?: boolean;
+  currency?: string;
+  status?: "live" | "discontinued" | "not_refreshed";
+  days_behind?: number | null;
+}
+
+export default function RawPage() {
+  const [catalog, setCatalog] = useState<{ factors: CatalogEntry[]; instruments: CatalogEntry[] } | null>(null);
+  const [kind, setKind] = useState<Kind>("factor");
+  const [selected, setSelected] = useState<string>("");
+  const [filter, setFilter] = useState("");
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/raw/catalog")
+      .then((r) => r.json())
+      .then((c) => {
+        setCatalog(c);
+        if (c.factors?.length) setSelected(c.factors[0].id);
+      })
+      .catch((e) => setError(String(e.message ?? e)));
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    setError(null);
+    setData(null);
+    fetch(`/api/raw/${kind}/${encodeURIComponent(selected)}`)
+      .then((r) => (r.ok ? r.json() : r.json().then((b) => Promise.reject(new Error(b.detail)))))
+      .then(setData)
+      .catch((e) => setError(String(e.message ?? e)));
+  }, [kind, selected]);
+
+  const list = useMemo(() => {
+    const all = (kind === "factor" ? catalog?.factors : catalog?.instruments) ?? [];
+    const q = filter.trim().toLowerCase();
+    const matched = q
+      ? all.filter((e) => e.id.toLowerCase().includes(q) ||
+                          (e.name ?? "").toLowerCase().includes(q) ||
+                          e.group_name.toLowerCase().includes(q))
+      : all;
+    const grouped: Record<string, CatalogEntry[]> = {};
+    matched.forEach((e) => (grouped[e.group_name] ??= []).push(e));
+    return grouped;
+  }, [catalog, kind, filter]);
+
+  const bands = useMemo(
+    () => episodeLayout(data?.dates?.[0], data?.dates?.[data.dates.length - 1]),
+    [data]
+  );
+
+  usePublishSnapshot(
+    data
+      ? {
+          view: "raw explorer",
+          kind: data.kind, id: data.id, meta: data.meta,
+          stats: data.stats,
+          diagnostics: {
+            verdict: data.diagnostics?.verdict,
+            reason: data.diagnostics?.verdict_reason,
+            adf_p: data.diagnostics?.adf_p, kpss_p: data.diagnostics?.kpss_p,
+            vr5: data.diagnostics?.vr5, ac1: data.diagnostics?.ac1,
+            zero_return_share: data.diagnostics?.zero_return_share,
+          },
+          note: "These figures are the raw series before orthogonalisation. The "
+              + "Factor Explorer shows the orthogonalised factor instead.",
+        }
+      : null
+  );
+
+  const d = data?.diagnostics;
+  const s = data?.stats;
+  const accent = kind === "factor"
+    ? blockStyle(catalog?.factors.find((f) => f.id === selected)?.group_id).colour
+    : PALETTE[1];
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[250px_1fr]">
+      <aside className="space-y-3">
+        <Panel title="Series">
+          <div className="mb-2 flex overflow-hidden rounded border border-line">
+            {(["factor", "instrument"] as const).map((k) => (
+              <button
+                key={k}
+                onClick={() => {
+                  setKind(k);
+                  const first = (k === "factor" ? catalog?.factors : catalog?.instruments)?.[0];
+                  if (first) setSelected(first.id);
+                }}
+                className={`flex-1 px-2 py-1 text-[11px] capitalize transition ${
+                  kind === k ? "bg-navy text-white" : "bg-white text-muted hover:text-navy"
+                }`}
+              >
+                {k === "factor" ? "Factors" : "Instruments"}
+              </button>
+            ))}
+          </div>
+          <input
+            className="field"
+            placeholder="Filter…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <p className="mt-2 text-[10px] leading-tight text-muted">
+            The figure beside each name is its annualised volatility.{" "}
+            <b className="text-warn">stale</b> means it is still trading but outside
+            the nightly ingest; <b className="text-fail">ended</b> means the provider
+            stopped publishing it.
+          </p>
+          <p className="mt-1.5 text-[10px] leading-tight text-muted">
+            {kind === "factor"
+              ? "Each factor's own excess return, before the block hierarchy is removed."
+              : "Single inputs exactly as ingested — no construction, no orthogonalisation."}
+          </p>
+        </Panel>
+
+        <div className="max-h-[66vh] overflow-auto rounded border border-line bg-panel">
+          {Object.entries(list).map(([group, entries]) => (
+            <div key={group}>
+              <div className="sticky top-0 z-10 bg-lineSoft px-2 py-1 text-2xs
+                              font-semibold uppercase tracking-label text-muted">
+                {group}
+              </div>
+              {entries.map((e) => (
+                <button
+                  key={e.id}
+                  onClick={() => setSelected(e.id)}
+                  title={e.name ?? e.id}
+                  className={`flex w-full items-center justify-between gap-2 px-2 py-1
+                              text-left text-[12px] transition
+                    ${e.id === selected ? "bg-navy text-white" : "hover:bg-lineSoft"}`}
+                >
+                  <span className="truncate font-mono">{e.id}</span>
+                  <span
+                    title="Annualised volatility over the full history"
+                    className={`shrink-0 font-mono text-[10px] tabular-nums
+                      ${e.id === selected ? "text-white/70" : "text-muted"}`}
+                  >
+                    {e.sd_ann ? pct(e.sd_ann, 0) : "—"}
+                  </span>
+                  {e.status === "discontinued" && (
+                    <span
+                      className="shrink-0 text-2xs text-fail"
+                      title={`The provider stopped publishing this: last observation ${e.last_date ?? "?"}, ${e.days_behind} days behind the panel. It is excluded from factor construction.`}
+                    >
+                      ended
+                    </span>
+                  )}
+                  {e.status === "not_refreshed" && (
+                    <span
+                      className="shrink-0 text-2xs text-warn"
+                      title={`Still trading, but outside the nightly ingest, which covers the factor universe only. Last mirrored from the warehouse on ${e.last_date ?? "?"}, ${e.days_behind} days behind.`}
+                    >
+                      stale
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      <div className="space-y-4">
+        {error && (
+          <div className="rounded border border-fail/30 bg-fail/5 p-3 text-[12px] text-fail">
+            {error}
+          </div>
+        )}
+
+        <div className="rounded border border-warn/30 bg-warn/5 px-4 py-2 text-[12px]">
+          <b>This is the raw series.</b> Factors here are shown before block-hierarchy
+          orthogonalisation, and instruments before any construction. The model does
+          not use these numbers — the Factor Explorer shows what it does use, and the
+          two will differ, often by a lot.
+        </div>
+
+        {data && (
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <Panel index={0} title="Return series"
+                   caption="The series as stored, with no transformation beyond the log return itself.">
+              <Chart
+                height={188}
+                episodes={bands}
+                data={[
+                  { x: data.dates, y: data.returns, type: "scatter", mode: "lines",
+                    name: "daily return", line: { color: accent, width: 0.7 },
+                    hovertemplate: "%{x|%Y-%m-%d}<br>%{y:.2%}<extra></extra>" },
+                  ...[1, -1].map((sign) => ({
+                    x: [data.dates[0], data.dates[data.dates.length - 1]],
+                    y: Array(2).fill(sign * 2 * s.vol_ann / Math.sqrt(252)),
+                    type: "scatter" as const, mode: "lines" as const,
+                    name: "±2 sd", showlegend: sign === 1,
+                    line: { color: "#B0553F", width: 1, dash: "dot" as const },
+                    hoverinfo: "skip" as const,
+                  })),
+                ]}
+                layout={{ yaxis: { title: "daily return", tickformat: ".1%" },
+                          margin: { l: 56, r: 14, t: 8, b: 34 }, legend: { y: -0.3 } }}
+              />
+            </Panel>
+
+            <Panel
+              index={1}
+              title={`${data.id} — ${data.meta?.name ?? ""}`}
+              caption={
+                <>
+                  {kind === "factor" ? (
+                    <>
+                      Raw excess return over cash.
+                      {data.meta?.orthogonalize_against?.length > 0 && (
+                        <> The model removes{" "}
+                          <span className="font-mono">
+                            {data.meta.orthogonalize_against.join(", ")}
+                          </span>{" "}
+                          from this before using it.</>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {data.meta?.asset_class} · {data.meta?.currency}
+                      {data.meta?.is_total_return === false && (
+                        <b className="text-warn"> · price return, no dividends</b>
+                      )}
+                      {data.meta?.is_live === false && (
+                        <b className="text-fail"> · no longer updating</b>
+                      )}
+                      {data.meta?.notes && (
+                        <div className="mt-1 italic">{data.meta.notes}</div>
+                      )}
+                    </>
+                  )}
+                </>
+              }
+            >
+              <div className="mb-3 flex flex-wrap items-end gap-x-8 gap-y-2
+                              border-b border-lineSoft pb-3">
+                <Stat label="Ann. volatility" size="hero"
+                      animate={s.vol_ann} format={(v) => pct(v)} />
+                <Stat label="Ann. return" size="hero"
+                      animate={s.mean_ann} format={(v) => pct(v)}
+                      tone={s.mean_ann >= 0 ? "neutral" : "bad"} />
+                <Stat label="Sharpe" size="hero"
+                      animate={s.sharpe} format={(v) => num(v)} />
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                <Stat label="Skew" value={num(s.skew)} />
+                <Stat label="Excess kurt." value={num(s.excess_kurtosis)} />
+                <Stat label="Max drawdown" value={pct(s.max_drawdown)} tone="bad" />
+                <Stat label="Total (compounded)" value={pct(s.total_compounded, 0)} />
+                <Stat label="Hit rate" value={pct(s.hit_rate)} />
+                <Stat label="VaR 95% (1d)" value={pct(s.var95_daily)} />
+                <Stat label="ES 95% (1d)" value={pct(s.es95_daily)} />
+                <Stat label="Observations" value={s.n_obs?.toLocaleString()} />
+              </div>
+            </Panel>
+
+            <Panel index={2} title="Compounded return"
+                   caption="exp(Σ log r) − 1: what holding this series would actually have returned.">
+              <Chart
+                height={280} episodes={bands}
+                data={[{ x: data.dates, y: data.compounded, type: "scatter",
+                         mode: "lines", line: { color: accent, width: 1.5 },
+                         hovertemplate: "%{x|%Y-%m-%d}<br>%{y:+.1%}<extra></extra>" }]}
+                layout={{ yaxis: { title: "compounded", tickformat: ".0%" },
+                          showlegend: false }}
+              />
+            </Panel>
+
+            <Panel index={3} title="Rolling volatility"
+                   caption="Annualised, at 21, 63 and 252 days. Shaded bands mark well-known market episodes — editorial context, not a model output.">
+              <Chart
+                height={280} episodes={bands}
+                data={data.rolling_windows.map((w: number, i: number) => ({
+                  x: data.dates, y: data.rolling[String(w)], type: "scatter",
+                  mode: "lines", name: `${w}d`,
+                  line: { color: PALETTE[i], width: 1.2 },
+                }))}
+                layout={{ yaxis: { title: "annualised vol", tickformat: ".0%" } }}
+              />
+            </Panel>
+
+            <Panel index={4} title="Return distribution"
+                   caption={`${data.distribution.n_bins} bins by the Freedman-Diaconis rule; Student-t fit has ${num(data.distribution.t_df, 1)} degrees of freedom. ${data.distribution.n_outside} observations lie outside the drawn range.`}>
+              <Chart
+                height={280} numericX
+                data={[
+                  { x: data.distribution.bin_centres, y: data.distribution.density,
+                    type: "bar", name: "empirical", width: data.distribution.bin_width,
+                    marker: { color: accent, opacity: 0.35, line: { width: 0 } } },
+                  { x: data.distribution.grid, y: data.distribution.kde,
+                    type: "scatter", mode: "lines", name: "empirical (kernel)",
+                    line: { color: accent, width: 2, shape: "spline" } },
+                  { x: data.distribution.grid, y: data.distribution.normal_pdf,
+                    type: "scatter", mode: "lines", name: "normal",
+                    line: { color: PALETTE[1], width: 1.6, shape: "spline" } },
+                  { x: data.distribution.grid, y: data.distribution.t_pdf,
+                    type: "scatter", mode: "lines",
+                    name: `student-t (df ${num(data.distribution.t_df, 1)})`,
+                    line: { color: PALETTE[2], width: 1.6, dash: "dot", shape: "spline" } },
+                ]}
+                layout={{ bargap: 0.02,
+                          xaxis: { title: "daily return", tickformat: ".1%",
+                                   range: [data.distribution.lo, data.distribution.hi] },
+                          yaxis: { title: "density", rangemode: "tozero" } }}
+              />
+            </Panel>
+
+            <Panel index={5} title="Autocorrelation"
+                   caption="Returns versus squared returns. Autocorrelation in returns is a stale-pricing warning; in squared returns it is volatility clustering, which is expected.">
+              <Chart
+                height={280} numericX
+                data={[
+                  { x: data.acf.lags, y: data.acf.returns, type: "bar",
+                    name: "returns", marker: { color: PALETTE[0] } },
+                  { x: data.acf.lags, y: data.acf.squared, type: "bar",
+                    name: "squared returns", marker: { color: PALETTE[1], opacity: 0.7 } },
+                  ...[1, -1].map((sign) => ({
+                    x: [0, 30], y: Array(2).fill(sign * data.acf.confidence_band),
+                    type: "scatter" as const, mode: "lines" as const,
+                    name: "95% band", showlegend: sign === 1,
+                    line: { color: "#9AA0AE", width: 1, dash: "dash" as const },
+                  })),
+                ]}
+                layout={{ xaxis: { title: "lag" }, yaxis: { title: "autocorrelation" },
+                          hovermode: "closest" }}
+              />
+            </Panel>
+          </div>
+        )}
+
+        {!data && !error && (
+          <div className="grid gap-4 xl:grid-cols-2">
+            {[0, 1, 2, 3].map((i) => (
+              <Panel key={i} index={i} title="Loading…">
+                <ChartSkeleton height={240} />
+              </Panel>
+            ))}
+          </div>
+        )}
+
+        {d && (
+          <Panel
+            index={6}
+            title="Stationarity battery"
+            caption="Computed live on the series above, not read from the stored factor diagnostics — those are for the orthogonalised factors, and a verdict for a different series would be worse than none."
+            actions={<VerdictBadge verdict={d.verdict} showLabel title={d.verdict_reason} />}
+          >
+            {d.verdict_reason && (
+              <p className="mb-3 text-[12px]">{d.verdict_reason}</p>
+            )}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+              <Stat label="ADF" value={`p = ${pval(d.adf_p)}`} hint="H0: unit root" />
+              <Stat label="KPSS" value={`p = ${pval(d.kpss_p)}`} hint="H0: stationary" />
+              <Stat label="Phillips-Perron" value={`p = ${pval(d.pp_p)}`} />
+              <Stat label="Ljung-Box (10)" value={`p = ${pval(d.lb10_p)}`} hint="autocorrelation" />
+              <Stat label="ARCH-LM" value={`p = ${pval(d.arch_lm_p)}`} hint="clustering, expected" />
+              <Stat label="Jarque-Bera" value={`p = ${pval(d.jb_p)}`} hint="normality" />
+              <Stat label="VR (2)" value={num(d.vr2)} hint="1 = random walk" />
+              <Stat label="VR (5)" value={num(d.vr5)} hint=">1 stale, <1 bouncing" />
+              <Stat label="VR (10)" value={num(d.vr10)} />
+              <Stat label="AC(1)" value={num(d.ac1, 3)} />
+              <Stat label="Zero returns" value={pct(d.zero_return_share, 1)} />
+              <Stat label="Observations" value={d.n_obs?.toLocaleString()} />
+            </div>
+            {d.za_break_date && (
+              <div className="mt-3 rounded border border-warn/30 bg-warn/5 px-3 py-2
+                              text-[12px] text-warn">
+                Zivot-Andrews locates a structural break at <b>{d.za_break_date}</b>.
+              </div>
+            )}
+          </Panel>
+        )}
+      </div>
+    </div>
+  );
+}

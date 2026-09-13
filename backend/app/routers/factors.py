@@ -13,6 +13,7 @@ from scipy import stats
 from backend.app import db
 from backend.core import distribution as dist
 from backend.core import stationarity as st
+from backend.core import summary as summ
 
 router = APIRouter()
 
@@ -26,11 +27,14 @@ TRADING_DAYS = 252
 #   orth    the same series after block-hierarchy orthogonalisation, which is what
 #           the regression consumes.
 #
-# The difference is not cosmetic. eq_us returns 12.9% a year at 17.3% volatility;
-# its residual after removing eq_global returns -0.2% at 4.2%. Describing a factor
-# with the second set of numbers answers a question nobody asked, so the
-# descriptive endpoints default to the raw series and take the residual only when
-# asked for it explicitly.
+# These endpoints serve the Factor Explorer, which describes the model, so they
+# default to "orth" — the series the regression, the covariance and the risk
+# forecast all actually use. The raw view lives on its own page (/raw), which
+# passes basis=excess, so the two are never mixed on one screen.
+#
+# The difference is large enough that mixing them would be a real error, not a
+# nuance: eq_us returns 12.9% a year at 17.3% volatility, its residual after
+# removing eq_global -0.2% at 4.2%.
 _BASIS_COLUMN = {"excess": "ret_excess", "orth": "ret_orth"}
 
 
@@ -43,7 +47,7 @@ def _column(basis: str) -> str:
 
 
 async def _series(factor_id: str, start: date | None, end: date | None,
-                  basis: str = "excess") -> pd.Series:
+                  basis: str = "orth") -> pd.Series:
     col = _column(basis)
     rows = await db.fetch(
         f"""
@@ -64,7 +68,7 @@ async def _series(factor_id: str, start: date | None, end: date | None,
 
 @router.get("/{factor_id}/series")
 async def series(factor_id: str, start: date | None = None, end: date | None = None,
-                 cumulative: bool = True, basis: str = "excess") -> dict:
+                 cumulative: bool = True, basis: str = "orth") -> dict:
     """Daily returns with both cumulative paths.
 
     `cumulative` is the running sum of log returns; `compounded` is the same thing
@@ -92,49 +96,28 @@ async def series(factor_id: str, start: date | None = None, end: date | None = N
 
 @router.get("/{factor_id}/stats")
 async def summary_stats(factor_id: str, start: date | None = None,
-                        end: date | None = None, basis: str = "excess") -> dict:
-    """Annualised moments, drawdown and tail measures."""
+                        end: date | None = None, basis: str = "orth") -> dict:
+    """Annualised moments, drawdown and tail measures.
+
+    Shares backend.core.summary with the Raw Explorer, so the two pages cannot
+    disagree about how a Sharpe or a drawdown is computed while describing
+    different series.
+    """
     s = await _series(factor_id, start, end, basis)
-    x = s.to_numpy()
-
-    # Drawdown is computed on the cumulative *log* return, then converted back to a
-    # simple loss. Reporting the log figure directly would print impossible numbers
-    # — a log drawdown of -1.5 reads as "-151%" when the actual loss is -78%.
-    cum = np.cumsum(x)
-    log_drawdown = float((cum - np.maximum.accumulate(cum)).min())
-    max_drawdown = float(np.expm1(log_drawdown))
-
-    sd_ann = float(np.std(x, ddof=1) * np.sqrt(TRADING_DAYS))
-    mean_ann = float(np.mean(x) * TRADING_DAYS)
-
-    downside = x[x < 0]
-    return {
+    out = summ.describe(s.to_numpy())
+    out.update({
         "factor_id": factor_id,
-        "n_obs": int(x.size),
+        "basis": basis,
         "first_date": s.index.min().date().isoformat(),
         "last_date": s.index.max().date().isoformat(),
-        "mean_ann": mean_ann,
-        "vol_ann": sd_ann,
-        "sharpe": mean_ann / sd_ann if sd_ann > 0 else None,
-        "skew": float(stats.skew(x)),
-        "excess_kurtosis": float(stats.kurtosis(x)),
-        "max_drawdown": max_drawdown,
-        "max_drawdown_log": log_drawdown,
-        "downside_vol_ann": float(np.std(downside, ddof=1) * np.sqrt(TRADING_DAYS))
-                            if downside.size > 2 else None,
-        "var95_daily": float(np.percentile(x, 5)),
-        "var99_daily": float(np.percentile(x, 1)),
-        "es95_daily": float(np.mean(x[x <= np.percentile(x, 5)])),
-        "hit_rate": float(np.mean(x > 0)),
-        "best_day": float(x.max()),
-        "worst_day": float(x.min()),
-    }
+    })
+    return out
 
 
 @router.get("/{factor_id}/rolling-risk")
 async def rolling_risk(factor_id: str, windows: str = "21,63,252",
                        start: date | None = None, end: date | None = None,
-                       basis: str = "excess") -> dict:
+                       basis: str = "orth") -> dict:
     """Trailing annualised volatility at several window lengths.
 
     Short windows show the regime, long windows show the level. Plotting them
@@ -161,7 +144,7 @@ async def rolling_risk(factor_id: str, windows: str = "21,63,252",
 async def histogram(factor_id: str, bins: int | None = None,
                     tail_quantile: float = 0.001, grid: int = 400,
                     start: date | None = None, end: date | None = None,
-                    basis: str = "excess") -> dict:
+                    basis: str = "orth") -> dict:
     """Empirical distribution with a kernel density estimate and fitted overlays.
 
     `bins` defaults to the Freedman-Diaconis rule and the drawing range to the 0.1st
@@ -202,7 +185,7 @@ async def histogram(factor_id: str, bins: int | None = None,
 @router.get("/{factor_id}/qq")
 async def qq_plot(factor_id: str, start: date | None = None,
                   end: date | None = None, points: int = 500,
-                  basis: str = "excess") -> dict:
+                  basis: str = "orth") -> dict:
     """Sample quantiles against Normal and Student-t theoretical quantiles."""
     s = await _series(factor_id, start, end, basis)
     q = dist.qq_points(s.to_numpy(), max_points=points)
@@ -217,7 +200,7 @@ async def qq_plot(factor_id: str, start: date | None = None,
 
 @router.get("/{factor_id}/acf")
 async def acf(factor_id: str, lags: int = 30, start: date | None = None,
-              end: date | None = None, basis: str = "excess") -> dict:
+              end: date | None = None, basis: str = "orth") -> dict:
     """Autocorrelation of returns and of squared returns.
 
     The two answer different questions. Autocorrelation in returns is a stale-pricing
