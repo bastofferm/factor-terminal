@@ -33,11 +33,13 @@ dependencies and builds the frontend.
 Run it again any time. Anything already serving is left alone rather than started
 twice — with one exception it checks for: `next start` reads the build manifest
 once, at boot, so rebuilding the frontend while it runs leaves it serving HTML that
-points at the previous build's hashed chunks. Those files are gone, every asset
-404s, and the page renders as unstyled HTML with no error anywhere. Port-probing
-cannot see it, because the server answers 200 perfectly well. So the script follows
-one stylesheet the page actually asks for, and restarts the web app when it does not
-resolve.
+points at the previous build's hashed chunks. Those files are gone, so the assets
+404 — a missing stylesheet renders the page as unstyled HTML, a missing script
+renders nothing at all, and neither reports anything. Port-probing cannot see it,
+because the server answers 200 perfectly well. So the script asks every route for
+its HTML, follows every asset each one references, and restarts the web app when
+any of them fails to resolve. The route list comes from the prerendered pages on
+disk, so adding a page cannot leave it unchecked.
 
 To stop, close the two minimised *Factor Terminal* windows.
 
