@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Chart, PALETTE, Panel, Stat } from "@/components/Chart";
-import { api, MatrixResult, num, pct } from "@/lib/api";
+import { api, Basis, MatrixResult, num, pct } from "@/lib/api";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
 const METHODS = [
@@ -28,6 +28,7 @@ export default function MatrixPage() {
   const [method, setMethod] = useState<string>("blend");
   const [order, setOrder] = useState<string>("block");
   const [start, setStart] = useState<string>("2015-01-01");
+  const [basis, setBasis] = useState<Basis>("orth");
   const [data, setData] = useState<MatrixResult | null>(null);
   const [pca, setPCA] = useState<any>(null);
   const [pair, setPair] = useState<[string, string] | null>(null);
@@ -37,8 +38,11 @@ export default function MatrixPage() {
 
   const load = () => {
     setBusy(true); setError(null);
-    const body = { start: start || null, method, order };
-    Promise.all([api.matrix(body), api.pca({ start: start || null, n_components: 10 })])
+    const body = { start: start || null, method, order, basis };
+    Promise.all([
+      api.matrix(body),
+      api.pca({ start: start || null, n_components: 10, basis }),
+    ])
       .then(([m, p]) => {
         setData(m); setPCA(p);
         if (!pair && m.names.length >= 2) setPair([m.names[0], m.names[1]]);
@@ -47,14 +51,14 @@ export default function MatrixPage() {
       .finally(() => setBusy(false));
   };
 
-  useEffect(load, [method, order, start]);
+  useEffect(load, [method, order, start, basis]);
 
   useEffect(() => {
     if (!pair) return;
-    api.rollingCorrelation({ factor_a: pair[0], factor_b: pair[1], window: 252 })
+    api.rollingCorrelation({ factor_a: pair[0], factor_b: pair[1], window: 252, basis })
       .then(setRolling)
       .catch(() => setRolling(null));
-  }, [pair]);
+  }, [pair, basis]);
 
   const heatmap = useMemo(() => {
     if (!data) return null;
@@ -73,6 +77,9 @@ export default function MatrixPage() {
     data
       ? {
           method: data.method,
+          // Which panel these numbers describe. Without it the assistant cannot tell
+          // a raw correlation of 0.71 from an orthogonalised one of 0.04.
+          basis: (data as any).basis ?? basis,
           n_factors: data.names.length,
           factors: data.names,
           n_obs: data.n_obs,
@@ -96,13 +103,26 @@ export default function MatrixPage() {
         title="Estimator"
         caption={
           <>
-            <b>This page is the model&rsquo;s covariance, so it is computed on the
-            orthogonalised factors</b> — not the raw series the Factor Explorer
-            shows. It has to be: the loadings in the Loadings Lab are loadings on
-            the orthogonalised set, and portfolio risk is β&prime;Σβ, so Σ must be
-            the covariance of the same series the βs refer to. On the raw factors
-            the correlations would be far higher — that overlap is exactly what the
-            orthogonalisation removes.
+            {basis === "orth" ? (
+              <>
+                <b>Σ on the orthogonalised factors, which is the model&rsquo;s own
+                covariance.</b> It has to match the panel the loadings were estimated
+                on: portfolio risk is β&prime;Σβ, so Σ must be the covariance of the
+                same series the βs refer to. Switching to raw shows the structure
+                <i> before</i> the hierarchy removes the overlap — which is the
+                argument for orthogonalising, but not a Σ to pair with orthogonalised
+                βs.
+              </>
+            ) : (
+              <>
+                <b>Σ on the raw factors, before the hierarchy removes the
+                overlap.</b> The blocks share exposure by construction, so expect a
+                denser off-diagonal, a worse condition number and a larger PC1 share
+                than the orthogonalised panel shows. Pair this Σ only with loadings
+                estimated on the raw panel — the Loadings Lab has the matching
+                switch.
+              </>
+            )}
             <br />
             Shrinkage matters here: with 39 factors on a rolling window the sample
             covariance is badly conditioned, and an optimiser handed an indefinite
@@ -111,6 +131,26 @@ export default function MatrixPage() {
         }
       >
         <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="label">Factor panel</label>
+            <div className="mt-1 flex overflow-hidden rounded border border-line">
+              {([["orth", "Orthogonalised"], ["excess", "Raw"]] as const).map(
+                ([v, label]) => (
+                  <button
+                    key={v}
+                    onClick={() => setBasis(v)}
+                    className={`px-3 py-[5px] text-[11px] transition ${
+                      basis === v
+                        ? "bg-navy text-white"
+                        : "bg-panel text-muted hover:bg-lineSoft"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                )
+              )}
+            </div>
+          </div>
           <div>
             <label className="label">Method</label>
             <select className="field mt-1 w-56" value={method}

@@ -14,6 +14,30 @@ import { useEffect, useState } from "react";
 import { blockStyle } from "@/lib/blocks";
 import { num, pct } from "@/lib/api";
 
+interface FormulaSymbol {
+  plain: string;
+  latex: string;
+  meaning: string;
+  kind: string;
+  ref: string | null;
+}
+
+interface FormulaBlock {
+  plain: string;
+  latex: string;
+  where: FormulaSymbol[];
+  steps: string[];
+}
+
+interface FactorFormula {
+  method: string;
+  construction: FormulaBlock;
+  orthogonalisation: FormulaBlock;
+  orthogonalised_against: string[];
+  preamble: FormulaSymbol[];
+  unavailable?: string;
+}
+
 interface Profile {
   factor_id: string;
   name: string;
@@ -23,6 +47,7 @@ interface Profile {
   hierarchy_level: number;
   method: string;
   method_prose: string;
+  formula: FactorFormula | null;
   inputs: Record<string, unknown>;
   note: string | null;
   instruments: Array<{
@@ -121,6 +146,36 @@ export function FactorProfile({
                 <p>{p.method_prose}</p>
                 {p.note && <p className="mt-1.5 italic text-muted">{p.note}</p>}
               </Section>
+
+              {p.formula?.construction && (
+                <Section
+                  title="How it is built"
+                  hint="The arithmetic the builder evaluates, over named instruments.
+                        Rendered from the stored construction rule, so it cannot drift
+                        from the series on the chart."
+                >
+                  <Equation body={p.formula.construction.plain} />
+                  <Steps steps={p.formula.construction.steps} />
+                  <Where symbols={[...p.formula.preamble, ...p.formula.construction.where]} />
+                </Section>
+              )}
+
+              {p.formula?.orthogonalisation && (
+                <Section
+                  title="How it is orthogonalised"
+                  hint={
+                    p.formula.orthogonalised_against.length
+                      ? "f is the raw factor above; f~ is what the model consumes."
+                      : undefined
+                  }
+                >
+                  <Equation body={p.formula.orthogonalisation.plain} />
+                  <Steps steps={p.formula.orthogonalisation.steps} />
+                  {p.formula.orthogonalisation.where.length > 0 && (
+                    <Where symbols={p.formula.orthogonalisation.where} />
+                  )}
+                </Section>
+              )}
 
               {p.instruments.length > 0 && (
                 <Section title="Built from">
@@ -237,6 +292,63 @@ export function FactorProfile({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * A formula, set as code rather than as typeset mathematics.
+ *
+ * No KaTeX. The alternative was a 280KB dependency and a font load to render a
+ * dozen short expressions that are already unambiguous in monospace — and the same
+ * ASCII string is what the assistant quotes and what the CLI prints, so what is on
+ * screen is verifiably the same text everywhere. The LaTeX rendering exists too,
+ * and is what the write-up under Documentation/ uses.
+ */
+function Equation({ body }: { body: string }) {
+  return (
+    <pre
+      className="overflow-x-auto rounded border border-lineSoft bg-canvas px-3 py-2
+                 font-mono text-[11.5px] leading-relaxed text-navy"
+    >
+      {body}
+    </pre>
+  );
+}
+
+function Steps({ steps }: { steps: string[] }) {
+  if (!steps.length) return null;
+  return (
+    <ol className="mt-2 space-y-1">
+      {steps.map((s, i) => (
+        <li key={i} className="flex gap-2">
+          <span className="mt-[1px] shrink-0 font-mono text-2xs text-muted">
+            {String(i + 1).padStart(2, "0")}
+          </span>
+          <span className="text-muted">{s}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The symbol table. Every letter in the formula resolves to something concrete. */
+function Where({ symbols }: { symbols: FormulaSymbol[] }) {
+  const seen = new Set<string>();
+  const unique = symbols.filter((s) =>
+    seen.has(s.plain) ? false : (seen.add(s.plain), true));
+  if (!unique.length) return null;
+
+  return (
+    <dl className="mt-2 space-y-0.5 border-t border-lineSoft pt-2">
+      {unique.map((s) => (
+        <div key={s.plain} className="flex gap-2">
+          <dt className="w-[88px] shrink-0 font-mono text-[11px] text-navy">
+            {s.plain}
+          </dt>
+          <dd className="text-[11px] text-muted">{s.meaning}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

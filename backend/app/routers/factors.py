@@ -14,6 +14,7 @@ from backend.app import db
 from backend.core import distribution as dist
 from backend.core import stationarity as st
 from backend.core import summary as summ
+from backend.pipeline import formula as fm
 
 router = APIRouter()
 
@@ -348,6 +349,21 @@ def _walk_inputs(node, out: list[str]) -> None:
             _walk_inputs(v, out)
 
 
+def _formula(construction: dict, targets: list[str] | None) -> dict | None:
+    """The exact construction and orthogonalisation equations for this factor.
+
+    Rendered from the stored construction JSON rather than from a hand-written
+    table, so a factor whose rule changes cannot keep an out-of-date formula on
+    screen. A method the renderer does not know is reported as a gap rather than
+    faked — a plausible-looking wrong formula is worse than none.
+    """
+    try:
+        return fm.for_factor({"construction": construction,
+                              "orthogonalize_against": list(targets or [])})
+    except ValueError as exc:
+        return {"unavailable": str(exc)}
+
+
 @router.get("/{factor_id}/profile")
 async def profile(factor_id: str) -> dict:
     """Everything needed to explain one factor: what it is, and where it comes from.
@@ -447,6 +463,7 @@ async def profile(factor_id: str) -> dict:
         "version": row["version"],
         "method": method,
         "method_prose": _METHOD_PROSE.get(method, ""),
+        "formula": _formula(construction, row["orthogonalize_against"]),
         "inputs": inputs,
         "note": construction.get("note"),
         "instruments": instruments,
@@ -454,3 +471,153 @@ async def profile(factor_id: str) -> dict:
         "orthogonalised_against": orth,
         "coverage": dict(coverage) if coverage else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# raw against orthogonalised
+# ---------------------------------------------------------------------------
+
+@router.get("/{factor_id}/comparison")
+async def comparison(factor_id: str, start: date | None = None,
+                     end: date | None = None) -> dict:
+    """The same factor on both panels, on exactly the same days.
+
+    The model can be estimated on either panel, so the honest question is what the
+    hierarchy actually took out of this factor and whether that changes what the
+    factor means. Everything here is measured on the intersection of the two series:
+    the orthogonalised one starts 252 observations later (the burn-in before the
+    first refit), and comparing a full raw history against a shorter residual would
+    attribute the difference in dates to the orthogonalisation.
+
+    `removed` is the difference, f - f~, which is the fitted part: the exposure to
+    the blocks above this one that the model books against those factors instead.
+    """
+    rows = await db.fetch(
+        """
+        SELECT date, ret_excess, ret_orth FROM fact_factor_return
+        WHERE factor_id = $1
+          AND ret_excess IS NOT NULL AND ret_orth IS NOT NULL
+          AND ($2::date IS NULL OR date >= $2)
+          AND ($3::date IS NULL OR date <= $3)
+        ORDER BY date
+        """,
+        factor_id, start, end,
+    )
+    if not rows:
+        raise HTTPException(404, f"no overlapping returns for factor {factor_id!r}")
+
+    meta = await db.fetchrow(
+        "SELECT name, block_id, hierarchy_level, orthogonalize_against "
+        "FROM ref_factor WHERE factor_id = $1", factor_id)
+    targets = list(meta["orthogonalize_against"] or []) if meta else []
+
+    days = [r["date"] for r in rows]
+    dates = [d.isoformat() for d in days]
+    raw = np.array([float(r["ret_excess"]) for r in rows])
+    orth = np.array([float(r["ret_orth"]) for r in rows])
+    removed = raw - orth
+
+    # A level-0 factor is stored twice and is the same series both times. Saying so
+    # is more useful than printing a correlation of 1.000 and a variance share of 0.
+    identical = bool(np.allclose(raw, orth, rtol=0, atol=1e-15))
+
+    var_raw = float(np.var(raw, ddof=1))
+    var_orth = float(np.var(orth, ddof=1))
+
+    target_rows = await _target_series(targets, days[0], days[-1]) if targets else {}
+    per_target = []
+    X = []
+    for tid, (tname, series) in target_rows.items():
+        aligned = np.array([series.get(d, np.nan) for d in dates])
+        ok = np.isfinite(aligned)
+        per_target.append({
+            "factor_id": tid,
+            "name": tname,
+            "n_common": int(ok.sum()),
+            "corr_raw": _corr(raw[ok], aligned[ok]),
+            "corr_orth": _corr(orth[ok], aligned[ok]),
+        })
+        X.append(aligned)
+
+    return {
+        "factor_id": factor_id,
+        "name": meta["name"] if meta else factor_id,
+        "block_id": meta["block_id"] if meta else None,
+        "hierarchy_level": meta["hierarchy_level"] if meta else None,
+        "identical": identical,
+        "dates": dates,
+        "cumulative": {
+            "raw": np.cumsum(raw).tolist(),
+            "orth": np.cumsum(orth).tolist(),
+            "removed": np.cumsum(removed).tolist(),
+        },
+        "stats": {
+            "raw": summ.describe(raw),
+            "orth": summ.describe(orth),
+            "removed": summ.describe(removed),
+        },
+        "alignment": {
+            "n_obs": len(dates),
+            "first_date": dates[0],
+            "last_date": dates[-1],
+            "correlation": _corr(raw, orth),
+            # What share of the raw factor's variance the hierarchy removed. Not the
+            # same as the R-squared of the fit: the loadings move over time, so the
+            # residual variance is not var(raw) * (1 - R^2) of any single regression.
+            "variance_removed": (1.0 - var_orth / var_raw) if var_raw > 0 else None,
+            "tracking_vol_ann": float(np.std(removed, ddof=1) * np.sqrt(TRADING_DAYS)),
+        },
+        "targets": per_target,
+        "implied_betas": _implied_betas(raw, np.array(X), list(target_rows)) if X else [],
+    }
+
+
+async def _target_series(targets: list[str], first: date,
+                         last: date) -> dict[str, tuple[str, dict]]:
+    """The orthogonalised series of each residualisation target, by date.
+
+    Orthogonalised, not raw: that is what the regression in build_factors uses, so
+    a correlation against the raw target would describe a fit nobody ran.
+    """
+    rows = await db.fetch(
+        """
+        SELECT f.factor_id, r.name, f.date, f.ret_orth
+        FROM fact_factor_return f JOIN ref_factor r USING (factor_id)
+        WHERE f.factor_id = ANY($1::text[]) AND f.ret_orth IS NOT NULL
+          AND f.date >= $2::date AND f.date <= $3::date
+        """,
+        targets, first, last,
+    )
+    out: dict[str, tuple[str, dict]] = {}
+    for r in rows:
+        name, series = out.setdefault(r["factor_id"], (r["name"], {}))
+        series[r["date"].isoformat()] = float(r["ret_orth"])
+    # Preserve the hierarchy order the factor declares rather than the query's.
+    return {t: out[t] for t in targets if t in out}
+
+
+def _corr(a: np.ndarray, b: np.ndarray) -> float | None:
+    if a.size < 3 or np.std(a) == 0 or np.std(b) == 0:
+        return None
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+def _implied_betas(y: np.ndarray, X: np.ndarray, names: list[str]) -> list[dict]:
+    """Full-sample loadings of the raw factor on its targets.
+
+    A summary of what the rolling residualisation removes on average — not the
+    coefficients it actually used, which are refitted every 21 days and differ
+    window by window. Labelled `average_beta` for exactly that reason.
+    """
+    X = X.T if X.shape[0] == len(names) else X
+    ok = np.isfinite(y) & np.all(np.isfinite(X), axis=1)
+    if ok.sum() < X.shape[1] + 2:
+        return []
+    design = np.column_stack([np.ones(int(ok.sum())), X[ok]])
+    coef, *_ = np.linalg.lstsq(design, y[ok], rcond=None)
+    fitted = design @ coef
+    resid = y[ok] - fitted
+    ss_tot = float(np.sum((y[ok] - y[ok].mean()) ** 2))
+    r2 = 1.0 - float(np.sum(resid**2)) / ss_tot if ss_tot > 0 else None
+    return [{"factor_id": n, "average_beta": float(b), "r2": r2, "n_obs": int(ok.sum())}
+            for n, b in zip(names, coef[1:])]

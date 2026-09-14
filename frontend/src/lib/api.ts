@@ -65,6 +65,50 @@ export interface FactorQuery {
   basis?: Basis;
 }
 
+export interface SeriesStats {
+  n_obs: number;
+  mean_ann?: number;
+  vol_ann?: number;
+  sharpe?: number | null;
+  skew?: number;
+  excess_kurtosis?: number;
+  max_drawdown?: number;
+  total_compounded?: number;
+}
+
+/**
+ * One factor measured on both panels over exactly the same days.
+ *
+ * `removed` is f - f~: the part of the raw factor the hierarchy attributes to the
+ * blocks above it. For a level-0 factor there is nothing above it, `identical` is
+ * true, and the two series are the same numbers.
+ */
+export interface FactorComparison {
+  factor_id: string;
+  name: string;
+  block_id: string | null;
+  hierarchy_level: number | null;
+  identical: boolean;
+  dates: string[];
+  cumulative: { raw: number[]; orth: number[]; removed: number[] };
+  stats: { raw: SeriesStats; orth: SeriesStats; removed: SeriesStats };
+  alignment: {
+    n_obs: number;
+    first_date: string;
+    last_date: string;
+    correlation: number | null;
+    variance_removed: number | null;
+    tracking_vol_ann: number;
+  };
+  targets: Array<{
+    factor_id: string; name: string; n_common: number;
+    corr_raw: number | null; corr_orth: number | null;
+  }>;
+  implied_betas: Array<{
+    factor_id: string; average_beta: number; r2: number | null; n_obs: number;
+  }>;
+}
+
 export interface FactorMeta {
   factor_id: string;
   block_id: string;
@@ -222,6 +266,10 @@ export const api = {
     get<any>(`/api/factors/${id}/acf`, { lags: 30, ...p }),
   factorDiagnostics: (id: string) => get<any>(`/api/factors/${id}/diagnostics`),
   factorReference: (id: string) => get<any>(`/api/factors/${id}/reference-comparison`),
+  // Deliberately takes no basis: the point of the endpoint is to serve both at once,
+  // measured on the days where both exist.
+  factorComparison: (id: string, p?: { start?: string; end?: string }) =>
+    get<FactorComparison>(`/api/factors/${id}/comparison`, p),
 
   matrix: (body: Record<string, unknown>) => post<MatrixResult>("/api/matrix", body),
   pca: (body: Record<string, unknown>) => post<any>("/api/matrix/pca", body),

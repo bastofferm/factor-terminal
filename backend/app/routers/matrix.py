@@ -14,6 +14,20 @@ from backend.core import covariance as cv
 
 router = APIRouter()
 
+# Which factor panel a request is about.
+#
+#   orth    the block-hierarchy residuals, and the model's own panel: Sigma here is
+#           the covariance the risk forecast pairs with betas estimated on the same
+#           series.
+#   excess  the factors before residualisation. Blocks overlap here by construction,
+#           so the off-diagonal is large, the condition number is worse, and PC1
+#           takes a much bigger share -- which is the argument for the hierarchy,
+#           visible rather than asserted.
+#
+# Mixing them would not be a nuance but an error: betas on one panel with Sigma from
+# the other make beta' Sigma beta meaningless.
+_BASIS_COLUMN = {"excess": "ret_excess", "orth": "ret_orth"}
+
 
 class MatrixRequest(BaseModel):
     factor_ids: list[str] | None = Field(
@@ -24,16 +38,21 @@ class MatrixRequest(BaseModel):
     halflife: float = 60.0
     ewma_weight: float = 0.6
     order: str = Field(default="block", pattern="^(block|cluster|none)$")
+    basis: str = Field(default="orth", pattern="^(orth|excess)$")
 
 
-async def _panel(factor_ids: list[str] | None, start: date | None,
-                 end: date | None) -> tuple[pd.DataFrame, dict[str, str]]:
+async def _panel(factor_ids: list[str] | None, start: date | None, end: date | None,
+                 basis: str = "orth") -> tuple[pd.DataFrame, dict[str, str]]:
+    col = _BASIS_COLUMN.get(basis)
+    if col is None:
+        raise HTTPException(
+            400, f"basis must be one of {sorted(_BASIS_COLUMN)}, not {basis!r}")
     rows = await db.fetch(
-        """
-        SELECT f.date, f.factor_id, f.ret_orth, r.block_id
+        f"""
+        SELECT f.date, f.factor_id, f.{col} AS value, r.block_id
         FROM fact_factor_return f
         JOIN ref_factor r USING (factor_id)
-        WHERE f.ret_orth IS NOT NULL AND r.is_active
+        WHERE f.{col} IS NOT NULL AND r.is_active
           AND ($1::text[] IS NULL OR f.factor_id = ANY($1))
           AND ($2::date IS NULL OR f.date >= $2)
           AND ($3::date IS NULL OR f.date <= $3)
@@ -44,7 +63,7 @@ async def _panel(factor_ids: list[str] | None, start: date | None,
         raise HTTPException(404, "no factor returns match that request")
     df = pd.DataFrame(rows)
     blocks = dict(df.groupby("factor_id")["block_id"].first())
-    panel = df.pivot(index="date", columns="factor_id", values="ret_orth").sort_index()
+    panel = df.pivot(index="date", columns="factor_id", values="value").sort_index()
     return panel.astype(float), blocks
 
 
@@ -68,7 +87,7 @@ def _cluster_order(corr: np.ndarray, names: list[str]) -> list[int]:
 @router.post("")
 async def matrix(req: MatrixRequest) -> dict:
     """Covariance and correlation of the factor panel, with eigen-diagnostics."""
-    panel, blocks = await _panel(req.factor_ids, req.start, req.end)
+    panel, blocks = await _panel(req.factor_ids, req.start, req.end, req.basis)
 
     # Keep factors observed over most of the requested span; a factor that only
     # exists for the last year would otherwise truncate every pairwise sample.
@@ -101,6 +120,7 @@ async def matrix(req: MatrixRequest) -> dict:
         "names": names,
         "blocks": [blocks.get(n) for n in names],
         "method": res.method,
+        "basis": req.basis,
         "n_obs": res.n_obs,
         "start": panel.index.min().isoformat(),
         "end": panel.index.max().isoformat(),
@@ -126,6 +146,7 @@ class PcaRequest(BaseModel):
     start: date | None = None
     end: date | None = None
     n_components: int = 10
+    basis: str = Field(default="orth", pattern="^(orth|excess)$")
 
 
 @router.post("/pca")
@@ -136,7 +157,7 @@ async def pca(req: PcaRequest) -> dict:
     it shows how much common structure the named factors already span, and PC1 is
     usually a global risk-on/risk-off direction.
     """
-    panel, blocks = await _panel(req.factor_ids, req.start, req.end)
+    panel, blocks = await _panel(req.factor_ids, req.start, req.end, req.basis)
     coverage = panel.notna().mean()
     keep = coverage[coverage >= 0.9].index.tolist()
     panel = panel[keep].dropna()
@@ -160,6 +181,7 @@ async def pca(req: PcaRequest) -> dict:
     return {
         "names": keep,
         "blocks": [blocks.get(n) for n in keep],
+        "basis": req.basis,
         "n_obs": int(len(panel)),
         "eigenvalues": vals[:k].round(6).tolist(),
         "var_share": (vals[:k] / total).round(5).tolist(),
@@ -174,6 +196,7 @@ class RollingCorrRequest(BaseModel):
     factor_a: str
     factor_b: str
     window: int = 252
+    basis: str = Field(default="orth", pattern="^(orth|excess)$")
 
 
 @router.post("/rolling-correlation")
@@ -184,7 +207,7 @@ async def rolling_correlation(req: RollingCorrRequest) -> dict:
     and moved to 0.8 in a crisis, which is exactly the behaviour PDF section 7.2
     warns about under Krisenkorrelation.
     """
-    panel, _ = await _panel([req.factor_a, req.factor_b], None, None)
+    panel, _ = await _panel([req.factor_a, req.factor_b], None, None, req.basis)
     if req.factor_a not in panel or req.factor_b not in panel:
         raise HTTPException(404, "one of the requested factors has no data")
 
@@ -194,6 +217,7 @@ async def rolling_correlation(req: RollingCorrRequest) -> dict:
     return {
         "factor_a": req.factor_a,
         "factor_b": req.factor_b,
+        "basis": req.basis,
         "window": req.window,
         "dates": [d.isoformat() for d in both.index],
         "correlation": [None if pd.isna(v) else round(float(v), 5) for v in roll],

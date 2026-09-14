@@ -6,7 +6,12 @@ already exist in the codebase — as module docstrings in `backend/core/`, and a
 to explain the code to a reader; they answer the analyst's questions just as well.
 Assembling them beats maintaining a second, drifting copy of the same explanations.
 
-The result is on the order of six thousand tokens, which is nothing against
+The exception is the formula block: each factor's construction and orthogonalisation
+equations are rendered by `pipeline/formula.py`, the same renderer the profile popout
+calls, so the assistant and the screen cannot state different arithmetic to the same
+user.
+
+The result is on the order of nine thousand tokens, which is nothing against
 DeepSeek's million-token context, so there is no retrieval step and no vector index.
 It is also completely stable between requests, which matters: DeepSeek prices a
 context-cache hit at roughly a fiftieth of a miss, so the corpus goes at the front of
@@ -53,17 +58,48 @@ series this project does not fetch itself. Two blocks lag by design: the EA and
 JP rates curves come from ECB, BOJ and MOF via the warehouse, which has no
 automated refresh here.
 
-THE FIVE PAGES
+THE TWO PANELS
+
+Every factor is stored twice, and which of the two a number refers to changes its
+meaning completely.
+
+- ret_excess, the RAW factor: the construction formula's own output, a log excess
+  return over cash. This is what the factor is.
+- ret_orth, the ORTHOGONALISED factor: that same series after the block hierarchy
+  of section 4 has residualised it against the factors above it. This is what the
+  model consumes by default.
+
+The gap is large rather than a nuance. eq_us raw returns 12.9% a year at 17.3%
+volatility; after eq_global is removed, -0.2% at 4.2%. A factor whose
+orthogonalisation list is empty — eq_global, rt_us_level, rt_us_slope,
+rt_us_curve, fx_usd, cm_broad, liq_funding, liq_conditions — is identical in both
+panels, value for value.
+
+The model can be estimated on either panel end to end. The choice is recorded on
+the spec (dim_model_spec.orthogonalized) and carried through to the covariance
+matrix, because betas estimated on one panel have to be paired with Sigma from the
+same one: beta' Sigma beta is meaningless otherwise.
+
+Estimating on the raw panel gives loadings in the units an analyst reads directly
+("beta 1.02 to global equity"), at the cost of severe multicollinearity, since the
+blocks overlap by construction. Estimating on the orthogonalised panel gives a
+clean decomposition and a better-conditioned design, at the cost of loadings that
+are incremental: the coefficient on eq_us means "over and above global equity".
+
+THE SIX PAGES
 
 - Data Health: staleness per input, dead instruments, pipeline runs, diagnostic
   verdict counts.
-- Factor Explorer: one factor at a time — raw series, cumulative return, rolling
-  volatility, return distribution, QQ plot, autocorrelation, and the full
-  stationarity battery.
+- Factor Explorer: one factor at a time on the ORTHOGONALISED panel — series,
+  cumulative return, rolling volatility, return distribution, QQ plot,
+  autocorrelation, the full stationarity battery, and a raw-against-orthogonalised
+  comparison of the same factor.
+- Raw Explorer: the same battery on the RAW panel, and on the individual
+  instruments underneath it, before the model touches them.
 - Covariance & PCA: the factor correlation matrix, its eigen-diagnostics, and
-  rolling pairwise correlation.
+  rolling pairwise correlation, on either panel.
 - Loadings Lab: rolling factor betas for one security, under a chosen estimation
-  window, roll-forward step and estimator.
+  window, roll-forward step, estimator and panel.
 - Risk Lens: predicted versus realised risk for one security, with the full
   backtest — bias statistic, Mincer-Zarnowitz, and VaR coverage.
 
@@ -155,9 +191,11 @@ def _factor_catalogue() -> str:
         by_block.setdefault(f["block"], []).append(f)
 
     lines = [
-        "Each entry gives the factor id, its name, the construction method and its "
-        "inputs, what it is orthogonalised against, and any caveat recorded when it "
-        "was defined.",
+        "Each entry gives the factor id, its name, the exact formula that builds it "
+        "from named instruments, the exact equation that orthogonalises it, and any "
+        "caveat recorded when it was defined. Quote these formulas as written: they "
+        "are rendered from the same definitions the builder runs, and the analyst "
+        "sees the identical text in the factor's profile popout.",
         "",
     ]
     for block, factors in by_block.items():
@@ -166,12 +204,41 @@ def _factor_catalogue() -> str:
             inputs = json.dumps(f["inputs"], separators=(",", ": "))
             lines.append(f"- **{f['id']}** — {f['name']}")
             lines.append(f"  - method `{f['method']}`, inputs {inputs}")
+            rendered = _rendered_formula(f)
+            if rendered:
+                lines.append("  - raw factor f_t:")
+                lines.append(_indent(rendered["construction"]))
+                lines.append("  - orthogonalised factor f~_t:")
+                lines.append(_indent(rendered["orthogonalisation"]))
             if f.get("orth"):
                 lines.append(f"  - orthogonalised against: {', '.join(f['orth'])}")
+            else:
+                lines.append("  - orthogonalised against: nothing, so the raw and the "
+                             "orthogonalised series of this factor are identical")
             if f.get("note"):
                 lines.append(f"  - note: {f['note']}")
         lines.append("")
     return "\n".join(lines)
+
+
+def _indent(block: str) -> str:
+    return textwrap.indent(block, "        ")
+
+
+def _rendered_formula(spec: dict) -> dict | None:
+    """The construction and orthogonalisation formulas of one factor, in plain text.
+
+    Asked how cm_broad is built, the assistant should answer with the formula rather
+    than with the name of a method. This is the same rendering the profile popout
+    shows, so the two cannot disagree in front of the same user.
+    """
+    try:
+        from backend.pipeline import formula
+        r = formula.for_factor(spec)
+    except Exception:  # a renderer gap must not take the corpus down
+        return None
+    return {"construction": r["construction"]["plain"],
+            "orthogonalisation": r["orthogonalisation"]["plain"]}
 
 
 @functools.lru_cache(maxsize=1)

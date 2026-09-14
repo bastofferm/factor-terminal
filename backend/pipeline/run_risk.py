@@ -51,6 +51,20 @@ def latest_spec(cur: Any) -> str | None:
     return row[0] if row else None
 
 
+def spec_is_orthogonalized(cur: Any, spec_id: str) -> bool:
+    """Which factor panel this spec's betas were estimated on.
+
+    Load-bearing. Portfolio risk is beta' Sigma beta, so Sigma has to be the
+    covariance of the same series the betas refer to. Reading the orthogonalised
+    panel for a spec estimated on raw factors silently pairs betas with the wrong
+    covariance and every predicted volatility is wrong.
+    """
+    cur.execute("SELECT orthogonalized FROM dim_model_spec WHERE spec_id = %s",
+                (spec_id,))
+    row = cur.fetchone()
+    return True if row is None else bool(row[0])
+
+
 def load_loadings(cur: Any, spec_id: str, instrument_id: str) -> pd.DataFrame:
     """Loadings in wide form, indexed by window_end."""
     cur.execute(
@@ -79,7 +93,8 @@ def load_window_meta(cur: Any, spec_id: str, instrument_id: str) -> pd.DataFrame
     return df.set_index("window_end").astype(float)
 
 
-def reliability(cond: float, vif: float) -> tuple[bool, str | None]:
+def reliability(cond: float, vif: float,
+                orthogonalized: bool = True) -> tuple[bool, str | None]:
     """Is this window's loading vector fit to forecast with?
 
     With 40 factors on a 252-day window, a period where only a handful of factors
@@ -87,11 +102,28 @@ def reliability(cond: float, vif: float) -> tuple[bool, str | None]:
     pairs and beta' Sigma beta with them - AAPL produced a 360% predicted volatility
     that way. PDF section 7.3 requires model uncertainty to be penalised rather than
     ignored, so such windows are flagged and kept out of the scoring.
+
+    The VIF limit applies only on the orthogonalised panel, and the asymmetry is not
+    a convenience. On the raw panel high VIFs are what the factor set *is*: eq_us
+    regressed on the other thirty-nine raw factors has an R-squared near 0.9998,
+    because eq_global is one of them. Measured on US:AAPL, 236 of 249 raw-panel
+    windows exceed a VIF of 100 with a mean max VIF of 866 - and their forecasts are
+    not bad ones (mean predicted 0.34 against mean realised 0.28, maximum 0.68, a
+    long way from the 3.6 that motivated the gate). Applying the orthogonalised
+    threshold there would reject the panel by construction rather than on evidence,
+    and "the model can be estimated on raw factors" would be true in name only.
+
+    The condition number is the invariant that actually governs how far beta' Sigma
+    beta can blow up, so it gates both panels unchanged. VIF keeps the role its own
+    docstring gives it - saying *which* factor is responsible - and is recorded on
+    every forecast either way. Same treatment as ARCH-LM in the stationarity
+    battery: recorded, not gated, where what it detects is a property of the design
+    rather than a defect in it.
     """
     problems = []
     if np.isfinite(cond) and cond > MAX_CONDITION_NUMBER:
         problems.append(f"condition number {cond:.0f} above {MAX_CONDITION_NUMBER:.0f}")
-    if np.isfinite(vif) and vif > MAX_VIF:
+    if orthogonalized and np.isfinite(vif) and vif > MAX_VIF:
         problems.append(f"max VIF {vif:.0f} above {MAX_VIF:.0f}")
     return (not problems), ("; ".join(problems) or None)
 
@@ -121,8 +153,14 @@ def forecast(
     horizon: int,
     cov_method: str = "blend",
     peer_var: float = np.nan,
+    orthogonalized: bool = True,
 ) -> pd.DataFrame:
-    """One ex-ante forecast per loading window, scored against the forward outcome."""
+    """One ex-ante forecast per loading window, scored against the forward outcome.
+
+    `orthogonalized` describes the panel `factors` and `loadings` both come from; it
+    reaches only the reliability gate, whose VIF limit means something different on
+    each panel. See `reliability`.
+    """
     if loadings.empty:
         return pd.DataFrame()
 
@@ -157,7 +195,8 @@ def forecast(
         raw_spec = float(meta["resid_vol"])
         if not np.isfinite(raw_spec):
             continue
-        ok, reason = reliability(float(meta["cond"]), float(meta["vif"]))
+        ok, reason = reliability(float(meta["cond"]), float(meta["vif"]),
+                                 orthogonalized)
         spec_var = raw_spec**2
         if np.isfinite(peer_var):
             spec_var = (1 - SPECIFIC_SHRINK) * spec_var + SPECIFIC_SHRINK * peer_var
@@ -322,7 +361,8 @@ def write(cur: Any, spec_id: str, instrument_id: str, horizon: int, cov_method: 
 def run(instruments: Sequence[str], spec_id: str, horizon: int,
         cov_method: str, quiet: bool = False) -> int:
     with connect() as conn, conn.cursor() as cur:
-        factors = load_factor_panel(cur)
+        orthogonalized = spec_is_orthogonalized(cur, spec_id)
+        factors = load_factor_panel(cur, orthogonalized)
         peer_var = peer_specific_variance(cur, spec_id)
 
     keys = [f"{spec_id[:8]}:{i}:{horizon}" for i in instruments]
@@ -344,7 +384,8 @@ def run(instruments: Sequence[str], spec_id: str, horizon: int,
                     print(f"  {inst:12s} no loadings for this spec", file=sys.stderr)
                     continue
 
-                fc = forecast(y, factors, loadings, wmeta, horizon, cov_method, peer_var)
+                fc = forecast(y, factors, loadings, wmeta, horizon, cov_method,
+                              peer_var, orthogonalized)
                 bt = backtest(y, fc, horizon) if not fc.empty else {}
 
                 with connect() as conn, conn.cursor() as cur:
@@ -392,8 +433,10 @@ def main() -> int:
         print(f"no instruments have loadings for spec {spec_id}", file=sys.stderr)
         return 1
 
+    with connect() as conn, conn.cursor() as cur:
+        panel = "orthogonalised" if spec_is_orthogonalized(cur, spec_id) else "raw"
     print(f"spec {spec_id}  horizon {args.horizon}d  cov {args.cov_method}  "
-          f"{len(instruments)} instruments")
+          f"{panel} factors  {len(instruments)} instruments")
     return 1 if run(instruments, spec_id, args.horizon, args.cov_method) else 0
 
 

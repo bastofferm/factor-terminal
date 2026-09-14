@@ -28,6 +28,7 @@ export default function LoadingsPage() {
   const [dimson, setDimson] = useState(0);
   const [winsorize, setWinsorize] = useState(false);
   const [hacLags, setHacLags] = useState<string>("");
+  const [orthogonalized, setOrthogonalized] = useState(true);
 
   const [result, setResult] = useState<LoadingResult | null>(null);
   const [stability, setStability] = useState<any>(null);
@@ -52,6 +53,7 @@ export default function LoadingsPage() {
       dimson_lags: dimson,
       winsorize,
       hac_lags: hacLags === "" ? null : Number(hacLags),
+      orthogonalized,
     })
       .then((r) => {
         setResult(r);
@@ -132,6 +134,48 @@ export default function LoadingsPage() {
               </datalist>
               <p className="mt-1 text-[10px] leading-tight text-muted">
                 Equities as <span className="font-mono">US:TICKER</span>; ETFs by bare ticker.
+              </p>
+            </div>
+
+            {/*
+              Which factor panel the regression reads. This is the most consequential
+              control on the page and the one whose effect is least obvious, so it
+              sits above the window rather than among the estimator options — and it
+              carries through: the covariance matrix used to score this spec's risk
+              is built from the same panel, because betas from one panel with Sigma
+              from the other make beta' Sigma beta meaningless.
+            */}
+            <div>
+              <label className="label">Factor panel</label>
+              <div className="mt-1 flex overflow-hidden rounded border border-line">
+                {([
+                  [true, "Orthogonalised",
+                   "The block hierarchy's residuals. Well-conditioned design and a "
+                   + "clean decomposition; each beta is incremental over the blocks "
+                   + "above it."],
+                  [false, "Raw",
+                   "The factors before residualisation. Betas read directly - 1.02 to "
+                   + "global equity means what it says - but the blocks overlap by "
+                   + "construction, so watch the condition number and the VIFs."],
+                ] as const).map(([v, label, tip]) => (
+                  <button
+                    key={String(v)}
+                    title={tip}
+                    onClick={() => setOrthogonalized(v)}
+                    className={`flex-1 px-2 py-1 text-[11px] transition ${
+                      orthogonalized === v
+                        ? "bg-navy text-white"
+                        : "bg-panel text-muted hover:bg-lineSoft"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-[10px] leading-tight text-muted">
+                {orthogonalized
+                  ? "Each beta is what the factor adds beyond the blocks above it."
+                  : "Betas are in readable units, at the cost of collinear factors."}
               </p>
             </div>
 
@@ -271,7 +315,31 @@ export default function LoadingsPage() {
         {result && (
           <Panel
             title="Rolling factor loadings"
-            caption="Shaded bands are 95% intervals from Newey-West standard errors. A band that never excludes zero is a loading the data does not actually support."
+            caption={
+              <>
+                {/*
+                  The panel is read back from the stored spec rather than from the
+                  control, so what the caption claims is what actually produced the
+                  numbers - including when the result came from the cache under a
+                  spec estimated earlier.
+                */}
+                Estimated on the{" "}
+                <b>
+                  {(result.spec as any)?.orthogonalized === false
+                    ? "raw"
+                    : "orthogonalised"}
+                </b>{" "}
+                factor panel.{" "}
+                {(result.spec as any)?.orthogonalized === false
+                  ? "Each beta is the total exposure to that factor, and the blocks "
+                    + "overlap by construction — read the condition number and the "
+                    + "VIF column before trusting an individual coefficient."
+                  : "Each beta is what that factor adds beyond the blocks above it "
+                    + "in the hierarchy, not the total exposure to it."}{" "}
+                Shaded bands are 95% intervals from Newey-West standard errors; a
+                band that never excludes zero is a loading the data does not support.
+              </>
+            }
           >
             <Chart height={360} data={betaTraces as any}
                    layout={{ yaxis: { title: "beta" }, xaxis: { title: "window end" } }} />

@@ -342,3 +342,59 @@ def test_coverage_test_needs_enough_observations():
     ct = risk.coverage_test(np.zeros(5), np.full(5, 0.2))
     assert ct.n < 10
     assert np.isnan(ct.kupiec_p)
+
+
+# ---------------------------------------------------------------------------
+# the reliability gate, which decides what gets scored at all
+# ---------------------------------------------------------------------------
+
+def test_a_well_conditioned_window_is_reliable_on_either_panel():
+    from backend.pipeline.run_risk import reliability
+
+    for panel in (True, False):
+        ok, reason = reliability(cond=54.0, vif=25.0, orthogonalized=panel)
+        assert ok and reason is None
+
+
+def test_the_condition_number_gates_both_panels():
+    """It is the invariant that governs how far beta' Sigma beta can blow up, so it
+    cannot depend on which panel produced the betas."""
+    from backend.pipeline.run_risk import reliability
+
+    for panel in (True, False):
+        ok, reason = reliability(cond=640.0, vif=10.0, orthogonalized=panel)
+        assert not ok
+        assert "condition number" in reason
+
+
+def test_a_structural_vif_gates_the_orthogonalised_panel_only():
+    """On the raw panel eq_us is ~99.98% explained by the other thirty-nine factors
+    because eq_global is among them. Gating on that would reject the panel by
+    construction rather than on any evidence about the forecast."""
+    from backend.pipeline.run_risk import reliability
+
+    ok_orth, reason = reliability(cond=147.0, vif=866.0, orthogonalized=True)
+    assert not ok_orth
+    assert "VIF" in reason
+
+    ok_raw, reason_raw = reliability(cond=147.0, vif=866.0, orthogonalized=False)
+    assert ok_raw
+    assert reason_raw is None
+
+
+def test_a_degenerate_raw_window_is_still_caught():
+    """Relaxing the VIF check must not make the raw panel ungated: the 2002-03
+    windows that produced a 360% predicted volatility ran condition numbers of
+    570-660, well past the limit."""
+    from backend.pipeline.run_risk import reliability
+
+    ok, reason = reliability(cond=610.0, vif=106_000.0, orthogonalized=False)
+    assert not ok
+    assert "condition number" in reason
+
+
+def test_missing_diagnostics_do_not_silently_fail_a_window():
+    from backend.pipeline.run_risk import reliability
+
+    ok, reason = reliability(cond=np.nan, vif=np.nan)
+    assert ok and reason is None

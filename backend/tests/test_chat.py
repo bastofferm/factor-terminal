@@ -57,6 +57,39 @@ def test_corpus_carries_the_reasoning_not_just_the_rules():
         assert phrase.lower() in text.lower(), f"corpus lost {phrase!r}"
 
 
+def test_corpus_carries_the_exact_formula_for_every_factor():
+    """Asked how a factor is built, the assistant must be able to answer with the
+    arithmetic rather than with the name of a construction method."""
+    from backend.pipeline import factor_defs, formula
+
+    text = corpus.build()
+    for f in factor_defs.FACTORS:
+        first_line = formula.for_factor(f)["construction"]["plain"].splitlines()[0]
+        assert first_line in text, f"{f['id']}: formula absent from the corpus"
+
+
+def test_corpus_distinguishes_the_two_panels():
+    """The commonest way to misread a number on any of these pages is to take a raw
+    figure for an orthogonalised one. The corpus has to name the distinction, both
+    stored columns, and the constraint that ties betas to their own covariance."""
+    text = corpus.build()
+    for phrase in ["ret_excess", "ret_orth", "dim_model_spec.orthogonalized",
+                   "beta' Sigma beta"]:
+        assert phrase in text, f"corpus lost {phrase!r}"
+
+
+def test_corpus_says_which_factors_are_the_same_in_both_panels():
+    from backend.pipeline import factor_defs
+
+    text = corpus.build()
+    for f in factor_defs.FACTORS:
+        if f.get("orth"):
+            continue
+        block = text[text.index(f"**{f['id']}**"):]
+        block = block[:block.index("\n- **")] if "\n- **" in block else block
+        assert "identical" in block, f"{f['id']} does not say both panels agree"
+
+
 def test_corpus_states_its_known_limitations():
     text = corpus.build().lower()
     assert "approximation" in text          # FX carry

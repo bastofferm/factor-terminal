@@ -151,6 +151,34 @@ keeps a loading interpretable — see §5.
 
 Volatilities are of the **raw** series, before orthogonalisation.
 
+### Every construction, written out
+
+**[factor-formulas.md](factor-formulas.md)** gives each of the forty factors as a
+formula over named instruments, plus the exact equation that orthogonalises it. It
+is generated from the registry by `python -m scripts.render_formula_appendix`, and
+the transcription is checked rather than trusted: `backend/tests/test_formula.py`
+evaluates each rendered formula independently and asserts it reproduces the
+builder's own output.
+
+A sample of what that looks like — the 10s-2s steepener, which is the least obvious
+of the forty:
+
+$$
+f_t = 5 \cdot \bigl(u^{(10y)}_t - u^{(2y)}_t\bigr), \qquad
+u^{(T)}_t = \frac{b^{(T)}_t}{D^{(T)}_{t-1}}
+$$
+
+$$
+b^{(T)}_t = -D^{(T)}_{t-1}\,\Delta y^{(T)}_t
++ \tfrac{1}{2} C^{(T)}_{t-1}\,\bigl(\Delta y^{(T)}_t\bigr)^2
++ \frac{y^{(T)}_{t-1} - c_{t-1}}{252}
+$$
+
+Yield changes at 2y and 10y become bond returns with duration and convexity taken
+at *yesterday's* yield; each leg is divided by its own duration so the two are
+comparable; the difference is scaled back to five years. Nothing in that is
+recoverable from the string `curve`, which is the reason the appendix exists.
+
 ### Validation against published factors
 
 Fama-French and AQR series lag by one to two months and can never drive a daily
@@ -208,11 +236,145 @@ A residual correlation of −0.05 instead of a clean zero is the price of not
 cheating, and it is the right trade.
 
 **Consequence for reading the model.** The orthogonalised series is what the
-regression, the covariance and the risk forecast consume — but it is not what the
-factor earned. `eq_us` returns 8.6% a year at 18.5% volatility; its residual after
-removing `eq_global` returns −0.2% at 4.2%. The application keeps these on separate
-pages for that reason: the Factor Explorer describes the model, the Raw Explorer
-describes the data.
+regression, the covariance and the risk forecast consume by default — but it is not
+what the factor earned. `eq_us` returns 12.9% a year at 17.3% volatility; its
+residual after removing `eq_global` returns −0.2% at 4.2%. The application keeps
+these on separate pages for that reason: the Factor Explorer describes the model,
+the Raw Explorer describes the data.
+
+### 5.1 Both panels, end to end
+
+Orthogonalisation is a modelling choice, not a fact about the world, so the model
+estimates on either panel rather than assuming one. Every factor is stored twice —
+`ret_excess` for the raw series, `ret_orth` for the residual — and the choice
+travels with the spec:
+
+```bash
+python -m backend.pipeline.run_estimation --instrument US:AAPL --window 252 --step 1m
+python -m backend.pipeline.run_estimation --instrument US:AAPL --window 252 --step 1m --raw-factors
+```
+
+Those hash to different `spec_id`s, so the two live side by side in the cache rather
+than overwriting each other. The Loadings Lab exposes the same switch, and so does
+Covariance & PCA.
+
+**The constraint that makes this more than a display option.** Portfolio risk is
+$\beta'\Sigma\beta$, so $\Sigma$ has to be the covariance of the same series the
+$\beta$s refer to. `run_risk` therefore reads the spec's own `orthogonalized` flag
+and builds $\Sigma$ from the matching panel. It did not always: until this was
+fixed, a spec estimated on raw factors was scored against the orthogonalised
+covariance, and every predicted volatility it produced was wrong — silently, with
+no error and no implausible number to give it away. The kind of bug this project
+exists to make visible.
+
+**What each panel buys.**
+
+| | Raw | Orthogonalised |
+|---|---|---|
+| Reading a beta | total exposure — 1.02 to global equity means what it says | incremental — what the factor adds beyond the blocks above it |
+| Design matrix | blocks overlap by construction; high VIFs by definition | well-conditioned; that is what the hierarchy is for |
+| Attribution | double-counts: HY credit carries duration *and* equity | each block's contribution is its own |
+| Best used for | explaining an exposure to someone | decomposing risk, and forecasting it |
+
+### 5.2 What the raw panel actually costs
+
+The argument for the hierarchy has until now been made from in-sample statistics —
+correlations, condition numbers, residual correlations. Being able to estimate both
+panels end to end turns it into an out-of-sample measurement. Identical settings
+(252-day window, monthly step, OLS, blend covariance, 21-day horizon) on US:AAPL:
+249 monthly windows each way, and 5,208 daily observations behind the VaR coverage
+test.
+
+| | Orthogonalised | Raw |
+|---|---|---|
+| Windows excluded as ill-conditioned | **0** of 249 | **16** of 249 |
+| Mean max VIF (worst) | 26 (90) | 822 (69,720) |
+| Mean condition number (worst) | 56 (134) | 142 (1,473) |
+| Mean adjusted R² in sample | 0.442 | 0.481 |
+| Bias ratio (target 1) | **0.964** | 0.884 |
+| Mincer-Zarnowitz slope (target 1) | **1.023** (p = 0.95) | **0.350** (p = 0.0003) |
+| Mincer-Zarnowitz R² | 0.134 | 0.055 |
+| VaR 95% breaches vs 260 expected | **248** (Kupiec p = 0.43) | 201 (Kupiec p = 0.0001) |
+
+The raw panel fits *better* in sample — adjusted R² 0.481 against 0.442 — and
+forecasts distinctly worse out of sample. That is the entire case for the
+orthogonalisation in two lines. A Mincer-Zarnowitz slope of 0.35 says the raw-panel
+forecast barely tracks the variation in realised risk: it produces roughly the right
+average level (bias 0.88) while getting individual periods wrong, which is exactly
+what unstable betas on a collinear design do. Its VaR is systematically too wide —
+201 breaches where 260 were expected — for the same reason.
+
+Both panels fail Christoffersen (p < 0.0001): breaches cluster. That is a property
+of applying a 21-day-horizon forecast to daily returns and is the same on both, so
+it is not evidence about the panel choice.
+
+The covariance matrix tells the same story from the other end. Same 39 factors, same
+sample (2015-01 to 2026-05, 2,794 days), same blend estimator:
+
+| | Orthogonalised | Raw |
+|---|---|---|
+| Condition number | 1,068 | **9,254** |
+| Smallest eigenvalue | 2.19e-4 | 7.50e-5 |
+| PC1 share of variance | 34.5% | **50.3%** |
+
+Half the variance of the raw factor set lies in one direction, which is another way
+of saying that a forty-factor model built on it is not really a forty-factor model.
+Covariance & PCA draws both, because the raw heatmap is the clearest single picture
+of what the hierarchy is for.
+
+### 5.3 A gate that had to be made panel-aware
+
+Ill-conditioned windows are excluded from scoring (§7). That gate originally tested
+two things — a condition number above 200, or a maximum VIF above 100 — and the VIF
+half does not survive contact with the raw panel: `eq_us` regressed on the other
+thirty-nine raw factors has an R² near 0.9998, because `eq_global` is one of them.
+Applied unchanged, the rule excluded **236 of 249** raw-panel windows and left
+thirteen forecasts to score, which is not an estimable model.
+
+The question is whether those 236 windows deserved exclusion. They did not: their
+forecasts averaged 0.34 predicted against 0.28 realised, with a maximum of 0.68 —
+nowhere near the 3.6 that motivated the gate in the first place. The mean condition
+number on them was 147, inside the limit. They were being rejected for a property of
+the factor set rather than a defect in the window.
+
+So the condition number now gates both panels unchanged — it is the invariant that
+governs how far $\beta'\Sigma\beta$ can blow up — and the VIF limit applies only to
+the orthogonalised panel, where a VIF above 100 is genuinely anomalous. VIF is still
+recorded on every forecast either way, keeping the role it was introduced for:
+saying *which* factor is responsible. This is the same treatment ARCH-LM gets in the
+stationarity battery — recorded, never gated, where what it detects is a property of
+the design rather than a defect in it.
+
+The raw panel still loses 16 windows to the condition-number check, all of them in
+2002-03 where few factors yet existed. Nothing about relaxing the VIF rule makes it
+ungated: a window with a condition number of 610 is excluded on either panel.
+
+### 5.4 Per factor, side by side
+
+The Factor Explorer carries a raw-against-orthogonalised panel for whichever factor
+is selected: both cumulative paths on one axis, the difference between them, and
+what the residualisation achieved — the correlation with each target before and
+after, and the average loading that produced it. Measured on the common sample:
+
+| Factor | Variance removed | vs. its largest target, before → after |
+|---|---|---|
+| `eq_us` | 94.1% | `eq_global` 0.967 → −0.020 |
+| `liq_risk_off` | 80.9% | `eq_global` −0.847 → −0.003 |
+| `cr_em_local` | 38.2% | `fx_usd` −0.536 → −0.015 |
+| `fx_carry` | 38.7% | `fx_jpy` −0.659 → **+0.164** |
+| `arp_trend` | −1.9% | `eq_global` 0.125 → 0.036 |
+| `cm_broad` | 0.0% | nothing above it; the panels are identical |
+
+Two rows are worth dwelling on. `fx_carry` still correlates +0.16 with `fx_jpy`
+after residualisation — the sign has flipped but the magnitude has not gone away,
+which is what a three-legged basket dominated by one funding currency looks like
+even after the currency is regressed out; the note on that factor already says to
+treat its loading sceptically, and this is the measurement behind it. And
+`arp_trend` has *negative* variance removed: the residual is fractionally noisier
+than the factor it came from. That is not a defect in the arithmetic but a property
+of a causal fit — a loading estimated on the trailing two years and applied for the
+next month adds variance rather than removing it when the true loading is near zero
+and moving. Both are shown rather than smoothed over.
 
 ---
 
@@ -295,8 +457,10 @@ Forecasts built on ill-conditioned windows are stored, flagged and excluded from
 scoring. With forty factors on a 252-day window, a period where few factors yet
 existed leaves the design near-singular; AAPL produced a 360% predicted volatility
 that way, which then dominated the Mincer-Zarnowitz regression as a single leverage
-point. The gate is condition number > 200 or max VIF > 100, which excludes about 3%
-of windows, almost all in 2002–03.
+point. The gate is a condition number above 200 on either panel, plus a maximum VIF
+above 100 on the orthogonalised panel only — see §5.3 for why that half cannot apply
+to the raw one. It excludes about 3% of orthogonalised windows and 6% of raw ones,
+almost all in 2002–03.
 
 ### A caveat on reading Mincer-Zarnowitz
 

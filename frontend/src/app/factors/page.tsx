@@ -10,7 +10,7 @@ import { Chart, ChartSkeleton, PALETTE, Panel, Skeleton, Stat, VerdictBadge }
   from "@/components/Chart";
 import { Sparkline } from "@/components/Sparkline";
 import { FactorProfile } from "@/components/FactorProfile";
-import { api, Basis, FactorMeta, num, pct, pval } from "@/lib/api";
+import { api, Basis, FactorComparison, FactorMeta, num, pct, pval } from "@/lib/api";
 import { blockColour, blockStyle } from "@/lib/blocks";
 import { episodeLayout } from "@/lib/episodes";
 import { usePublishSnapshot } from "@/lib/chat-context";
@@ -33,6 +33,7 @@ export default function FactorsPage() {
   const [sparks, setSparks] = useState<Record<string, number[]>>({});
   const [basis, setBasis] = useState<Basis>("excess");
   const [profileOf, setProfileOf] = useState<string | null>(null);
+  const [comparison, setComparison] = useState<FactorComparison | null>(null);
 
   useEffect(() => {
     api.factors()
@@ -72,6 +73,17 @@ export default function FactorsPage() {
       })
       .catch((e) => setError(String(e.message ?? e)));
   }, [selected, start, basis]);
+
+  // The raw-against-orthogonalised comparison carries both panels in one response,
+  // so it does not belong in the basis-dependent fetch above — refetching it when
+  // the toggle moves would reload the same bytes.
+  useEffect(() => {
+    if (!selected) return;
+    setComparison(null);
+    api.factorComparison(selected, start ? { start } : undefined)
+      .then(setComparison)
+      .catch(() => setComparison(null));
+  }, [selected, start]);
 
   const meta = useMemo(
     () => factors.find((f) => f.factor_id === selected),
@@ -532,6 +544,8 @@ export default function FactorsPage() {
           </Panel>
         </div>
 
+        <ComparisonPanel data={comparison} accent={accent} episodes={bands} />
+
         {window252 && <DiagnosticsPanel d={window252} all={diag?.windows ?? []} />}
       </div>
 
@@ -539,6 +553,203 @@ export default function FactorsPage() {
         <FactorProfile factorId={profileOf} onClose={() => setProfileOf(null)} />
       )}
     </div>
+  );
+}
+
+/**
+ * The same factor on both panels, on the same days.
+ *
+ * The model can be estimated either way, so the question "what does the hierarchy
+ * actually take out of this factor" is a real one rather than a footnote. Both
+ * paths are drawn on one axis and the arithmetic is stated underneath: how much
+ * variance came out, what the residual still correlates with, and what the average
+ * loading was that produced it.
+ *
+ * Everything is measured on the intersection. The orthogonalised series starts 252
+ * observations later — the burn-in before the first refit — and comparing a full
+ * raw history with a shorter residual would book that difference in dates as an
+ * effect of the orthogonalisation.
+ */
+function ComparisonPanel({
+  data, accent, episodes,
+}: {
+  data: FactorComparison | null;
+  accent: string;
+  episodes: any;
+}) {
+  if (!data) {
+    return (
+      <Panel title="Raw against orthogonalised">
+        <ChartSkeleton height={220} />
+      </Panel>
+    );
+  }
+
+  if (data.identical) {
+    return (
+      <Panel
+        title="Raw against orthogonalised"
+        caption="This factor sits at the top of its block hierarchy."
+      >
+        <p className="py-6 text-center text-[12px] text-muted">
+          <span className="font-mono text-navy">{data.factor_id}</span> is
+          residualised against nothing, so the two panels hold the same series,
+          value for value. Estimating the model on raw factors rather than
+          orthogonalised ones changes nothing about this one.
+        </p>
+      </Panel>
+    );
+  }
+
+  const a = data.alignment;
+  return (
+    <Panel
+      title="Raw against orthogonalised"
+      caption={
+        <>
+          The model can be estimated on either panel, and this is the difference
+          between them for this factor. <b>Raw</b> is what the factor earned;{" "}
+          <b>orthogonalised</b> is what is left once{" "}
+          <span className="font-mono">
+            {data.targets.map((t) => t.factor_id).join(", ")}
+          </span>{" "}
+          have been regressed out; <b>removed</b> is the difference, which the model
+          books against those factors instead. All three on the{" "}
+          {a.n_obs.toLocaleString()} days where both series exist.
+        </>
+      }
+    >
+      <Chart
+        height={220}
+        episodes={episodes}
+        data={[
+          { x: data.dates, y: data.cumulative.raw, type: "scatter", mode: "lines",
+            name: "raw", line: { color: accent, width: 1.4 },
+            hovertemplate: "%{x|%Y-%m-%d}<br>raw %{y:.3f}<extra></extra>" },
+          { x: data.dates, y: data.cumulative.orth, type: "scatter", mode: "lines",
+            name: "orthogonalised", line: { color: "#2F3B52", width: 1.4 },
+            hovertemplate: "%{x|%Y-%m-%d}<br>orth %{y:.3f}<extra></extra>" },
+          { x: data.dates, y: data.cumulative.removed, type: "scatter", mode: "lines",
+            name: "removed", line: { color: "#9AA0AE", width: 1, dash: "dot" },
+            hovertemplate: "%{x|%Y-%m-%d}<br>removed %{y:.3f}<extra></extra>" },
+        ]}
+        layout={{
+          yaxis: { title: "cumulative log return", zeroline: true },
+          margin: { l: 60, r: 14, t: 8, b: 34 },
+          legend: { orientation: "h", y: -0.22 },
+        }}
+      />
+
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat
+          label="Variance removed"
+          value={pct(a.variance_removed, 1)}
+          tone={(a.variance_removed ?? 0) < 0 ? "bad" : "neutral"}
+          hint={
+            (a.variance_removed ?? 0) < 0
+              ? "Negative: the residual is noisier than the factor it came from. "
+                + "The fitted loading is applied a month after it was estimated, so "
+                + "where the true loading is near zero and moves, subtracting it adds "
+                + "variance instead of removing it."
+              : "Share of the raw factor's variance the hierarchy takes out"
+          }
+        />
+        <Stat
+          label="Correlation"
+          value={num(a.correlation, 3)}
+          hint="Raw against orthogonalised, on the common days"
+        />
+        <Stat
+          label="Removed vol"
+          value={pct(a.tracking_vol_ann, 1)}
+          hint="Annualised volatility of the part attributed to the blocks above"
+        />
+        <Stat
+          label="Common sample"
+          value={a.n_obs.toLocaleString()}
+          hint={`${a.first_date} to ${a.last_date}`}
+        />
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <div>
+          <div className="label mb-1">Side by side</div>
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className="th"> </th>
+                <th className="th">Raw</th>
+                <th className="th">Orthogonalised</th>
+              </tr>
+            </thead>
+            <tbody>
+              {([
+                ["Return p.a.", (s: any) => pct(s.mean_ann, 1)],
+                ["Volatility p.a.", (s: any) => pct(s.vol_ann, 1)],
+                ["Sharpe", (s: any) => num(s.sharpe, 2)],
+                ["Skew", (s: any) => num(s.skew, 2)],
+                ["Excess kurtosis", (s: any) => num(s.excess_kurtosis, 1)],
+                ["Max drawdown", (s: any) => pct(s.max_drawdown, 1)],
+              ] as const).map(([label, fmt]) => (
+                <tr key={label} className="border-t border-lineSoft">
+                  <td className="cell font-sans text-muted">{label}</td>
+                  <td className="cell">{fmt(data.stats.raw)}</td>
+                  <td className="cell">{fmt(data.stats.orth)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div>
+          <div className="label mb-1">What the residualisation achieved</div>
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className="th">Against</th>
+                <th className="th" title="Correlation of the raw factor with this target">
+                  Before
+                </th>
+                <th className="th" title="Correlation of the orthogonalised factor with the same target">
+                  After
+                </th>
+                <th className="th" title="Full-sample loading of the raw factor on its targets. The rolling fit refits every 21 days, so this is an average rather than a coefficient the model used.">
+                  Avg β
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.targets.map((t) => {
+                const beta = data.implied_betas.find(
+                  (b) => b.factor_id === t.factor_id);
+                return (
+                  <tr key={t.factor_id} className="border-t border-lineSoft">
+                    <td className="cell" title={t.name}>{t.factor_id}</td>
+                    <td className="cell">{num(t.corr_raw, 3)}</td>
+                    <td
+                      className={`cell font-semibold ${
+                        Math.abs(t.corr_orth ?? 0) < 0.15 ? "text-pass" : "text-warn"
+                      }`}
+                    >
+                      {num(t.corr_orth, 3)}
+                    </td>
+                    <td className="cell text-muted">{num(beta?.average_beta, 2)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="mt-1.5 text-[11px] text-muted">
+            A residual correlation near zero is the objective; a residue of a few
+            hundredths is what a causal, rolling fit leaves when the true loading
+            moves, and an <i>after</i> figure larger than the <i>before</i> one
+            simply means there was nothing much to remove in the first place.
+            Whatever remains is not lost — the factor covariance matrix estimates it
+            explicitly.
+          </p>
+        </div>
+      </div>
+    </Panel>
   );
 }
 

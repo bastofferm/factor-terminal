@@ -9,7 +9,7 @@ the exercise — whether the model's predicted risk for a security is actually r
 No holdings, no look-through. Every model input is a stationary return series, and
 that is tested rather than assumed.
 
-![The five pages of the terminal](screenshots/factor-terminal.gif)
+![The six pages of the terminal](screenshots/factor-terminal.gif)
 
 *Data Health, Factor Explorer, Raw Explorer, Covariance & PCA, Loadings Lab, Risk
 Lens. Regenerate with `python -m scripts.capture_screenshots` while the app is
@@ -18,6 +18,9 @@ running.*
 **[Documentation/return-based-multi-asset-factor-model.md](Documentation/return-based-multi-asset-factor-model.md)**
 is the model write-up: what the concept note asked for, what the data actually
 supported, the decisions taken where the two differed, and the measured validation.
+**[Documentation/factor-formulas.md](Documentation/factor-formulas.md)** gives every
+one of the forty factors as a formula over named instruments, with the exact
+equation that orthogonalises it.
 
 ---
 
@@ -72,15 +75,15 @@ python -m backend.pipeline.scheduler --once     # or omit --once to run as a dae
 ## Layout
 
 ```
-sql/            13 idempotent migrations, applied in order, fail-fast
+sql/            14 idempotent migrations, applied in order, fail-fast
 backend/
   core/         pure numpy — no database access, so every statistic is testable
                 stationarity · transforms · orthogonalize · regression
                 covariance · risk · distribution
   pipeline/     ingestion, construction and estimation jobs
   app/          FastAPI: thin routers over raw SQL, plus the DeepSeek assistant
-  tests/        221 tests, mostly against simulated data with known parameters
-frontend/       Next.js 14 + Plotly, five pages
+  tests/        256 tests, mostly against simulated data with known parameters
+frontend/       Next.js 14 + Plotly, six pages
 scripts/        one-off tooling: model probe, backfills, screenshot capture
 ```
 
@@ -146,7 +149,17 @@ reproduce their well-known negative correlation.
 **Ill-conditioned windows are excluded from scoring.** With 40 factors on a 252-day
 window, a period where few factors yet exist leaves the design near-singular; betas
 explode in offsetting pairs and so does β′Σβ. Such forecasts are stored and flagged,
-not silently dropped or silently used.
+not silently dropped or silently used. The condition-number limit applies to both
+factor panels; the VIF limit only to the orthogonalised one, where a high VIF is
+anomalous rather than — as on the raw panel — the definition of the factor set.
+
+**The model estimates on either factor panel.** Raw factors or block-hierarchy
+residuals, chosen per spec and carried through to the covariance matrix, because
+β′Σβ needs Σ to be the covariance of the same series the βs refer to. Both are
+offered because the choice is a modelling decision rather than a fact, and the
+comparison is measurable: on US:AAPL the raw panel fits better in sample (adj. R²
+0.481 vs 0.442) and forecasts distinctly worse out of it (Mincer-Zarnowitz slope
+0.35 vs 1.02). That is the case for the hierarchy, made out of sample.
 
 ---
 
@@ -192,7 +205,7 @@ break-or-heteroskedasticity, or inconclusive. Only the second blocks a series.
 ## Verification
 
 ```bash
-python -m pytest -q                                    # 221 tests
+python -m pytest -q                                    # 256 tests
 python -m pytest backend/tests/test_factor_validation.py   # needs a populated DB
 ```
 
