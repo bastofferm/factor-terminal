@@ -8,6 +8,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Chart, PALETTE, Panel, Stat } from "@/components/Chart";
 import { api, Instrument, LoadingResult, num, pct, pval } from "@/lib/api";
+import { MetricCard, MetricStrip, alignFor } from "@/components/MetricCard";
+import { METRICS } from "@/lib/metrics";
 import { design } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
@@ -297,33 +299,43 @@ export default function LoadingsPage() {
         )}
 
         {latestMeta && (
-          <div className="grid grid-cols-3 gap-3 rounded border border-line bg-panel px-4 py-3 md:grid-cols-5 lg:grid-cols-9">
-            <Stat label="Windows" value={meta.length} />
-            <Stat label="Adj. R²" value={num(latestMeta.adj_r2, 3)}
-                  tone={latestMeta.adj_r2 > 0.2 ? "good" : "neutral"} />
-            <Stat label="Alpha (ann.)" value={pct(latestMeta.alpha)}
-                  hint={`t = ${num(latestMeta.t_alpha)}`} />
-            <Stat label="Residual vol" value={pct(latestMeta.resid_vol_ann)} />
-            <Stat label="Observations" value={latestMeta.n_obs} />
+          <MetricStrip>
             {/*
-              maxVif is told which panel it is describing. On the raw panel a VIF
+              One list rather than nine hand-placed cards, so every one of them
+              gets its definition and its alignment without a per-card decision.
+              maxVif is told which panel it is describing: on the raw panel a VIF
               of several hundred is the factor set, not a fault, and the risk
               pipeline no longer gates on it there - so neither does the colour.
             */}
             {([
+              ["Windows", meta.length, undefined, "neutral", METRICS.windows],
+              ["Adj. R²", num(latestMeta.adj_r2, 3), undefined,
+               latestMeta.adj_r2 > 0.2 ? "good" : "neutral", METRICS.adjR2],
+              ["Alpha (ann.)", pct(latestMeta.alpha),
+               `t = ${num(latestMeta.t_alpha)}`, "neutral", METRICS.alpha],
+              ["Residual vol", pct(latestMeta.resid_vol_ann), undefined, "neutral",
+               METRICS.residualVol],
+              ["Observations", latestMeta.n_obs?.toLocaleString(), undefined,
+               "neutral", METRICS.observations],
               ["Durbin-Watson", num(latestMeta.durbin_watson),
-               design.durbinWatson(latestMeta.durbin_watson), "2 = no autocorrelation"],
+               design.durbinWatson(latestMeta.durbin_watson).reason,
+               design.durbinWatson(latestMeta.durbin_watson).tone,
+               METRICS.durbinWatson],
               ["Condition no.", num(latestMeta.condition_number, 0),
-               design.conditionNumber(latestMeta.condition_number),
-               "design conditioning"],
+               design.conditionNumber(latestMeta.condition_number).reason,
+               design.conditionNumber(latestMeta.condition_number).tone,
+               METRICS.conditionNumber],
               ["Max VIF", num(latestMeta.max_vif, 0),
-               design.maxVif(latestMeta.max_vif, estimatedOnOrth), "worst collinearity"],
-            ] as const).map(([label, value, a, what]) => (
-              <Stat key={label} label={label} value={value} tone={a.tone}
-                    hint={`${what} - ${a.reason}`} />
+               design.maxVif(latestMeta.max_vif, estimatedOnOrth).reason,
+               design.maxVif(latestMeta.max_vif, estimatedOnOrth).tone,
+               METRICS.maxVif],
+              ["F p-value", pval(latestMeta.f_p), undefined, "neutral",
+               METRICS.fPValue],
+            ] as const).map(([label, value, sub, tone, metric], i) => (
+              <MetricCard key={label} label={label} value={value} sub={sub}
+                          tone={tone} metric={metric} align={alignFor(i)} />
             ))}
-            <Stat label="F p-value" value={pval(latestMeta.f_p)} />
-          </div>
+          </MetricStrip>
         )}
 
         {result && (

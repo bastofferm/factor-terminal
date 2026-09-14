@@ -6,8 +6,10 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Chart, PALETTE, Panel, Stat } from "@/components/Chart";
+import { Chart, PALETTE, Panel } from "@/components/Chart";
 import { api, Basis, MatrixResult, num, pct } from "@/lib/api";
+import { MetricCard, MetricStrip, alignFor } from "@/components/MetricCard";
+import { METRICS } from "@/lib/metrics";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
 const METHODS = [
@@ -206,23 +208,38 @@ export default function MatrixPage() {
       )}
 
       {d && data && (
-        <div className="grid grid-cols-2 gap-4 rounded border border-line bg-panel px-4 py-3 md:grid-cols-4 lg:grid-cols-8">
-          <Stat label="Factors" value={data.names.length} />
-          <Stat label="Observations" value={data.n_obs.toLocaleString()} />
-          <Stat label="Span" value={`${data.start} → ${data.end}`} />
-          <Stat label="Shrinkage δ" value={num(d.shrink_intensity, 3)}
-                hint="0 = sample, 1 = target" />
-          <Stat label="Condition number" value={num(d.condition_number, 0)}
-                tone={d.condition_number > 500 ? "bad" : "neutral"}
-                hint="ratio of largest to smallest eigenvalue" />
-          <Stat label="Min eigenvalue" value={d.min_eigenvalue.toExponential(2)}
-                tone={d.min_eigenvalue < 0 ? "bad" : "good"} />
-          <Stat label="PSD" value={d.is_psd ? "yes" : "no"}
-                tone={d.is_psd ? "good" : "bad"}
-                hint={d.psd_repaired ? "repaired by eigenvalue clipping" : "as estimated"} />
-          <Stat label="PC1 share" value={pct(d.pc1_share)}
-                hint="one dominant direction means one factor" />
-        </div>
+        <MetricStrip>
+          {([
+            ["Factors", data.names.length, "in the estimated matrix", "neutral",
+             undefined],
+            ["Observations", data.n_obs.toLocaleString(),
+             "days with every factor present", "neutral", undefined],
+            ["Span", `${data.start} → ${data.end}`, "sample estimated on",
+             "neutral", undefined],
+            ["Shrinkage δ", num(d.shrink_intensity, 3),
+             "0 = sample, 1 = target", "neutral", METRICS.shrinkage],
+            // Not design.conditionNumber: that gate is about a security's
+            // regression design and fires at 200. Four figures here is ordinary
+            // for 39 correlated factors, and borrowing the other verdict would
+            // print "excluded from risk scoring" under a number that is not.
+            ["Condition number", num(d.condition_number, 0),
+             "largest over smallest eigenvalue",
+             d.condition_number > 5000 ? "warn" : "neutral",
+             METRICS.covConditionNumber],
+            ["Min eigenvalue", d.min_eigenvalue.toExponential(2),
+             d.min_eigenvalue < 0 ? "indefinite" : "no negative directions",
+             d.min_eigenvalue < 0 ? "bad" : "good", METRICS.minEigenvalue],
+            ["PSD", d.is_psd ? "yes" : "no",
+             d.psd_repaired ? "repaired by eigenvalue clipping" : "as estimated",
+             d.is_psd ? "good" : "bad", METRICS.psd],
+            ["PC1 share", pct(d.pc1_share),
+             "one dominant direction means one factor", "neutral",
+             METRICS.pc1Share],
+          ] as const).map(([label, value, sub, tone, metric], i) => (
+            <MetricCard key={label} label={label} value={value} sub={sub}
+                        tone={tone} metric={metric} align={alignFor(i)} />
+          ))}
+        </MetricStrip>
       )}
 
       <div className="grid gap-4 xl:grid-cols-[3fr_2fr]">

@@ -10,8 +10,10 @@
  */
 
 import { useEffect, useState } from "react";
-import { Chart, PALETTE, Panel, Stat } from "@/components/Chart";
+import { Chart, PALETTE, Panel } from "@/components/Chart";
 import { api, num, pct, pval, RiskResult, Spec } from "@/lib/api";
+import { MetricCard, MetricStrip, alignFor } from "@/components/MetricCard";
+import { METRICS } from "@/lib/metrics";
 import { backtest } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
@@ -163,31 +165,41 @@ export default function RiskPage() {
         than a failed model.
       */}
       {bt && (
-        <div className="grid grid-cols-2 gap-4 rounded border border-line bg-panel px-4 py-3 md:grid-cols-4 lg:grid-cols-9">
-          <Stat label="Forecasts scored" value={bt.n_forecasts}
-                hint={result!.n_unreliable ? `${result!.n_unreliable} excluded` : undefined} />
+        <MetricStrip>
           {([
-            ["Bias ratio", num(bt.mean_bias, 3), backtest.bias(bt.mean_bias),
-             "realised ÷ predicted; 1 is right"],
-            ["Bias statistic", num(bt.z_std, 3), backtest.zStd(bt.z_std),
-             "sd of standardised returns"],
-            ["MZ slope", num(bt.mz_beta, 2), backtest.mzSlope(bt.mz_beta),
-             "1 if unbiased"],
-            ["MZ joint p", pval(bt.mz_joint_p), backtest.mzJoint(bt.mz_joint_p),
-             "H₀: a=0 and b=1"],
-            ["MZ R²", num(bt.mz_r2, 3), backtest.mzR2(bt.mz_r2), "timing ability"],
-            [`VaR 95%`, `${bt.exceptions_95} / ${num(bt.expected_95, 0)}`,
-             backtest.kupiec(bt.kupiec_p_95), `Kupiec p ${pval(bt.kupiec_p_95)}`],
-            [`VaR 99%`, `${bt.exceptions_99} / ${num(bt.expected_99, 0)}`,
-             backtest.kupiec(bt.kupiec_p_99), `Kupiec p ${pval(bt.kupiec_p_99)}`],
+            ["Forecasts scored", bt.n_forecasts?.toLocaleString(),
+             result!.n_unreliable ? `${result!.n_unreliable} excluded` : undefined,
+             "neutral", METRICS.forecastsScored],
+            ["Bias ratio", num(bt.mean_bias, 3),
+             backtest.bias(bt.mean_bias).reason, backtest.bias(bt.mean_bias).tone,
+             METRICS.biasRatio],
+            ["Bias statistic", num(bt.z_std, 3),
+             backtest.zStd(bt.z_std).reason, backtest.zStd(bt.z_std).tone,
+             METRICS.biasStatistic],
+            ["MZ slope", num(bt.mz_beta, 2),
+             backtest.mzSlope(bt.mz_beta).reason, backtest.mzSlope(bt.mz_beta).tone,
+             METRICS.mzSlope],
+            ["MZ joint p", pval(bt.mz_joint_p),
+             backtest.mzJoint(bt.mz_joint_p).reason,
+             backtest.mzJoint(bt.mz_joint_p).tone, METRICS.mzJoint],
+            ["MZ R²", num(bt.mz_r2, 3),
+             backtest.mzR2(bt.mz_r2).reason, backtest.mzR2(bt.mz_r2).tone,
+             METRICS.mzR2],
+            ["VaR 95%", `${bt.exceptions_95} / ${num(bt.expected_95, 0)}`,
+             `Kupiec p ${pval(bt.kupiec_p_95)}`,
+             backtest.kupiec(bt.kupiec_p_95).tone, METRICS.var95],
+            ["VaR 99%", `${bt.exceptions_99} / ${num(bt.expected_99, 0)}`,
+             `Kupiec p ${pval(bt.kupiec_p_99)}`,
+             backtest.kupiec(bt.kupiec_p_99).tone, METRICS.var99],
             ["Clustering", pval(bt.christoffersen_p_95),
-             backtest.christoffersen(bt.christoffersen_p_95),
-             "Christoffersen, 95%"],
-          ] as const).map(([label, value, a, what]) => (
-            <Stat key={label} label={label} value={value} tone={a.tone}
-                  hint={`${what} - ${a.reason}`} />
+             backtest.christoffersen(bt.christoffersen_p_95).reason,
+             backtest.christoffersen(bt.christoffersen_p_95).tone,
+             METRICS.clustering],
+          ] as const).map(([label, value, sub, tone, metric], i) => (
+            <MetricCard key={label} label={label} value={value} sub={sub}
+                        tone={tone} metric={metric} align={alignFor(i)} />
           ))}
-        </div>
+        </MetricStrip>
       )}
 
       <div className="grid gap-4 xl:grid-cols-2">

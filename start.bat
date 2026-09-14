@@ -171,21 +171,38 @@ rem                    are no longer on disk, else STALE=0
 rem
 rem `next start` reads the build manifest once, at boot. Rebuild the frontend while
 rem it is running and it carries on serving HTML that points at the previous
-rem build's hashed chunks - which are gone. Every asset 404s, the stylesheet
-rem included, and the page renders as unstyled HTML with no error shown anywhere.
+rem build's hashed chunks - which are gone. Those assets 404: a missing stylesheet
+rem renders the page as unstyled HTML, a missing script throws ChunkLoadError and
+rem renders nothing at all. Neither reports an error the user can see.
 rem
 rem Probing the port cannot see this: the server answers 200 perfectly well. So the
-rem check follows one asset the page actually asks for. Without it this script made
-rem the situation permanent, because it treated "already serving" as "fine" and
-rem left the broken server running however many times it was run.
+rem check asks every route for its HTML and follows every asset each one references.
 rem
-rem If PowerShell is unavailable the probe yields nothing, STALE stays 0, and the
-rem script behaves exactly as it did before.
+rem Every route, because the staleness is per page: a build that only touched the
+rem Loadings Lab leaves the home page's chunks byte-identical, and a probe that
+rem looked only there reported fresh while /loadings threw ChunkLoadError. And
+rem every asset rather than the stylesheet alone, because most edits are to code,
+rem which rehashes the scripts and leaves the CSS untouched.
+rem
+rem The routes come from the prerendered pages on disk rather than a list written
+rem here, so adding a page cannot quietly leave it unchecked. There is no build id
+rem to compare instead: the app router does not put one in the HTML, and the
+rem manifest under .next/static is read from disk, so it answers for the build on
+rem disk rather than the one the server booted from.
+rem
+rem Without this the script made the situation permanent: it treated "already
+rem serving" as "fine" and left the broken server running however many times it was
+rem run. If PowerShell is unavailable the probe yields nothing, STALE stays 0, and
+rem the script behaves exactly as it did before.
 rem ---------------------------------------------------------------------------
 :web_is_stale
 set "STALE=0"
 set "PROBE="
-for /f "usebackq delims=" %%s in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $h = (Invoke-WebRequest -UseBasicParsing '%WEB_URL%' -TimeoutSec 5).Content; $m = [regex]::Match($h, '_next/static/css/[0-9a-f]+\.css'); if (-not $m.Success) { 'fresh'; exit }; $null = Invoke-WebRequest -UseBasicParsing ('%WEB_URL%' + $m.Value) -TimeoutSec 5; 'fresh' } catch { 'stale' }"`) do set "PROBE=%%s"
+rem No pipe anywhere in the PowerShell: cmd swallows the whole command when a `^|`
+rem appears inside a backquoted for /f, and the probe then returns nothing at all -
+rem which reads as "fresh" and is silent about it. Hence the hashtable rather than
+rem Select-Object -Unique.
+for /f "usebackq delims=" %%s in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $d = '%~dp0frontend\.next\server\app'; if (-not (Test-Path $d)) { 'fresh'; exit }; $seen = @{}; foreach ($f in @([System.IO.Directory]::GetFiles($d, '*.html'))) { $n = [System.IO.Path]::GetFileNameWithoutExtension($f); if ($n -eq '_not-found') { continue }; $route = $n; if ($n -eq 'index') { $route = '' }; $h = (Invoke-WebRequest -UseBasicParsing ('%WEB_URL%' + $route) -TimeoutSec 5).Content; foreach ($m in @([regex]::Matches($h, '_next/static/[A-Za-z0-9/_.-]+\.(?:css|js)'))) { if (-not $seen.ContainsKey($m.Value)) { $seen[$m.Value] = 1; $null = Invoke-WebRequest -UseBasicParsing ('%WEB_URL%' + $m.Value) -TimeoutSec 5 } } }; 'fresh' } catch { 'stale' }"`) do set "PROBE=%%s"
 if /i "!PROBE!"=="stale" set "STALE=1"
 exit /b 0
 
