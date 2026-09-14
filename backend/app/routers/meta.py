@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException
 
-from backend.app import db
+from backend.app import db, runs as rundetail
 
 router = APIRouter()
 
@@ -161,10 +163,18 @@ async def data_health() -> dict:
         ORDER BY l.last_obs NULLS FIRST, r.series_id
         """
     )
+    # `scope` comes back with the list so a row can carry a one-line summary of what
+    # made this run different from the one above it, without a second request per
+    # row. The detail endpoint resolves the spec behind it.
     runs = await db.fetch(
         """
-        SELECT run_id, job, mode, status, started_at, finished_at,
-               rows_in, rows_out, n_failed, error
+        SELECT run_id, job, mode, status, scope, started_at, finished_at,
+               rows_in, rows_out, n_failed, error,
+               -- Cast, do not leave as numeric: asyncpg renders PostgreSQL
+               -- numeric as a JSON string, and the browser then has a "12.4" where
+               -- it expects a number.
+               EXTRACT(EPOCH FROM (COALESCE(finished_at, now()) - started_at))
+                   ::double precision AS duration_seconds
         FROM etl_run ORDER BY started_at DESC LIMIT 25
         """
     )
@@ -197,6 +207,92 @@ async def data_health() -> dict:
         "dead_instruments": [i for i in instruments if not i["is_live"]],
     }
 
+
+@router.get("/runs/{run_id}")
+async def run_detail(run_id: str) -> dict:
+    """Everything one pipeline run did, and the parameters it did it under.
+
+    The run row alone is a job name and a JSONB scope. What an analyst wants to know
+    looking at two runs of run_risk an hour apart is which one scored the raw panel
+    — and that is not in scope at all, it is behind the spec_id. So the spec is
+    resolved and unpacked into chips here rather than left as an opaque hash.
+
+    Items are summarised by status and then listed failures-first: a run that
+    processed 249 securities has nothing to say about the 249 that worked, and
+    everything to say about the one that did not.
+    """
+    run = await db.fetchrow(
+        """
+        SELECT run_id, job, mode, status, scope, started_at, finished_at,
+               rows_in, rows_out, n_failed, error,
+               -- Cast, do not leave as numeric: asyncpg renders PostgreSQL
+               -- numeric as a JSON string, and the browser then has a "12.4" where
+               -- it expects a number.
+               EXTRACT(EPOCH FROM (COALESCE(finished_at, now()) - started_at))
+                   ::double precision AS duration_seconds
+        FROM etl_run WHERE run_id = $1::uuid
+        """,
+        run_id,
+    )
+    if not run:
+        raise HTTPException(404, f"no such run: {run_id!r}")
+
+    scope = run["scope"]
+    if isinstance(scope, str):
+        scope = json.loads(scope or "{}")
+    scope = scope or {}
+
+    spec = None
+    if scope.get("spec_id"):
+        spec = await db.fetchrow(
+            """
+            SELECT spec_id, name, estimator, window_days, step_days, weighting,
+                   ewma_halflife, hac_lags, ridge_lambda, dimson_lags,
+                   orthogonalized, winsor_lo, winsor_hi, min_obs, base_ccy,
+                   created_at,
+                   jsonb_array_length(factor_set) AS n_factors
+            FROM dim_model_spec WHERE spec_id = $1
+            """,
+            scope["spec_id"],
+        )
+
+    counts = await db.fetch(
+        "SELECT status, count(*) AS n FROM etl_item_state WHERE run_id = $1::uuid "
+        "GROUP BY status",
+        run_id,
+    )
+    items = {c["status"]: int(c["n"]) for c in counts}
+
+    span = await db.fetchrow(
+        "SELECT min(min_date) AS first_date, max(max_date) AS last_date "
+        "FROM etl_item_state WHERE run_id = $1::uuid",
+        run_id,
+    )
+
+    # Failures first, then the largest contributors: those are the two things worth
+    # looking at, and neither is visible from a count.
+    item_rows = await db.fetch(
+        """
+        SELECT item_key, status, rows_out, min_date, max_date, error
+        FROM etl_item_state WHERE run_id = $1::uuid
+        ORDER BY (status = 'failed') DESC, rows_out DESC NULLS LAST, item_key
+        LIMIT 60
+        """,
+        run_id,
+    )
+
+    return {
+        **dict(run),
+        "scope": scope,
+        "spec": dict(spec) if spec else None,
+        "describes": rundetail.describe(run["job"]),
+        "chips": rundetail.chips(run["job"], run["mode"], scope,
+                                 dict(spec) if spec else None),
+        "outcome": rundetail.outcome({**dict(run), "scope": scope}, items),
+        "item_counts": items,
+        "covers": dict(span) if span else None,
+        "items": item_rows,
+    }
 
 @router.get("/calendar")
 async def calendar(limit: int = 400) -> list[dict]:

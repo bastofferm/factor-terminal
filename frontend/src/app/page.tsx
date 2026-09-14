@@ -10,15 +10,24 @@
 
 import { useEffect, useState } from "react";
 import { Panel, Stat, VerdictBadge } from "@/components/Chart";
+import { RunDetail, RunTable } from "@/components/RunInspector";
 import { api } from "@/lib/api";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
 export default function DataHealthPage() {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedRun, setSelectedRun] = useState<string | null>(null);
 
   useEffect(() => {
-    api.dataHealth().then(setData).catch((e) => setError(String(e.message ?? e)));
+    api.dataHealth()
+      .then((d) => {
+        setData(d);
+        // Open on the newest run rather than an empty panel: the question this
+        // pair of panels answers is almost always "what just happened".
+        setSelectedRun((cur) => cur ?? d.runs?.[0]?.run_id ?? null);
+      })
+      .catch((e) => setError(String(e.message ?? e)));
   }, []);
 
   // Published before the early returns below, because a hook cannot run
@@ -36,7 +45,11 @@ export default function DataHealthPage() {
           diagnostic_summary: data.diagnostic_summary,
           recent_runs: (data.runs ?? []).slice(0, 5).map((r: any) => ({
             job: r.job, status: r.status, rows_out: r.rows_out, n_failed: r.n_failed,
+            scope: r.scope,
           })),
+          // Which run the analyst is looking at, so "what did this run do" is a
+          // question the assistant can answer about the panel on screen.
+          selected_run: (data.runs ?? []).find((r: any) => r.run_id === selectedRun),
           open_failures: (data.failures ?? []).length,
         }
       : null
@@ -154,46 +167,23 @@ export default function DataHealthPage() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Recent pipeline runs">
-          <Table
-            rows={runs.slice(0, 12)}
-            cols={[
-              ["job", "Job"],
-              ["status", "Status"],
-              ["started_at", "Started"],
-              ["rows_out", "Rows"],
-              ["n_failed", "Failed"],
-            ]}
-            format={{
-              started_at: (v: string) => (v ? String(v).slice(0, 19).replace("T", " ") : "—"),
-              rows_out: (v: number) => (v ?? 0).toLocaleString(),
-            }}
-            tone={(r) =>
-              r.status === "succeeded" ? "pass" : r.status === "running" ? "" : "warn"
-            }
+        <Panel
+          title="Recent pipeline runs"
+          caption={
+            failures.length
+              ? `${failures.length} item${failures.length === 1 ? "" : "s"} still `
+                + "failing — pick the run below to see which."
+              : "Pick a run to see what it did and under which parameters."
+          }
+        >
+          <RunTable
+            runs={runs.slice(0, 12)}
+            selected={selectedRun}
+            onSelect={setSelectedRun}
           />
         </Panel>
 
-        <Panel
-          title="Outstanding failures"
-          caption={failures.length ? undefined : "Nothing failing."}
-        >
-          {failures.length ? (
-            <Table
-              rows={failures.slice(0, 12)}
-              cols={[
-                ["job", "Job"],
-                ["item_key", "Item"],
-                ["error", "Error"],
-              ]}
-              tone={() => "fail"}
-            />
-          ) : (
-            <div className="py-6 text-center text-[12px] text-pass">
-              All pipeline items succeeded.
-            </div>
-          )}
-        </Panel>
+        <RunDetail runId={selectedRun} failures={failures} />
       </div>
 
       <Panel

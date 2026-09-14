@@ -126,6 +126,40 @@ export interface FactorMeta {
   flags: string[] | null;
 }
 
+/**
+ * One pipeline run, with the parameterisation it ran under.
+ *
+ * `chips` and `describes` are composed server-side rather than in the browser:
+ * unpacking a spec_id into "raw panel, 252-day window, monthly step" needs a join
+ * the frontend has no business doing, and the assistant quotes the same strings.
+ */
+export interface RunDetail {
+  run_id: string;
+  job: string;
+  mode: string | null;
+  status: "running" | "succeeded" | "failed" | "partial";
+  scope: Record<string, unknown>;
+  spec: Record<string, unknown> | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_seconds: number | null;   // numeric on the wire; coerce before formatting
+  rows_in: number;
+  rows_out: number;
+  n_failed: number;
+  error: string | null;
+  describes: string;
+  outcome: string;
+  chips: Array<{
+    label: string; value: string; hint: string | null; emphasis: boolean;
+  }>;
+  item_counts: Record<string, number>;
+  covers: { first_date: string | null; last_date: string | null } | null;
+  items: Array<{
+    item_key: string; status: string; rows_out: number | null;
+    min_date: string | null; max_date: string | null; error: string | null;
+  }>;
+}
+
 export interface Block {
   block_id: string;
   name: string;
@@ -243,6 +277,7 @@ export const api = {
     get<Instrument[]>("/api/meta/instruments", { role, live_only: liveOnly }),
   specs: () => get<Spec[]>("/api/meta/specs"),
   dataHealth: () => get<any>("/api/meta/data-health"),
+  run: (runId: string) => get<RunDetail>(`/api/meta/runs/${runId}`),
   factorSparklines: (basis: Basis = "excess") =>
     get<{ points: number; series: Record<string, number[]> }>(
       "/api/meta/factor-sparklines", { basis }),
