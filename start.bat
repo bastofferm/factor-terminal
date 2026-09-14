@@ -66,8 +66,16 @@ rem --- frontend --------------------------------------------------------------
 
 call :is_up "%WEB_URL%"
 if "!UP!"=="1" (
-    echo   [=] Web app already serving on port %WEB_PORT%
-    goto :wait_for_both
+    call :web_is_stale
+    if "!STALE!"=="1" (
+        rem Not [!]: delayed expansion eats a bare ! in an echo, printing "[]".
+        echo   [*] Web app is serving a build that is no longer on disk - restarting it.
+        call :kill_port %WEB_PORT%
+        call :sleep 2
+    ) else (
+        echo   [=] Web app already serving on port %WEB_PORT%
+        goto :wait_for_both
+    )
 )
 
 if not exist "frontend\node_modules" (
@@ -155,6 +163,49 @@ rem ---------------------------------------------------------------------------
 :sleep
 set /a _PINGS=%~1+1
 ping -n !_PINGS! 127.0.0.1 >nul 2>&1
+exit /b 0
+
+rem ---------------------------------------------------------------------------
+rem :web_is_stale  ->  STALE=1 when the running server serves a build whose files
+rem                    are no longer on disk, else STALE=0
+rem
+rem `next start` reads the build manifest once, at boot. Rebuild the frontend while
+rem it is running and it carries on serving HTML that points at the previous
+rem build's hashed chunks - which are gone. Every asset 404s, the stylesheet
+rem included, and the page renders as unstyled HTML with no error shown anywhere.
+rem
+rem Probing the port cannot see this: the server answers 200 perfectly well. So the
+rem check follows one asset the page actually asks for. Without it this script made
+rem the situation permanent, because it treated "already serving" as "fine" and
+rem left the broken server running however many times it was run.
+rem
+rem If PowerShell is unavailable the probe yields nothing, STALE stays 0, and the
+rem script behaves exactly as it did before.
+rem ---------------------------------------------------------------------------
+:web_is_stale
+set "STALE=0"
+set "PROBE="
+for /f "usebackq delims=" %%s in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $h = (Invoke-WebRequest -UseBasicParsing '%WEB_URL%' -TimeoutSec 5).Content; $m = [regex]::Match($h, '_next/static/css/[0-9a-f]+\.css'); if (-not $m.Success) { 'fresh'; exit }; $null = Invoke-WebRequest -UseBasicParsing ('%WEB_URL%' + $m.Value) -TimeoutSec 5; 'fresh' } catch { 'stale' }"`) do set "PROBE=%%s"
+if /i "!PROBE!"=="stale" set "STALE=1"
+exit /b 0
+
+rem ---------------------------------------------------------------------------
+rem :kill_port <port>
+rem
+rem Get-NetTCPConnection rather than netstat, for the same reason :is_up uses curl:
+rem netstat prints its state column in the system language - "ABHOEREN" on a German
+rem Windows, not "LISTENING" - so parsing it for the listener silently matches
+rem nothing. /T as well as /F because npm start owns a node child that keeps the
+rem port if only the wrapper is killed.
+rem ---------------------------------------------------------------------------
+:kill_port
+rem No pipe in the PowerShell: cmd swallows the whole command when a `^|` appears
+rem inside a backquoted for /f, silently yielding no PID and no kill. @() forces an
+rem array so .Count is safe whether the query matches nothing, one socket, or the
+rem IPv4 and IPv6 pair.
+for /f "usebackq delims=" %%p in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$c = @(Get-NetTCPConnection -LocalPort %~1 -State Listen -ErrorAction SilentlyContinue); if ($c.Count -gt 0) { $c[0].OwningProcess }"`) do (
+    taskkill /PID %%p /T /F >nul 2>&1
+)
 exit /b 0
 
 rem ---------------------------------------------------------------------------

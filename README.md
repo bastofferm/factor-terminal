@@ -27,9 +27,17 @@ equation that orthogonalises it.
 ## Starting the app
 
 Double-click **`start.bat`**. It starts the API and the web app, waits until both
-answer, and opens the browser. Run it again any time — anything already serving is
-left alone rather than started twice. On a fresh checkout it also installs the web
+answer, and opens the browser. On a fresh checkout it also installs the web
 dependencies and builds the frontend.
+
+Run it again any time. Anything already serving is left alone rather than started
+twice — with one exception it checks for: `next start` reads the build manifest
+once, at boot, so rebuilding the frontend while it runs leaves it serving HTML that
+points at the previous build's hashed chunks. Those files are gone, every asset
+404s, and the page renders as unstyled HTML with no error anywhere. Port-probing
+cannot see it, because the server answers 200 perfectly well. So the script follows
+one stylesheet the page actually asks for, and restarts the web app when it does not
+resolve.
 
 To stop, close the two minimised *Factor Terminal* windows.
 
