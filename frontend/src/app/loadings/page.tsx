@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Chart, PALETTE, Panel, Stat } from "@/components/Chart";
 import { api, Instrument, LoadingResult, num, pct, pval } from "@/lib/api";
+import { design } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
 const WINDOWS = [63, 126, 252, 504, 756];
@@ -71,6 +72,9 @@ export default function LoadingsPage() {
 
   const meta = result?.diagnostics ?? [];
   const latestMeta = meta[meta.length - 1] as any;
+  // Read from the stored spec, not from the control: the result on screen may have
+  // come from the cache under a spec estimated with the other setting.
+  const estimatedOnOrth = (result?.spec as any)?.orthogonalized !== false;
 
   usePublishSnapshot(
     result && latestMeta
@@ -301,13 +305,23 @@ export default function LoadingsPage() {
                   hint={`t = ${num(latestMeta.t_alpha)}`} />
             <Stat label="Residual vol" value={pct(latestMeta.resid_vol_ann)} />
             <Stat label="Observations" value={latestMeta.n_obs} />
-            <Stat label="Durbin-Watson" value={num(latestMeta.durbin_watson)}
-                  hint="2 = no autocorrelation"
-                  tone={Math.abs((latestMeta.durbin_watson ?? 2) - 2) > 0.5 ? "bad" : "good"} />
-            <Stat label="Condition no." value={num(latestMeta.condition_number, 0)}
-                  tone={latestMeta.condition_number > 200 ? "bad" : "good"} />
-            <Stat label="Max VIF" value={num(latestMeta.max_vif, 0)}
-                  tone={latestMeta.max_vif > 100 ? "bad" : "good"} />
+            {/*
+              maxVif is told which panel it is describing. On the raw panel a VIF
+              of several hundred is the factor set, not a fault, and the risk
+              pipeline no longer gates on it there - so neither does the colour.
+            */}
+            {([
+              ["Durbin-Watson", num(latestMeta.durbin_watson),
+               design.durbinWatson(latestMeta.durbin_watson), "2 = no autocorrelation"],
+              ["Condition no.", num(latestMeta.condition_number, 0),
+               design.conditionNumber(latestMeta.condition_number),
+               "design conditioning"],
+              ["Max VIF", num(latestMeta.max_vif, 0),
+               design.maxVif(latestMeta.max_vif, estimatedOnOrth), "worst collinearity"],
+            ] as const).map(([label, value, a, what]) => (
+              <Stat key={label} label={label} value={value} tone={a.tone}
+                    hint={`${what} - ${a.reason}`} />
+            ))}
             <Stat label="F p-value" value={pval(latestMeta.f_p)} />
           </div>
         )}

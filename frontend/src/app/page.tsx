@@ -84,7 +84,9 @@ export default function DataHealthPage() {
           hint="trailing 252d"
           tone="good"
         />
-        <Stat label="Warnings" value={vCount("warn")} tone={vCount("warn") ? "neutral" : "good"} />
+        {/* Amber for a warning count above zero, so the three tones on this row
+            mean the same thing they mean in the battery itself. */}
+        <Stat label="Warnings" value={vCount("warn")} tone={vCount("warn") ? "warn" : "good"} />
         <Stat label="Failing" value={vCount("fail")} tone={vCount("fail") ? "bad" : "good"} />
       </div>
 

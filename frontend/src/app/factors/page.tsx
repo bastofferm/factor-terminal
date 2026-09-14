@@ -13,6 +13,7 @@ import { FactorProfile } from "@/components/FactorProfile";
 import { api, Basis, FactorComparison, FactorMeta, num, pct, pval } from "@/lib/api";
 import { blockColour, blockStyle } from "@/lib/blocks";
 import { episodeLayout } from "@/lib/episodes";
+import { Assessment, assess, bySign } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
 export default function FactorsPage() {
@@ -362,21 +363,25 @@ export default function FactorsPage() {
                     <Stat
                       label="Ann. return" size="hero"
                       animate={stats.mean_ann} format={(v) => pct(v)}
-                      tone={stats.mean_ann >= 0 ? "neutral" : "bad"}
+                      tone={bySign(stats.mean_ann)}
                     />
                     <Stat
                       label="Sharpe" size="hero"
                       animate={stats.sharpe} format={(v) => num(v)}
+                      tone={bySign(stats.sharpe)}
                     />
                   </div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                  <Stat label="Ann. return" value={pct(stats.mean_ann)} />
+                  <Stat label="Ann. return" value={pct(stats.mean_ann)}
+                        tone={bySign(stats.mean_ann)} />
                   <Stat label="Ann. vol" value={pct(stats.vol_ann)} />
-                  <Stat label="Sharpe" value={num(stats.sharpe)} />
+                  <Stat label="Sharpe" value={num(stats.sharpe)}
+                        tone={bySign(stats.sharpe)} />
                   <Stat label="Skew" value={num(stats.skew)} />
                   <Stat label="Excess kurt." value={num(stats.excess_kurtosis)} />
-                  <Stat label="Max drawdown" value={pct(stats.max_drawdown)} tone="bad" />
-                  <Stat label="Hit rate" value={pct(stats.hit_rate)} />
+                  <Stat label="Max drawdown" value={pct(stats.max_drawdown)} />
+                  <Stat label="Hit rate" value={pct(stats.hit_rate)}
+                        hint="share of up days" />
                   <Stat label="VaR 95% (1d)" value={pct(stats.var95_daily)} />
                   <Stat label="ES 95% (1d)" value={pct(stats.es95_daily)} />
                   <Stat label="Observations" value={stats.n_obs?.toLocaleString()} />
@@ -644,7 +649,7 @@ function ComparisonPanel({
         <Stat
           label="Variance removed"
           value={pct(a.variance_removed, 1)}
-          tone={(a.variance_removed ?? 0) < 0 ? "bad" : "neutral"}
+          tone={(a.variance_removed ?? 0) < 0 ? "warn" : "neutral"}
           hint={
             (a.variance_removed ?? 0) < 0
               ? "Negative: the residual is noisier than the factor it came from. "
@@ -871,25 +876,32 @@ function DiagnosticsPanel({ d, all }: { d: any; all: any[] }) {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
         <Test name="ADF" stat={row.adf_stat} p={row.adf_p}
-              hint="H0: unit root — reject is good" good={adfRejects} />
+              what="H0: unit root" a={assess.adf(row.adf_p)} />
         <Test name="KPSS" stat={row.kpss_stat} p={row.kpss_p}
-              hint="H0: stationary — reject is bad" good={!kpssRejects} />
+              what="H0: stationary" a={assess.kpss(row.kpss_p)} />
         <Test name="Phillips-Perron" stat={row.pp_stat} p={row.pp_p}
-              hint="HAC-robust ADF" good={row.pp_p !== null && row.pp_p < 0.05} />
+              what="HAC-robust ADF" a={assess.pp(row.pp_p)} />
         <Test name="Ljung-Box (10)" stat={row.lb10_stat} p={row.lb10_p}
-              hint="autocorrelation" good={row.lb10_p !== null && row.lb10_p > 0.05} />
+              what="H0: no autocorrelation" a={assess.ljungBox(row.lb10_p)} />
         <Test name="ARCH-LM" stat={row.arch_lm_stat} p={row.arch_lm_p}
-              hint="clustering — expected" good={null} />
+              what="recorded, never gated" a={assess.archLm(row.arch_lm_p)} />
         <Test name="Jarque-Bera" stat={row.jb_stat} p={row.jb_p}
-              hint="normality — usually rejected" good={null} />
+              what="informational" a={assess.jarqueBera(row.jb_p)} />
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-        <Stat label="VR (2)" value={num(row.vr2)} hint="1 = random walk" />
-        <Stat label="VR (5)" value={num(row.vr5)} hint=">1 stale, <1 bouncing" />
-        <Stat label="VR (10)" value={num(row.vr10)} />
-        <Stat label="AC(1)" value={num(row.ac1, 3)} />
-        <Stat label="Zero returns" value={pct(row.zero_return_share, 1)} />
+        {([
+          ["VR (2)", num(row.vr2), assess.varianceRatio(row.vr2), "1 = random walk"],
+          ["VR (5)", num(row.vr5), assess.varianceRatio(row.vr5), "1 = random walk"],
+          ["VR (10)", num(row.vr10), assess.varianceRatio(row.vr10), "1 = random walk"],
+          ["AC(1)", num(row.ac1, 3), assess.autocorrelation(row.ac1),
+           "first-order autocorrelation"],
+          ["Zero returns", pct(row.zero_return_share, 1),
+           assess.zeroReturns(row.zero_return_share), "illiquidity check"],
+        ] as const).map(([label, value, a, what]) => (
+          <Stat key={label} label={label} value={value} tone={a.tone}
+                hint={`${what} — ${a.reason}`} />
+        ))}
         <Stat label="Observations" value={row.n_obs?.toLocaleString()} />
       </div>
 
@@ -903,16 +915,26 @@ function DiagnosticsPanel({ d, all }: { d: any; all: any[] }) {
   );
 }
 
-function Test({ name, stat, p, hint, good }: {
-  name: string; stat: number | null; p: number | null; hint: string; good: boolean | null;
+/**
+ * One test in the battery. The colour is the assessment, not the p-value: what
+ * counts as a good outcome differs test by test (ADF wants a rejection, KPSS wants
+ * the opposite, ARCH-LM wants nothing at all), so it comes from lib/verdict.ts.
+ */
+function Test({ name, stat, p, what, a }: {
+  name: string; stat: number | null; p: number | null; what: string; a: Assessment;
 }) {
-  const tone = good === null ? "text-navy" : good ? "text-pass" : "text-fail";
+  const tone = a.tone === "good" ? "text-pass"
+    : a.tone === "warn" ? "text-warn"
+    : a.tone === "bad" ? "text-fail"
+    : "text-navy";
   return (
-    <div className="rounded border border-line bg-white px-2 py-1.5">
+    <div className="rounded border border-line bg-white px-2 py-1.5" title={a.reason}>
       <div className="text-2xs uppercase tracking-label text-muted">{name}</div>
       <div className={`font-mono text-sm font-semibold ${tone}`}>p = {pval(p)}</div>
       <div className="font-mono text-[10px] text-muted">stat {num(stat)}</div>
-      <div className="text-[10px] leading-tight text-muted">{hint}</div>
+      <div className="text-[10px] leading-tight text-muted">{what}</div>
+      <div className={`text-[10px] leading-tight ${
+        a.tone === "neutral" ? "text-muted" : tone}`}>{a.reason}</div>
     </div>
   );
 }

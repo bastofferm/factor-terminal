@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import { Chart, PALETTE, Panel, Stat } from "@/components/Chart";
 import { api, num, pct, pval, RiskResult, Spec } from "@/lib/api";
+import { backtest } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
 const HORIZONS = [
@@ -155,24 +156,37 @@ export default function RiskPage() {
         </Panel>
       )}
 
+      {/*
+        Every tone comes from lib/verdict.ts. Two of these deserve amber rather than
+        red and would get red from a naive rule: an MZ slope below 1 is partly
+        mechanical at this horizon, and a rejected joint test is evidence rather
+        than a failed model.
+      */}
       {bt && (
-        <div className="grid grid-cols-2 gap-4 rounded border border-line bg-panel px-4 py-3 md:grid-cols-4 lg:grid-cols-8">
+        <div className="grid grid-cols-2 gap-4 rounded border border-line bg-panel px-4 py-3 md:grid-cols-4 lg:grid-cols-9">
           <Stat label="Forecasts scored" value={bt.n_forecasts}
                 hint={result!.n_unreliable ? `${result!.n_unreliable} excluded` : undefined} />
-          <Stat label="Bias ratio" value={num(bt.mean_bias, 3)} hint="realised ÷ predicted; 1 is right"
-                tone={Math.abs((bt.mean_bias ?? 1) - 1) < 0.15 ? "good" : "bad"} />
-          <Stat label="Bias statistic" value={num(bt.z_std, 3)} hint="sd of standardised returns"
-                tone={Math.abs((bt.z_std ?? 1) - 1) < 0.10 ? "good" : "bad"} />
-          <Stat label="MZ slope" value={num(bt.mz_beta, 2)} hint="1 if unbiased" />
-          <Stat label="MZ joint p" value={pval(bt.mz_joint_p)} hint="H₀: a=0 and b=1"
-                tone={(bt.mz_joint_p ?? 0) > 0.05 ? "good" : "bad"} />
-          <Stat label="MZ R²" value={num(bt.mz_r2, 3)} hint="timing ability" />
-          <Stat label="VaR 95%" value={`${bt.exceptions_95} / ${num(bt.expected_95, 0)}`}
-                hint={`Kupiec p ${pval(bt.kupiec_p_95)}`}
-                tone={(bt.kupiec_p_95 ?? 0) > 0.05 ? "good" : "bad"} />
-          <Stat label="VaR 99%" value={`${bt.exceptions_99} / ${num(bt.expected_99, 0)}`}
-                hint={`Kupiec p ${pval(bt.kupiec_p_99)}`}
-                tone={(bt.kupiec_p_99 ?? 0) > 0.05 ? "good" : "bad"} />
+          {([
+            ["Bias ratio", num(bt.mean_bias, 3), backtest.bias(bt.mean_bias),
+             "realised ÷ predicted; 1 is right"],
+            ["Bias statistic", num(bt.z_std, 3), backtest.zStd(bt.z_std),
+             "sd of standardised returns"],
+            ["MZ slope", num(bt.mz_beta, 2), backtest.mzSlope(bt.mz_beta),
+             "1 if unbiased"],
+            ["MZ joint p", pval(bt.mz_joint_p), backtest.mzJoint(bt.mz_joint_p),
+             "H₀: a=0 and b=1"],
+            ["MZ R²", num(bt.mz_r2, 3), backtest.mzR2(bt.mz_r2), "timing ability"],
+            [`VaR 95%`, `${bt.exceptions_95} / ${num(bt.expected_95, 0)}`,
+             backtest.kupiec(bt.kupiec_p_95), `Kupiec p ${pval(bt.kupiec_p_95)}`],
+            [`VaR 99%`, `${bt.exceptions_99} / ${num(bt.expected_99, 0)}`,
+             backtest.kupiec(bt.kupiec_p_99), `Kupiec p ${pval(bt.kupiec_p_99)}`],
+            ["Clustering", pval(bt.christoffersen_p_95),
+             backtest.christoffersen(bt.christoffersen_p_95),
+             "Christoffersen, 95%"],
+          ] as const).map(([label, value, a, what]) => (
+            <Stat key={label} label={label} value={value} tone={a.tone}
+                  hint={`${what} - ${a.reason}`} />
+          ))}
         </div>
       )}
 

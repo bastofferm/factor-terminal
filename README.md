@@ -153,6 +153,17 @@ not silently dropped or silently used. The condition-number limit applies to bot
 factor panels; the VIF limit only to the orthogonalised one, where a high VIF is
 anomalous rather than — as on the raw panel — the definition of the factor set.
 
+**Green and red are a claim, not decoration.** Colour on a diagnostic says whether
+the number is what the model wants, and the rule lives in one file
+(`frontend/src/lib/verdict.ts`) so the Factor Explorer and the Raw Explorer cannot
+colour the same p-value differently. There are three tones, and the third carries
+the weight: green where the test says what we want, amber where it flags something
+nothing is gated on, and plain where the outcome is expected. A rejected ARCH-LM or
+Jarque-Bera test is never red — volatility clustering and fat tails are the normal
+condition of a daily return series, and a GARCH process is strictly stationary. Only
+the joint ADF × KPSS verdict, a wrong VaR breach count, and a design past the
+condition-number limit earn red.
+
 **The model estimates on either factor panel.** Raw factors or block-hierarchy
 residuals, chosen per spec and carried through to the covariance matrix, because
 β′Σβ needs Σ to be the covariance of the same series the βs refer to. Both are

@@ -19,6 +19,7 @@ import { Chart, ChartSkeleton, PALETTE, Panel, Stat, VerdictBadge }
 import { num, pct, pval } from "@/lib/api";
 import { blockStyle } from "@/lib/blocks";
 import { episodeLayout } from "@/lib/episodes";
+import { assess, bySign } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
 type Kind = "factor" | "instrument";
@@ -271,20 +272,30 @@ export default function RawPage() {
             >
               <div className="mb-3 flex flex-wrap items-end gap-x-8 gap-y-2
                               border-b border-lineSoft pb-3">
+                {/*
+                  Only the figures whose sign means something to an investor are
+                  coloured. Volatility, skew, kurtosis, drawdown and the tail
+                  measures below are shape, not verdict: there is no good or bad
+                  volatility for a factor, and a drawdown is negative by
+                  definition, so a permanent red would carry no information.
+                */}
                 <Stat label="Ann. volatility" size="hero"
                       animate={s.vol_ann} format={(v) => pct(v)} />
                 <Stat label="Ann. return" size="hero"
                       animate={s.mean_ann} format={(v) => pct(v)}
-                      tone={s.mean_ann >= 0 ? "neutral" : "bad"} />
+                      tone={bySign(s.mean_ann)} />
                 <Stat label="Sharpe" size="hero"
-                      animate={s.sharpe} format={(v) => num(v)} />
+                      animate={s.sharpe} format={(v) => num(v)}
+                      tone={bySign(s.sharpe)} />
               </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                 <Stat label="Skew" value={num(s.skew)} />
                 <Stat label="Excess kurt." value={num(s.excess_kurtosis)} />
-                <Stat label="Max drawdown" value={pct(s.max_drawdown)} tone="bad" />
-                <Stat label="Total (compounded)" value={pct(s.total_compounded, 0)} />
-                <Stat label="Hit rate" value={pct(s.hit_rate)} />
+                <Stat label="Max drawdown" value={pct(s.max_drawdown)} />
+                <Stat label="Total (compounded)" value={pct(s.total_compounded, 0)}
+                      tone={bySign(s.total_compounded)} />
+                <Stat label="Hit rate" value={pct(s.hit_rate)}
+                      hint="share of up days" />
                 <Stat label="VaR 95% (1d)" value={pct(s.var95_daily)} />
                 <Stat label="ES 95% (1d)" value={pct(s.es95_daily)} />
                 <Stat label="Observations" value={s.n_obs?.toLocaleString()} />
@@ -385,18 +396,35 @@ export default function RawPage() {
             {d.verdict_reason && (
               <p className="mb-3 text-[12px]">{d.verdict_reason}</p>
             )}
+            {/*
+              Colour is a claim about the number, so it comes from lib/verdict.ts
+              rather than from a rule written here — the Factor Explorer runs the
+              same battery on the orthogonalised series, and the two must not
+              disagree about which p-value is the good one.
+            */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-              <Stat label="ADF" value={`p = ${pval(d.adf_p)}`} hint="H0: unit root" />
-              <Stat label="KPSS" value={`p = ${pval(d.kpss_p)}`} hint="H0: stationary" />
-              <Stat label="Phillips-Perron" value={`p = ${pval(d.pp_p)}`} />
-              <Stat label="Ljung-Box (10)" value={`p = ${pval(d.lb10_p)}`} hint="autocorrelation" />
-              <Stat label="ARCH-LM" value={`p = ${pval(d.arch_lm_p)}`} hint="clustering, expected" />
-              <Stat label="Jarque-Bera" value={`p = ${pval(d.jb_p)}`} hint="normality" />
-              <Stat label="VR (2)" value={num(d.vr2)} hint="1 = random walk" />
-              <Stat label="VR (5)" value={num(d.vr5)} hint=">1 stale, <1 bouncing" />
-              <Stat label="VR (10)" value={num(d.vr10)} />
-              <Stat label="AC(1)" value={num(d.ac1, 3)} />
-              <Stat label="Zero returns" value={pct(d.zero_return_share, 1)} />
+              {([
+                ["ADF", `p = ${pval(d.adf_p)}`, assess.adf(d.adf_p), "H0: unit root"],
+                ["KPSS", `p = ${pval(d.kpss_p)}`, assess.kpss(d.kpss_p), "H0: stationary"],
+                ["Phillips-Perron", `p = ${pval(d.pp_p)}`, assess.pp(d.pp_p),
+                 "HAC-robust ADF"],
+                ["Ljung-Box (10)", `p = ${pval(d.lb10_p)}`, assess.ljungBox(d.lb10_p),
+                 "H0: no autocorrelation"],
+                ["ARCH-LM", `p = ${pval(d.arch_lm_p)}`, assess.archLm(d.arch_lm_p),
+                 "recorded, never gated"],
+                ["Jarque-Bera", `p = ${pval(d.jb_p)}`, assess.jarqueBera(d.jb_p),
+                 "informational"],
+                ["VR (2)", num(d.vr2), assess.varianceRatio(d.vr2), "1 = random walk"],
+                ["VR (5)", num(d.vr5), assess.varianceRatio(d.vr5), "1 = random walk"],
+                ["VR (10)", num(d.vr10), assess.varianceRatio(d.vr10), "1 = random walk"],
+                ["AC(1)", num(d.ac1, 3), assess.autocorrelation(d.ac1),
+                 "first-order autocorrelation"],
+                ["Zero returns", pct(d.zero_return_share, 1),
+                 assess.zeroReturns(d.zero_return_share), "illiquidity check"],
+              ] as const).map(([label, value, a, what]) => (
+                <Stat key={label} label={label} value={value} tone={a.tone}
+                      hint={`${what} — ${a.reason}`} />
+              ))}
               <Stat label="Observations" value={d.n_obs?.toLocaleString()} />
             </div>
             {d.za_break_date && (

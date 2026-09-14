@@ -257,7 +257,13 @@ export function Stat({
   label: string;
   value?: ReactNode;
   hint?: string;
-  tone?: "good" | "bad" | "neutral";
+  /**
+   * What the figure says about the model, not what it looks like. `warn` is the
+   * amber middle the battery needs: a flagged diagnostic nothing is gated on is
+   * neither a pass nor a failure, and colouring it red would claim the series is
+   * unusable when it is not. See lib/verdict.ts for which outcome earns which.
+   */
+  tone?: "good" | "warn" | "bad" | "neutral";
   size?: "default" | "hero";
   /** Raw number to animate toward. When given, `format` renders it. */
   animate?: number | null;
@@ -265,7 +271,10 @@ export function Stat({
 }) {
   const counted = useCountUp(animate ?? null);
   const colour =
-    tone === "good" ? "text-pass" : tone === "bad" ? "text-fail" : "text-navy";
+    tone === "good" ? "text-pass"
+      : tone === "warn" ? "text-warn"
+      : tone === "bad" ? "text-fail"
+      : "text-navy";
 
   const shown =
     animate !== undefined && format

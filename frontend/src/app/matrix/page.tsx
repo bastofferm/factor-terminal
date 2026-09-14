@@ -71,6 +71,27 @@ export default function MatrixPage() {
     };
   }, [data]);
 
+  /**
+   * PC1 sorted by loading, most positive to most negative.
+   *
+   * Registry order tells you nothing about a component — the eye has to scan the
+   * whole column to find the poles. Sorted, the two ends of the axis read straight
+   * off the top and bottom of the chart, which is the only thing PC1 is for.
+   *
+   * Plotly draws a horizontal bar chart from the bottom up, so the array is
+   * reversed to put the largest loading at the top.
+   */
+  const pc1 = useMemo(() => {
+    if (!pca?.loadings?.[0] || !pca?.names) return null;
+    const order = pca.names
+      .map((name: string, i: number) => ({ name, value: pca.loadings[0][i] }))
+      .sort((a: any, b: any) => a.value - b.value);
+    return {
+      names: order.map((o: any) => o.name),
+      values: order.map((o: any) => o.value),
+    };
+  }, [pca]);
+
   const d = data?.diagnostics;
 
   usePublishSnapshot(
@@ -231,7 +252,16 @@ export default function MatrixPage() {
         <div className="space-y-4">
           <Panel
             title="Eigenvalue spectrum"
-            caption="Principal components of the orthogonalised factor panel, correlation-based so a high-volatility factor cannot dominate the leading components through scale alone. A flat tail means the factors are genuinely distinct — which is what the orthogonalisation is for."
+            caption={
+              <>
+                How much of the {basis === "excess" ? "raw" : "orthogonalised"} panel
+                each component explains. Correlation-based, so a high-volatility
+                factor cannot dominate the leading components through scale alone. A
+                flat tail means the factors are genuinely distinct — which is what
+                the orthogonalisation is for, and switching the panel above makes the
+                difference visible in one bar.
+              </>
+            }
           >
             {pca && (
               <Chart
@@ -259,17 +289,48 @@ export default function MatrixPage() {
 
           <Panel
             title="PC1 loadings"
-            caption="Usually a global risk-on / risk-off direction. PDF section 5 keeps PCA as a control on the economic factors, not a replacement."
+            caption={
+              pca ? (
+                <>
+                  <b>Where this comes from.</b> The {pca.names.length} factors listed
+                  below, on the{" "}
+                  <b>{(pca.basis ?? basis) === "excess" ? "raw" : "orthogonalised"}</b>{" "}
+                  panel, over the {pca.n_obs?.toLocaleString()} days on which every
+                  one of them has a value. Each column is standardised to zero mean
+                  and unit variance first, so this is an eigenvector of the{" "}
+                  <b>correlation</b> matrix, not the covariance: otherwise a 38%-vol
+                  commodity factor would dominate the leading component through scale
+                  alone. PC1 is the eigenvector with the largest eigenvalue, carrying{" "}
+                  {pca.var_share ? pct(pca.var_share[0]) : "—"} of the total variance.
+                  <div className="mt-1">
+                    A loading is that factor&rsquo;s weight in the component. Sign is
+                    arbitrary — an eigenvector times minus one is the same
+                    eigenvector — so read it as grouping, not direction: factors on
+                    the same side move together along this axis, and it usually comes
+                    out as a global risk-on / risk-off direction. Sorted by loading so
+                    the two poles read off the ends.
+                  </div>
+                  <div className="mt-1">
+                    PDF section 5 keeps PCA as a control on the economic factors, not
+                    a replacement: the question it answers is whether the named
+                    factors already span the common structure.
+                  </div>
+                </>
+              ) : (
+                "Principal components of the factor panel, as a control on the "
+                + "economic factors rather than a replacement for them."
+              )
+            }
           >
-            {pca && (
+            {pca && pc1 && (
               <Chart
-                height={Math.max(240, pca.names.length * 11)}
+                height={Math.max(240, pc1.names.length * 11)}
                 numericX
                 data={[{
                   type: "bar", orientation: "h",
-                  y: pca.names, x: pca.loadings[0],
+                  y: pc1.names, x: pc1.values,
                   marker: {
-                    color: pca.loadings[0].map((v: number) =>
+                    color: pc1.values.map((v: number) =>
                       v >= 0 ? PALETTE[0] : "#8C3A2E"),
                   },
                   hovertemplate: "%{y}: %{x:.3f}<extra></extra>",
