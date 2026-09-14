@@ -466,3 +466,62 @@ def test_beta_stability_reports_overlap_so_a_narrow_basis_is_visible():
 
     assert wide[0] == pytest.approx(4.0) and wide[2] == 4
     assert narrow[0] == pytest.approx(1.0) and narrow[2] == 1
+
+
+# ---------------------------------------------------------------------------
+# VIF: the fast identity must agree with the definition
+# ---------------------------------------------------------------------------
+
+def test_vif_identity_matches_the_regression_definition(rng):
+    """The correlation-inverse identity replaced k auxiliary regressions per
+    window. It is exact, not an approximation, so the two must agree to floating
+    point on a design with realistic collinearity."""
+    from backend.core.regression import _vif, _vif_by_regression
+
+    n = 504
+    base = rng.standard_normal((n, 5))
+    # Columns that overlap the way a raw factor panel does: regional equity on
+    # global equity, credit on both rates and equity.
+    X = np.column_stack([
+        base,
+        0.95 * base[:, 0] + 0.05 * rng.standard_normal(n),
+        0.6 * base[:, 1] + 0.4 * base[:, 2] + 0.2 * rng.standard_normal(n),
+    ])
+
+    fast, slow = _vif(X), _vif_by_regression(X)
+    assert np.allclose(fast, slow, rtol=1e-6, atol=1e-6)
+    # And it actually found the collinearity rather than returning ones.
+    assert fast[5] > 8
+
+
+def test_vif_is_one_for_orthogonal_regressors(rng):
+    """Tolerance of 1e-3, not machine epsilon: QR gives columns orthogonal about
+    the origin, and VIF is defined on correlations, which are taken about the mean.
+    Their sample correlations are order 1e-5 rather than zero, so the VIFs come out
+    at 1.00001. That is the right answer, and a wrong one would be far larger."""
+    from backend.core.regression import _vif
+
+    X = np.linalg.qr(rng.standard_normal((400, 6)))[0]
+    assert np.allclose(_vif(X), 1.0, atol=1e-3)
+
+
+def test_vif_reports_an_exact_duplicate_as_singular(rng):
+    """A perfectly collinear column has no finite VIF. The identity cannot invert
+    that correlation matrix, so this exercises the fallback."""
+    from backend.core.regression import _vif
+
+    base = rng.standard_normal((300, 4))
+    X = np.column_stack([base, base[:, 0]])
+    vifs = _vif(X)
+    assert not np.all(np.isfinite(vifs)) or np.nanmax(vifs) > 1e6
+
+
+def test_vif_handles_a_constant_regressor(rng):
+    """A zero-variance column has no variance to inflate. It must not take the
+    whole vector down with a divide-by-zero."""
+    from backend.core.regression import _vif
+
+    X = np.column_stack([rng.standard_normal((300, 3)), np.ones(300)])
+    vifs = _vif(X)
+    assert np.isfinite(vifs).all()
+    assert vifs[3] == 1.0

@@ -34,13 +34,34 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** Surface the API's own explanation rather than a bare status code. */
+/**
+ * Surface the API's own explanation rather than a bare status code.
+ *
+ * The API answers errors as JSON with a `detail`, so anything that is not JSON did
+ * not come from the API at all — it came from the proxy in front of it. That is
+ * worth saying, because the two failures need opposite responses: a `detail` is
+ * something the request got wrong, whereas a bare `Internal Server Error` after a
+ * long wait means the computation was abandoned in flight and is probably still
+ * running. Reporting the second as "500 Internal Server Error" sent a real
+ * debugging session looking for a bug in an endpoint that had worked fine.
+ */
 async function describeError(res: Response, path: string): Promise<string> {
+  let raw = "";
   try {
-    const body = await res.json();
+    raw = await res.text();
+    const body = JSON.parse(raw);
     if (body?.detail) return String(body.detail);
   } catch {
-    /* fall through to the status line */
+    /* not JSON: it did not come from the API */
+  }
+
+  if (res.status === 504 || /^internal server error\s*$/i.test(raw)) {
+    return (
+      `The request to ${path} was cut off before it finished. Long estimations ` +
+      `can outlast the proxy timeout — a shorter history, a longer roll-forward ` +
+      `step or a smaller factor set will get there, and the run itself may well ` +
+      `have completed, so trying again often returns it from the cache.`
+    );
   }
   return `${res.status} ${res.statusText} — ${path}`;
 }

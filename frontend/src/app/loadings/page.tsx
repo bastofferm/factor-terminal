@@ -37,11 +37,29 @@ export default function LoadingsPage() {
   const [stability, setStability] = useState<any>(null);
   const [shown, setShown] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api.instruments("analysis").then(setInstruments).catch(() => {});
   }, []);
+
+  /**
+   * Seconds on the button while a fit runs.
+   *
+   * A wide window rolled weekly is a thousand regressions, and the request does
+   * not return until every one of them is written. A static "Estimating..." for
+   * half a minute is indistinguishable from a hung page, and the honest fix for
+   * that is to say how long it has been.
+   */
+  useEffect(() => {
+    if (!busy) return;
+    setElapsed(0);
+    const started = Date.now();
+    const id = window.setInterval(
+      () => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(id);
+  }, [busy]);
 
   const run = () => {
     setBusy(true); setError(null);
@@ -259,7 +277,9 @@ export default function LoadingsPage() {
             </label>
 
             <button className="btn w-full" onClick={run} disabled={busy}>
-              {busy ? "Estimating…" : "Estimate"}
+              {busy
+                ? elapsed > 2 ? `Estimating… ${elapsed}s` : "Estimating…"
+                : "Estimate"}
             </button>
           </div>
         </Panel>
