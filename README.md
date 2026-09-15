@@ -92,7 +92,7 @@ backend/
                 covariance · risk · distribution
   pipeline/     ingestion, construction and estimation jobs
   app/          FastAPI: thin routers over raw SQL, plus the DeepSeek assistant
-  tests/        331 tests, mostly against simulated data with known parameters
+  tests/        337 tests, mostly against simulated data with known parameters
 frontend/       Next.js 14 + Plotly, six pages
 scripts/        one-off tooling: model probe, backfills, screenshot capture
 ```
@@ -233,7 +233,7 @@ break-or-heteroskedasticity, or inconclusive. Only the second blocks a series.
 ## Verification
 
 ```bash
-python -m pytest -q                                    # 331 tests
+python -m pytest -q                                    # 337 tests
 python -m pytest backend/tests/test_factor_validation.py   # needs a populated DB
 ```
 

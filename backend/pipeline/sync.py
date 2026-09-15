@@ -242,40 +242,83 @@ def sync_reference_factors(cur: Any, full: bool) -> int:
 
 
 def sync_security(cur: Any, instrument_id: str) -> int:
-    """Pull one equity on demand. instrument_id is 'US:AAPL' or 'JP:7203'."""
+    """Pull one equity on demand, in the base currency.
+
+    instrument_id is 'US:AAPL' or 'JP:7203'.
+
+    Every factor is a USD excess return over USD cash, so a security has to arrive
+    in USD too. It did not: this pulled `log_return`, the local-currency column, and
+    a Japanese name then went into the regression denominated in yen. The model has
+    no way to know that, so it spent a factor loading undoing the units error -
+    JP:1904 came out with a -0.97 loading on fx_jpy, which is the currency leg
+    almost exactly, and an adjusted R-squared of 0.098 against 0.282 on the
+    converted series.
+
+    The warehouse carries the converted columns already, so this is a column
+    choice, not a computation. For US names the two are bit-identical and either
+    would do; the branch is on the currency rather than the jurisdiction so a third
+    market added later is converted by default rather than by remembering to.
+
+    Days where the FX rate is missing are dropped rather than filled with the local
+    return. That loses 17 days of 6,620 for JP:1904, and the alternative is a series
+    that is USD on most days and yen on a few, which is the bug this fixes wearing a
+    smaller hat.
+    """
     try:
         juris, ticker = instrument_id.split(":", 1)
     except ValueError:
         raise SystemExit(f"security id must look like US:AAPL, got {instrument_id!r}")
 
-    table = {"US": "fact_prices_us", "JP": "fact_prices_jp"}.get(juris.upper())
+    juris = juris.upper()
+    table = {"US": "fact_prices_us", "JP": "fact_prices_jp"}.get(juris)
     if not table:
         raise SystemExit(f"unknown jurisdiction {juris!r}; expected US or JP")
+
+    base = get_settings().base_ccy
+    local_ccy = {"US": "USD", "JP": "JPY"}[juris]
+    convert = local_ccy != base
+
+    cols = ("close_usd, adj_close_usd, return_usd, log_return_usd" if convert
+            else "close, adj_close, return, log_return")
+    guard = "log_return_usd IS NOT NULL" if convert else "log_return IS NOT NULL"
+    note = (f"on-demand security, {local_ccy} converted to {base}" if convert
+            else "on-demand security")
 
     cur.execute(
         """
         INSERT INTO ref_instrument
             (instrument_id, source_ticker, source_table, asset_class, currency,
              is_total_return, role, notes)
-        VALUES (%s, %s, %s, 'Equity', %s, TRUE, 'analysis', 'on-demand security')
-        ON CONFLICT (instrument_id) DO NOTHING
+        VALUES (%s, %s, %s, 'Equity', %s, TRUE, 'analysis', %s)
+        ON CONFLICT (instrument_id) DO UPDATE SET
+            currency = EXCLUDED.currency, notes = EXCLUDED.notes
         """,
-        (instrument_id, ticker, table, "USD" if juris.upper() == "US" else "JPY"),
+        (instrument_id, ticker, table, base, note),
     )
     cur.execute(
         f"""
         INSERT INTO fact_input_return
-            (instrument_id, date, close, adj_close, ret_simple, ret_log, volume, currency, source)
-        SELECT %s, date, close, adj_close, return, log_return, volume,
-               COALESCE(currency, %s), 'warehouse'
+            (instrument_id, date, close, adj_close, ret_simple, ret_log, volume,
+             currency, source)
+        SELECT %s, date, {cols}, volume, %s, 'warehouse'
         FROM warehouse_sec.{table}
-        WHERE ticker = %s AND log_return IS NOT NULL
+        WHERE ticker = %s AND {guard}
+          -- The first observation of a series has no prior price, so whatever sits
+          -- in its return column is not a return. The warehouse computes one
+          -- anyway: AAPL gets -5.775 on 2000-01-03, a log return of minus five,
+          -- which is the gap between an unadjusted prior close and a split-adjusted
+          -- one. That single day took AAPL annualised volatility from 0.37 to 1.19
+          -- and would wreck every regression window containing it.
+          --
+          -- Dropped by position, not by magnitude: a threshold would also discard
+          -- the genuine halving AAPL printed in September 2000.
+          AND date > (SELECT min(date) FROM warehouse_sec.{table} WHERE ticker = %s)
         ON CONFLICT (instrument_id, date) DO UPDATE SET
             close = EXCLUDED.close, adj_close = EXCLUDED.adj_close,
             ret_simple = EXCLUDED.ret_simple, ret_log = EXCLUDED.ret_log,
-            volume = EXCLUDED.volume
+            volume = EXCLUDED.volume, currency = EXCLUDED.currency
         """,
-        (instrument_id, "USD" if juris.upper() == "US" else "JPY", ticker),
+        (instrument_id, base, ticker, ticker),
     )
     return cur.rowcount
 
