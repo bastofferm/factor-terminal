@@ -749,6 +749,87 @@ def orthogonalisation(targets: list[str] | None, mode: str = "rolling") -> Formu
     return Formula(plain, latex, where, steps)
 
 
+# Helper functions each builder leans on, worth showing beside it because the
+# arithmetic that matters is often in them rather than in the builder itself: a
+# curve factor's five readable lines call out to duration, convexity and a
+# synthetic par bond, and reading only the caller tells you nothing.
+_BUILDER_HELPERS: dict[str, list[tuple[str, str]]] = {
+    "curve": [("backend.pipeline.build_factors", "_synthetic_bond_returns"),
+              ("backend.core.transforms", "yield_change_to_return"),
+              ("backend.core.transforms", "par_bond_modified_duration")],
+    "synthetic_bond": [("backend.core.transforms", "yield_change_to_return"),
+                       ("backend.core.transforms", "par_bond_modified_duration")],
+    "level_transform": [("backend.core.transforms", "sparse_release_change"),
+                        ("backend.core.transforms", "apply_transform")],
+    "spread_level": [("backend.core.transforms", "diff_standardized")],
+    "realized_vol_change": [("backend.core.transforms", "diff_standardized")],
+    "single": [("backend.core.transforms", "to_excess_return")],
+}
+
+
+def _source_of(module_name: str, func_name: str) -> dict | None:
+    """One function's source, with the file and line it starts at.
+
+    Read with `inspect.getsource` rather than stored as a string: a snippet that
+    is copied cannot be wrong at the moment it is written and cannot be right for
+    long. This one is the running code by construction.
+    """
+    import importlib
+    import inspect
+
+    try:
+        mod = importlib.import_module(module_name)
+        fn = getattr(mod, func_name)
+        code = inspect.getsource(fn)
+        _, line = inspect.getsourcelines(fn)
+    except Exception:
+        return None
+    return {
+        "name": func_name,
+        "module": module_name,
+        "path": module_name.replace(".", "/") + ".py",
+        "line": line,
+        "code": code.rstrip(),
+    }
+
+
+def source_code(method: str, inputs: dict[str, Any] | None = None) -> dict:
+    """The Python that builds a factor of this method, as it actually runs.
+
+    The formula says what the arithmetic is; this says where it lives, which is the
+    question anyone who doubts a number asks next. `call` shows the builder invoked
+    with this factor's own inputs, so the snippet is not generic.
+    """
+    import json as _json
+
+    entry = "_variance_premium" if method == "variance_premium" else None
+    if entry is None:
+        entry = {
+            "single": "_single", "spread": "_spread", "basket": "_basket",
+            "curve": "_curve", "synthetic_bond": "_synthetic_bond",
+            "spread_level": "_spread_level", "level_transform": "_level_transform",
+            "realized_vol_change": "_realized_vol_change", "tsmom": "_tsmom",
+            "xs_momentum": "_xs_momentum", "fx_carry": "_fx_carry",
+        }.get(method)
+    if entry is None:
+        return {"method": method, "builder": None, "helpers": [], "call": ""}
+
+    builder = _source_of("backend.pipeline.build_factors", entry)
+    helpers = [h for h in (_source_of(m, f)
+                          for m, f in _BUILDER_HELPERS.get(method, []))
+               if h is not None]
+
+    rendered = _json.dumps(inputs or {}, indent=4, sort_keys=True)
+    call = (f"# backend/pipeline/build_factors.py, in build_one()\n"
+            f"inputs = {rendered}\n"
+            f"series = {entry}(panels, inputs)")
+    if (inputs or {}).get("scale_to_vol"):
+        call += (f"\nseries = _rescale(series, "
+                 f"{float(inputs['scale_to_vol']):g})   # to a return scale")
+
+    return {"method": method, "builder": builder, "helpers": helpers, "call": call}
+
+
 def for_factor(spec: dict, mode: str = "rolling") -> dict:
     """Both formulas for one entry of the factor registry.
 

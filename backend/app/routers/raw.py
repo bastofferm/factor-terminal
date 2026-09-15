@@ -29,6 +29,7 @@ from backend.app import db, provenance as prov
 from backend.core import distribution as dist
 from backend.core import stationarity as st
 from backend.core import summary as summ
+from backend.pipeline import formula as fm
 
 router = APIRouter()
 
@@ -236,9 +237,27 @@ async def _load(kind: str, series_id: str, start: date | None,
         meta["sources"] = (
             await _instrument_sources(named)
             + await _level_sources(named, inputs.get("tenors")))
+
+        # A currency named in the inputs is converted through fact_input_fx rather
+        # than being an instrument or a level series, so it resolves to neither of
+        # the queries above and would otherwise vanish from the source list.
+        ccy = inputs.get("fx")
+        if ccy:
+            meta["sources"].append({
+                "id": ccy, "kind": "fx", "label": ccy,
+                "source": "xbrl_sec warehouse",
+                "name": f"USD per {ccy}",
+            })
+
+        meta["code"] = fm.source_code(construction.get("method"), inputs)
     else:
         meta["label"] = meta.get("name")
         meta["source"] = prov.instrument_source(meta.get("source_table"))
+        # One entry so the source-data panel has the same shape for both kinds.
+        meta["sources"] = [{
+            "id": meta["id"], "kind": "instrument", "label": meta.get("name"),
+            "source": meta["source"], "name": meta.get("notes"),
+        }]
 
     s = pd.Series({r["date"]: float(r["value"]) for r in rows})
     s.index = pd.to_datetime(s.index)
@@ -319,4 +338,139 @@ async def analyse(kind: str, series_id: str, start: date | None = None,
             "confidence_band": float(1.96 / np.sqrt(n)),
         },
         "diagnostics": diagnostics,
+    }
+
+
+# ---------------------------------------------------------------------------
+# the source series, in its own units
+# ---------------------------------------------------------------------------
+
+@router.get("/source/{ref_kind}/{ref_id:path}")
+async def source_series(ref_kind: str, ref_id: str, start: date | None = None,
+                        end: date | None = None) -> dict:
+    """The stored series before anything was done to it.
+
+    Every other panel on this page plots a return, which is already a
+    transformation: a log difference of the thing that was actually downloaded.
+    This serves what sits in the warehouse table - the adjusted close, the quoted
+    yield in percent, the exchange rate - so a suspicious factor can be traced back
+    to a number that came from a provider rather than from this code.
+
+    `ref_id:path` because level series ids carry a colon, and instrument ids carry
+    dots and equals signs: FRED:DGS10, DX-Y.NYB, USDJPY=X.
+    """
+    if ref_kind == "instrument":
+        meta = await db.fetchrow(
+            """
+            SELECT instrument_id AS id, source_ticker, source_table, currency,
+                   asset_class, is_total_return
+            FROM ref_instrument WHERE instrument_id = $1
+            """,
+            ref_id,
+        )
+        if not meta:
+            raise HTTPException(404, f"no such instrument: {ref_id!r}")
+        rows = await db.fetch(
+            """
+            SELECT date, adj_close AS value, close AS unadjusted
+            FROM fact_input_return
+            WHERE instrument_id = $1 AND adj_close IS NOT NULL
+              AND ($2::date IS NULL OR date >= $2)
+              AND ($3::date IS NULL OR date <= $3)
+            ORDER BY date
+            """,
+            ref_id, start, end,
+        )
+        meta = dict(meta)
+        info = {
+            "label": meta["source_ticker"],
+            "source": prov.instrument_source(meta["source_table"]),
+            "unit": meta["currency"] or "price",
+            "quantity": "adjusted close",
+            "table": "fact_input_return.adj_close",
+            "is_total_return": meta["is_total_return"],
+        }
+
+    elif ref_kind == "level":
+        meta = await db.fetchrow(
+            """
+            SELECT series_id AS id, name, unit, category, transform, tenor_years
+            FROM ref_level_series WHERE series_id = $1
+            """,
+            ref_id,
+        )
+        if not meta:
+            raise HTTPException(404, f"no such level series: {ref_id!r}")
+        rows = await db.fetch(
+            """
+            SELECT date, value, NULL::double precision AS unadjusted
+            FROM fact_input_level
+            WHERE series_id = $1 AND value IS NOT NULL
+              AND ($2::date IS NULL OR date >= $2)
+              AND ($3::date IS NULL OR date <= $3)
+            ORDER BY date
+            """,
+            ref_id, start, end,
+        )
+        meta = dict(meta)
+        info = {
+            "label": str(meta["id"]).split(":", 1)[-1],
+            "source": prov.level_series_source(meta["id"]),
+            "unit": meta["unit"] or "level",
+            "quantity": meta["name"] or "quoted level",
+            "table": "fact_input_level.value",
+            "transform": meta["transform"],
+        }
+
+    elif ref_kind == "fx":
+        rows = await db.fetch(
+            """
+            SELECT date, usd_per_unit AS value,
+                   NULL::double precision AS unadjusted
+            FROM fact_input_fx
+            WHERE ccy = $1
+              AND ($2::date IS NULL OR date >= $2)
+              AND ($3::date IS NULL OR date <= $3)
+            ORDER BY date
+            """,
+            ref_id, start, end,
+        )
+        info = {
+            "label": ref_id,
+            "source": "xbrl_sec warehouse",
+            "unit": f"USD per {ref_id}",
+            "quantity": "exchange rate",
+            "table": "fact_input_fx.usd_per_unit",
+        }
+
+    else:
+        raise HTTPException(
+            400, f"ref_kind must be instrument, level or fx, not {ref_kind!r}")
+
+    if not rows:
+        raise HTTPException(404, f"no stored values for {ref_kind} {ref_id!r}")
+
+    dates = [r["date"].isoformat() for r in rows]
+    values = [float(r["value"]) for r in rows]
+
+    # Adjusted against unadjusted is the dividend question made visible: for a
+    # total-return ETF the two diverge by the accumulated distributions, and for a
+    # price-return index they sit exactly on top of each other. That is the check
+    # behind excluding the ^-prefixed index levels from construction.
+    unadjusted = [None if r["unadjusted"] is None else float(r["unadjusted"])
+                  for r in rows]
+    has_unadjusted = any(v is not None for v in unadjusted)
+
+    return {
+        "ref_kind": ref_kind,
+        "id": ref_id,
+        **info,
+        "dates": dates,
+        "values": values,
+        "unadjusted": unadjusted if has_unadjusted else None,
+        "n_obs": len(values),
+        "first_date": dates[0],
+        "last_date": dates[-1],
+        "first_value": values[0],
+        "last_value": values[-1],
     }

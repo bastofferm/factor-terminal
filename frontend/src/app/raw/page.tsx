@@ -20,6 +20,7 @@ import { num, pct, pval } from "@/lib/api";
 import { blockStyle } from "@/lib/blocks";
 import { episodeLayout } from "@/lib/episodes";
 import { assess, bySign } from "@/lib/verdict";
+import { SourceSeries } from "@/components/SourceSeries";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
 type Kind = "factor" | "instrument";
@@ -391,11 +392,19 @@ export default function RawPage() {
                       {data.meta.construction.note}
                     </p>
                   )}
+                  <CodeSnippet code={data.meta?.code} />
                 </>
               )}
             </Panel>
 
-            <Panel index={3} title="Compounded return"
+            <SourceSeries
+              index={3}
+              sources={data.meta?.sources ?? []}
+              accent={accent}
+              episodes={bands}
+            />
+
+            <Panel index={4} title="Compounded return"
                    caption="exp(Σ log r) − 1: what holding this series would actually have returned.">
               <Chart
                 height={280} episodes={bands}
@@ -407,7 +416,7 @@ export default function RawPage() {
               />
             </Panel>
 
-            <Panel index={4} title="Rolling volatility"
+            <Panel index={5} title="Rolling volatility"
                    caption="Annualised, at 21, 63 and 252 days. Shaded bands mark well-known market episodes — editorial context, not a model output.">
               <Chart
                 height={280} episodes={bands}
@@ -420,7 +429,7 @@ export default function RawPage() {
               />
             </Panel>
 
-            <Panel index={5} title="Return distribution"
+            <Panel index={6} title="Return distribution"
                    caption={`${data.distribution.n_bins} bins by the Freedman-Diaconis rule; Student-t fit has ${num(data.distribution.t_df, 1)} degrees of freedom. ${data.distribution.n_outside} observations lie outside the drawn range.`}>
               <Chart
                 height={280} numericX
@@ -446,7 +455,7 @@ export default function RawPage() {
               />
             </Panel>
 
-            <Panel index={6} title="Autocorrelation"
+            <Panel index={7} title="Autocorrelation"
                    caption="Returns versus squared returns. Autocorrelation in returns is a stale-pricing warning; in squared returns it is volatility clustering, which is expected.">
               <Chart
                 height={280} numericX
@@ -481,7 +490,7 @@ export default function RawPage() {
 
         {d && (
           <Panel
-            index={7}
+            index={8}
             title="Stationarity battery"
             caption="Computed live on the series above, not read from the stored factor diagnostics — those are for the orthogonalised factors, and a verdict for a different series would be worse than none."
             actions={<VerdictBadge verdict={d.verdict} showLabel title={d.verdict_reason} />}
@@ -563,4 +572,46 @@ function span(dates?: string[]): string {
                  - new Date(dates[0]).getTime()) / (365.25 * 24 * 3600 * 1000);
   return dates[0] + " to " + dates[dates.length - 1]
        + " (" + years.toFixed(1) + " years)";
+}
+
+
+/**
+ * The Python that builds this factor, read out of the running module.
+ *
+ * Collapsed, because it is twenty to sixty lines and only some readers want it —
+ * but present, because "how is this computed" has an exact answer that lives in a
+ * file, and paraphrasing it into prose is how documentation starts lying. The
+ * backend reads it with `inspect.getsource`, so it cannot drift from what ran.
+ */
+function CodeSnippet({ code }: { code?: any }) {
+  if (!code?.builder) return null;
+  const blocks = [code.builder, ...(code.helpers ?? [])];
+
+  return (
+    <details className="mt-3">
+      <summary className="cursor-pointer text-[11px] text-muted hover:text-navy">
+        The Python that builds it — {code.builder.name}()
+        {code.helpers?.length ? ` and ${code.helpers.length} helper${
+          code.helpers.length === 1 ? "" : "s"}` : ""}
+      </summary>
+
+      <pre className="mt-2 overflow-x-auto rounded border border-lineSoft bg-canvas
+                      px-3 py-2 font-mono text-[11px] leading-relaxed text-navy">
+        {code.call}
+      </pre>
+
+      {blocks.map((b: any) => (
+        <div key={b.module + b.name} className="mt-2">
+          <div className="font-mono text-[10px] text-muted">
+            {b.path}:{b.line}
+          </div>
+          <pre className="mt-0.5 max-h-[320px] overflow-auto rounded border
+                          border-lineSoft bg-canvas px-3 py-2 font-mono
+                          text-[11px] leading-relaxed text-navy">
+            {b.code}
+          </pre>
+        </div>
+      ))}
+    </details>
+  );
 }

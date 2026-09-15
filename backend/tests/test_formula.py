@@ -545,3 +545,64 @@ def test_latex_braces_balance():
 def test_an_unknown_method_is_refused_rather_than_guessed():
     with pytest.raises(ValueError, match="no formula renderer"):
         formula.construction("teleology", {})
+
+
+# ---------------------------------------------------------------------------
+# the Python snippet
+# ---------------------------------------------------------------------------
+
+def test_every_method_resolves_to_a_real_builder():
+    """Read with inspect.getsource, so a renamed builder fails here rather than
+    leaving the panel silently empty."""
+    for f in factor_defs.FACTORS:
+        code = formula.source_code(f["method"], f["inputs"])
+        assert code["builder"], f"{f['id']}: no source for method {f['method']}"
+        assert code["builder"]["code"].startswith("def "), f["id"]
+        assert code["builder"]["path"].endswith(".py"), f["id"]
+        assert code["builder"]["line"] > 0, f["id"]
+
+
+def test_the_snippet_is_the_running_code_not_a_copy():
+    """The whole point of inspect.getsource: what is shown is what executes."""
+    import inspect
+
+    from backend.pipeline import build_factors as bf
+
+    shown = formula.source_code("single", {"instrument": "IVV"})["builder"]["code"]
+    assert shown == inspect.getsource(bf._single).rstrip()
+
+
+def test_the_call_binds_this_factor_s_own_inputs():
+    code = formula.source_code("single", {"instrument": "IGLT.L", "fx": "GBP"})
+    assert "IGLT.L" in code["call"]
+    assert "GBP" in code["call"]
+    assert "_single(panels, inputs)" in code["call"]
+
+
+def test_a_rescaled_factor_shows_the_rescaling_step():
+    """_rescale is applied in build_one, not inside the builder, so a snippet of the
+    builder alone would stop one line short of what produced the series."""
+    code = formula.source_code("variance_premium",
+                               {"underlying": "SPY", "scale_to_vol": 0.1})
+    assert "_rescale" in code["call"]
+
+
+def test_a_plain_factor_shows_no_rescaling_step():
+    code = formula.source_code("single", {"instrument": "IVV"})
+    assert "_rescale" not in code["call"]
+
+
+def test_curve_carries_the_helpers_that_hold_the_arithmetic():
+    """_curve is five readable lines that delegate the actual pricing. Showing it
+    alone would say nothing about duration or convexity."""
+    code = formula.source_code("curve", {"curve": "US_TSY", "shape": "slope",
+                                         "tenors": [2.0, 10.0]})
+    names = [h["name"] for h in code["helpers"]]
+    assert "yield_change_to_return" in names
+    assert "par_bond_modified_duration" in names
+
+
+def test_an_unknown_method_returns_a_gap_rather_than_raising():
+    code = formula.source_code("teleology", {})
+    assert code["builder"] is None
+    assert code["helpers"] == []
