@@ -7,7 +7,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Chart, PALETTE, Panel, Stat } from "@/components/Chart";
-import { api, Instrument, LoadingResult, num, pct, pval } from "@/lib/api";
+import { api, LoadingResult, num, pct, pval } from "@/lib/api";
+import { SecuritySearch } from "@/components/SecuritySearch";
 import { MetricCard, MetricStrip, alignFor } from "@/components/MetricCard";
 import { METRICS } from "@/lib/metrics";
 import { design } from "@/lib/verdict";
@@ -20,7 +21,6 @@ const STEPS = [
 ] as const;
 
 export default function LoadingsPage() {
-  const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [instrument, setInstrument] = useState("US:AAPL");
   const [windowDays, setWindowDays] = useState(252);
   const [step, setStep] = useState("1m");
@@ -40,22 +40,6 @@ export default function LoadingsPage() {
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Everything with a return history, not the 117 that are live factor inputs.
-   *
-   * The old call asked for role "analysis" and live only, which returned the
-   * factor universe and excluded the three securities anyone actually estimates:
-   * US:AAPL, US:JPM and US:XOM are role "analysis" and is_live false, because they
-   * are synced on demand rather than by the nightly ingest. The box defaulted to
-   * US:AAPL and then did not offer it in its own list.
-   *
-   * is_live false here means "outside the nightly ingest", not "dead" - the same
-   * distinction the Raw Explorer draws between stale and ended - so it is no reason
-   * to hide a security that has twenty-six years of history sitting in the table.
-   */
-  useEffect(() => {
-    api.instruments(undefined, false).then(setInstruments).catch(() => {});
-  }, []);
 
   /**
    * Seconds on the button while a fit runs.
@@ -163,30 +147,7 @@ export default function LoadingsPage() {
           <div className="space-y-2.5">
             <div>
               <label className="label">Security</label>
-              <input className="field mt-1 font-mono" value={instrument}
-                     onChange={(e) => setInstrument(e.target.value)}
-                     placeholder="US:AAPL" list="instrument-list" />
-              {/*
-                The label carries the asset class and the history length, because a
-                list of two hundred bare tickers is a list you scroll rather than
-                search. Still free text: a US equity not yet synced can be typed in
-                and fetched on demand.
-              */}
-              <datalist id="instrument-list">
-                {instruments.map((i) => (
-                  <option key={i.instrument_id} value={i.instrument_id}>
-                    {[i.asset_class, i.n_obs ? `${i.n_obs.toLocaleString()} days` : null]
-                      .filter(Boolean).join(" · ")}
-                  </option>
-                ))}
-              </datalist>
-              <p className="mt-1 text-[10px] leading-tight text-muted">
-                {instruments.length
-                  ? `${instruments.length} with stored history. `
-                  : ""}
-                Equities as <span className="font-mono">US:TICKER</span>; ETFs by
-                bare ticker. Anything not listed is fetched on demand.
-              </p>
+              <SecuritySearch value={instrument} onChange={setInstrument} />
             </div>
 
             {/*

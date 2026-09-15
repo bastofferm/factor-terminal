@@ -348,6 +348,100 @@ def rebuild_calendar(cur: Any) -> int:
 
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# the security catalogue
+# ---------------------------------------------------------------------------
+
+def refresh_security_catalogue(cur: Any) -> int:
+    """Everything the warehouse can price, as a searchable local table.
+
+    ref_instrument records what has actually been mirrored - 198 rows, almost all
+    factor inputs. This records what *could* be estimated: 5,376 US securities,
+    6,025 Japanese ones and 182 cross-asset funds, any of which sync_security can
+    pull on demand.
+
+    Materialised rather than searched live because deriving coverage means
+    aggregating the price tables, and those are 15.8M and 15.4M rows - eight
+    seconds each. Nightly that is nothing; per keystroke it is unusable.
+
+    Only securities with a stored return history are listed. A name in the company
+    dimension with no prices behind it would be offered and then fail on estimation,
+    which is a worse experience than not offering it.
+    """
+    cur.execute("TRUNCATE ref_security")
+
+    # US and JP equities: the company dimension for the name and sector, the price
+    # table for what is actually covered.
+    total = 0
+    for juris, price_table, dim, currency in (
+        ("US", "fact_prices_us", "dim_company_us", "USD"),
+        ("JP", "fact_prices_jp", "dim_company_jp", "JPY"),
+    ):
+        exchange = "d.exchange" if juris == "US" else "NULL::text"
+        # dim_company_jp keys on the Tokyo suffix - 7203.T - while fact_prices_jp
+        # keys on the bare code. Joining them directly matched 17 names out of
+        # 3,878 and left the rest showing their own ticker as their name, which is
+        # a catalogue you cannot search by name at all.
+        join_on = ("d.primary_ticker = c.ticker" if juris == "US"
+                   else "d.primary_ticker IN (c.ticker, c.ticker || '.T')")
+        cur.execute(
+            f"""
+            INSERT INTO ref_security
+                (instrument_id, ticker, name, security_type, jurisdiction,
+                 exchange, sector, currency, source_table,
+                 first_date, last_date, n_obs)
+            SELECT '{juris}:' || c.ticker, c.ticker,
+                   COALESCE(d.name, c.ticker), 'equity', '{juris}',
+                   {exchange}, d.gics_sector_name, '{currency}', '{price_table}',
+                   c.first_date, c.last_date, c.n_obs
+            FROM (
+                SELECT ticker, min(date) AS first_date, max(date) AS last_date,
+                       count(*) AS n_obs
+                FROM warehouse_sec.{price_table}
+                WHERE log_return IS NOT NULL
+                GROUP BY ticker
+            ) c
+            LEFT JOIN warehouse_sec.{dim} d ON {join_on}
+            ON CONFLICT (instrument_id) DO NOTHING
+            """
+        )
+        total += cur.rowcount
+
+    # Cross-asset: funds, indices, futures, FX and crypto, all priced in
+    # fact_cross_asset. The type comes from the ticker convention, because
+    # dim_cross_asset files most of the ETFs under "Other" - ANGL, BKLN, DBC and
+    # sixty others are all ETFs, and calling them "Other" in a picker helps nobody.
+    cur.execute(
+        """
+        INSERT INTO ref_security
+            (instrument_id, ticker, name, security_type, jurisdiction,
+             exchange, sector, currency, source_table,
+             first_date, last_date, n_obs)
+        SELECT c.ticker, c.ticker, COALESCE(d.name, c.ticker),
+               CASE
+                   WHEN c.ticker LIKE '^%%'    THEN 'index'
+                   WHEN c.ticker LIKE '%%=F'   THEN 'futures'
+                   WHEN c.ticker LIKE '%%=X'   THEN 'fx'
+                   WHEN c.ticker LIKE '%%-USD' THEN 'crypto'
+                   ELSE 'etf'
+               END,
+               'global', NULL, d.asset_class, 'USD', 'fact_cross_asset',
+               c.first_date, c.last_date, c.n_obs
+        FROM (
+            SELECT ticker, min(date) AS first_date, max(date) AS last_date,
+                   count(*) AS n_obs
+            FROM warehouse_sec.fact_cross_asset
+            WHERE log_return IS NOT NULL
+            GROUP BY ticker
+        ) c
+        LEFT JOIN warehouse_sec.dim_cross_asset d ON d.ticker = c.ticker
+        ON CONFLICT (instrument_id) DO NOTHING
+        """
+    )
+    total += cur.rowcount
+    return total
+
+
 def run(full: bool = False, security: str | None = None, quiet: bool = False) -> int:
     """Run the sync chain. Returns the number of failed steps.
 
@@ -363,6 +457,7 @@ def run(full: bool = False, security: str | None = None, quiet: bool = False) ->
         ("reference_factors",  lambda c: sync_reference_factors(c, full)),
         ("coverage",           lambda c: refresh_coverage(c)),
         ("calendar",           lambda c: rebuild_calendar(c)),
+        ("security_catalogue", lambda c: refresh_security_catalogue(c)),
     ]
     if security:
         steps.insert(6, ("security", lambda c: sync_security(c, security)))

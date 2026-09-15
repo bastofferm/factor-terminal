@@ -85,14 +85,14 @@ python -m backend.pipeline.scheduler --once     # or omit --once to run as a dae
 ## Layout
 
 ```
-sql/            14 idempotent migrations, applied in order, fail-fast
+sql/            15 idempotent migrations, applied in order, fail-fast
 backend/
   core/         pure numpy — no database access, so every statistic is testable
                 stationarity · transforms · orthogonalize · regression
                 covariance · risk · distribution
   pipeline/     ingestion, construction and estimation jobs
   app/          FastAPI: thin routers over raw SQL, plus the DeepSeek assistant
-  tests/        322 tests, mostly against simulated data with known parameters
+  tests/        331 tests, mostly against simulated data with known parameters
 frontend/       Next.js 14 + Plotly, six pages
 scripts/        one-off tooling: model probe, backfills, screenshot capture
 ```
@@ -163,6 +163,13 @@ not silently dropped or silently used. The condition-number limit applies to bot
 factor panels; the VIF limit only to the orthogonalised one, where a high VIF is
 anomalous rather than — as on the raw panel — the definition of the factor set.
 
+**Any security the warehouse prices can be estimated.** The Loadings Lab searches
+a catalogue of 9,434 securities — 5,376 US equities, 3,878 Japanese, 107 funds —
+not the 198 already mirrored. Picking one that has never been pulled syncs it on
+the first estimate, which is one indexed read. The catalogue is materialised by the
+nightly sync because deriving it means aggregating two price tables of fifteen
+million rows apiece; searching it live would cost eight seconds a keystroke.
+
 **Green and red are a claim, not decoration.** Colour on a diagnostic says whether
 the number is what the model wants, and the rule lives in one file
 (`frontend/src/lib/verdict.ts`) so the Factor Explorer and the Raw Explorer cannot
@@ -226,7 +233,7 @@ break-or-heteroskedasticity, or inconclusive. Only the second blocks a series.
 ## Verification
 
 ```bash
-python -m pytest -q                                    # 322 tests
+python -m pytest -q                                    # 331 tests
 python -m pytest backend/tests/test_factor_validation.py   # needs a populated DB
 ```
 

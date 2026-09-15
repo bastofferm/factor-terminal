@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from backend.app import db
 from backend.pipeline import run_estimation as est
+from backend.pipeline import sync
 from backend.pipeline.dbsync import connect
 
 router = APIRouter()
@@ -63,6 +64,39 @@ def _run_blocking(spec: est.Spec, instrument_id: str) -> None:
     est.run_for([instrument_id], spec, quiet=True)
 
 
+async def _ensure_mirrored(instrument_id: str) -> None:
+    """Pull a security's history on demand if it is not stored yet.
+
+    The catalogue offers 9,434 securities and ref_instrument holds 198, so most of
+    what an analyst can pick has never been mirrored. Making them run a CLI first
+    would be a strange thing to ask of a picker that offered the name in the first
+    place - and the sync is one indexed read of the warehouse price table, a second
+    or two.
+
+    Only for securities the catalogue knows: an arbitrary string is left to fail in
+    the estimator, which already reports it clearly, rather than being silently
+    turned into an empty ref_instrument row.
+    """
+    has_returns = await db.fetchval(
+        "SELECT 1 FROM fact_input_return WHERE instrument_id = $1 LIMIT 1",
+        instrument_id)
+    if has_returns:
+        return
+
+    known = await db.fetchval(
+        "SELECT source_table FROM ref_security WHERE instrument_id = $1",
+        instrument_id)
+    if not known or ":" not in instrument_id:
+        return
+
+    await asyncio.to_thread(_sync_blocking, instrument_id)
+
+
+def _sync_blocking(instrument_id: str) -> None:
+    with connect() as conn, conn.cursor() as cur:
+        sync.sync_security(cur, instrument_id)
+
+
 @router.post("/estimate")
 async def estimate(req: EstimateRequest) -> dict:
     """Estimate rolling loadings, or return the cached result for this spec.
@@ -76,6 +110,8 @@ async def estimate(req: EstimateRequest) -> dict:
         factor_ids = [r["factor_id"] for r in await db.fetch(
             "SELECT factor_id FROM ref_factor WHERE is_active "
             "ORDER BY hierarchy_level, factor_id")]
+
+    await _ensure_mirrored(req.instrument_id)
 
     spec = _spec_from(req, factor_ids)
     cached = await db.fetchval(

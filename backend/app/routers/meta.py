@@ -208,6 +208,62 @@ async def data_health() -> dict:
     }
 
 
+@router.get("/securities")
+async def securities(q: str = "", types: str = "equity,etf",
+                     limit: int = 40) -> dict:
+    """Search everything the warehouse can price, not only what is mirrored.
+
+    ref_instrument holds the 198 series with returns already stored, almost all of
+    them factor inputs. This searches ref_security: 5,376 US equities, 3,878
+    Japanese ones and 107 funds, any of which the estimator can pull on demand. The
+    catalogue is refreshed by the nightly sync, because deriving it means
+    aggregating two price tables of fifteen million rows apiece.
+
+    `mirrored` says whether the history is already local. It is not a filter — a
+    security that has never been pulled is perfectly estimable, it just costs a sync
+    first — but it is worth showing, because those come back instantly.
+
+    Ranked so an exact ticker wins: typing AAPL should not return AAP and AAPD
+    above it.
+    """
+    wanted = [t.strip() for t in types.split(",") if t.strip()]
+    term = q.strip()
+    like = term.lower() + "%"
+    contains = "%" + term.lower() + "%"
+
+    rows = await db.fetch(
+        """
+        SELECT s.instrument_id, s.ticker, s.name, s.security_type, s.jurisdiction,
+               s.exchange, s.sector, s.currency, s.first_date, s.last_date, s.n_obs,
+               (i.instrument_id IS NOT NULL) AS mirrored
+        FROM ref_security s
+        LEFT JOIN ref_instrument i ON i.instrument_id = s.instrument_id
+        WHERE ($1::text[] IS NULL OR s.security_type = ANY($1))
+          AND ($2 = ''
+               OR lower(s.ticker) LIKE $3
+               OR lower(s.name) LIKE $4
+               OR lower(s.instrument_id) LIKE $3)
+        ORDER BY
+            -- exact ticker first, then a ticker prefix, then a name match; within
+            -- each, the longest history, which is the one worth estimating.
+            (lower(s.ticker) = $2) DESC,
+            (lower(s.ticker) LIKE $3) DESC,
+            s.n_obs DESC NULLS LAST,
+            s.ticker
+        LIMIT $5
+        """,
+        wanted or None, term.lower(), like, contains, max(1, min(limit, 200)),
+    )
+
+    total = await db.fetchval(
+        "SELECT count(*) FROM ref_security WHERE $1::text[] IS NULL "
+        "OR security_type = ANY($1)",
+        wanted or None,
+    )
+    return {"query": term, "types": wanted, "total": total,
+            "shown": len(rows), "results": rows}
+
+
 @router.get("/runs/{run_id}")
 async def run_detail(run_id: str) -> dict:
     """Everything one pipeline run did, and the parameters it did it under.

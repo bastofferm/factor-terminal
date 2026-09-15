@@ -14,6 +14,7 @@ import { Chart, PALETTE, Panel } from "@/components/Chart";
 import { api, num, pct, pval, RiskResult, Spec } from "@/lib/api";
 import { MetricCard, MetricStrip, alignFor } from "@/components/MetricCard";
 import { METRICS } from "@/lib/metrics";
+import { SecuritySearch } from "@/components/SecuritySearch";
 import { backtest } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
@@ -96,10 +97,15 @@ export default function RiskPage() {
     <div className="space-y-4">
       <Panel title="Forecast">
         <div className="flex flex-wrap items-end gap-3">
-          <div>
+          {/*
+            The same catalogue search as the Loadings Lab. Risk scoring needs
+            loadings to exist first, so a name picked here that has none will be
+            told so - but it should at least be pickable by name rather than only
+            by an exact id typed from memory.
+          */}
+          <div className="w-56">
             <label className="label">Security</label>
-            <input className="field mt-1 w-40 font-mono" value={instrument}
-                   onChange={(e) => setInstrument(e.target.value)} />
+            <SecuritySearch value={instrument} onChange={setInstrument} />
           </div>
           <div>
             <label className="label">Model spec</label>

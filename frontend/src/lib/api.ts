@@ -189,6 +189,26 @@ export interface Block {
   n_factors: number;
 }
 
+/**
+ * One row of the security catalogue: what the warehouse can price, whether or not
+ * its history has been mirrored locally yet.
+ */
+export interface Security {
+  instrument_id: string;
+  ticker: string;
+  name: string | null;
+  security_type: "equity" | "etf" | "index" | "futures" | "fx" | "crypto";
+  jurisdiction: string | null;
+  exchange: string | null;
+  sector: string | null;
+  currency: string | null;
+  first_date: string | null;
+  last_date: string | null;
+  n_obs: number | null;
+  /** Already in fact_input_return; if false, estimating it syncs it first. */
+  mirrored: boolean;
+}
+
 export interface Instrument {
   instrument_id: string;
   source_ticker: string;
@@ -296,6 +316,10 @@ export const api = {
   factors: () => get<FactorMeta[]>("/api/meta/factors"),
   instruments: (role?: string, liveOnly = true) =>
     get<Instrument[]>("/api/meta/instruments", { role, live_only: liveOnly }),
+  // The catalogue, not the mirror: 9,400 securities against ref_instrument's 198.
+  securities: (q: string, types = "equity,etf", limit = 40) =>
+    get<{ query: string; types: string[]; total: number; shown: number;
+          results: Security[] }>("/api/meta/securities", { q, types, limit }),
   specs: () => get<Spec[]>("/api/meta/specs"),
   dataHealth: () => get<any>("/api/meta/data-health"),
   run: (runId: string) => get<RunDetail>(`/api/meta/runs/${runId}`),
