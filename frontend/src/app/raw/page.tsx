@@ -139,16 +139,29 @@ export default function RawPage() {
             onChange={(e) => setFilter(e.target.value)}
           />
           <p className="mt-2 text-[10px] leading-tight text-muted">
-            The figure beside each name is its annualised volatility.{" "}
-            <b className="text-warn">stale</b> means it is still trading but outside
-            the nightly ingest; <b className="text-fail">ended</b> means the provider
-            stopped publishing it.
+            The figure beside each name is its annualised volatility.
           </p>
-          <p className="mt-1.5 text-[10px] leading-tight text-muted">
-            {kind === "factor"
-              ? "Each factor's own excess return, before the block hierarchy is removed."
-              : "Single inputs exactly as ingested — no construction, no orthogonalisation."}
-          </p>
+          {/*
+            stale and ended are liveness markers on an ingested series, and a factor
+            has no such state: it is rebuilt each night from whatever inputs exist.
+            Explaining them above a list that can never show them sent a reader
+            hunting for markers that were not missing, they were inapplicable.
+          */}
+          {kind === "instrument" ? (
+            <p className="mt-1.5 text-[10px] leading-tight text-muted">
+              Single inputs exactly as ingested — no construction, no
+              orthogonalisation. <b className="text-warn">stale</b> means it is
+              still trading but outside the nightly ingest;{" "}
+              <b className="text-fail">ended</b> means the provider stopped
+              publishing it.
+            </p>
+          ) : (
+            <p className="mt-1.5 text-[10px] leading-tight text-muted">
+              Each factor&rsquo;s own excess return, before the block hierarchy is
+              removed. Names here drop any &ldquo;ex-&rdquo; qualifier, which
+              describes the residual rather than this series.
+            </p>
+          )}
         </Panel>
 
         <div className="max-h-[66vh] overflow-auto rounded border border-line bg-panel">
@@ -244,14 +257,15 @@ export default function RawPage() {
                 <>
                   {kind === "factor" ? (
                     <>
-                      Raw excess return over cash.
-                      {data.meta?.orthogonalize_against?.length > 0 && (
-                        <> The model removes{" "}
-                          <span className="font-mono">
-                            {data.meta.orthogonalize_against.join(", ")}
-                          </span>{" "}
-                          from this before using it.</>
-                      )}
+                      {/*
+                        No mention of what the hierarchy removes. This page plots the
+                        series before any of that, and naming the residualisation
+                        target beside it invited exactly the reading the header used
+                        to make explicit — that this was already ex-global when it
+                        is not. The Factor Explorer is where that belongs.
+                      */}
+                      Log excess return over cash, as constructed.
+                      {data.meta?.block_name && <> {data.meta.block_name} block.</>}
                     </>
                   ) : (
                     <>
@@ -302,7 +316,86 @@ export default function RawPage() {
               </div>
             </Panel>
 
-            <Panel index={2} title="Compounded return"
+            {/*
+              Where the numbers came from. An instrument id does not say whether it
+              was fetched from Yahoo this morning or mirrored out of a warehouse
+              table refreshed in June, and neither does a factor id say which
+              instruments it reads. Both matter before trusting a figure, and the
+              history span matters most: a factor is only as long as its shortest
+              input, which is how liq_funding starts in 2018 while every other
+              liquidity series goes back to 2000.
+            */}
+            <Panel index={2} title="Where this comes from">
+              {kind === "instrument" ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Fact label="Provider" value={data.meta?.source} />
+                  <Fact label="Series at the provider"
+                        value={data.meta?.label ?? data.id} mono />
+                  <Fact label="History held"
+                        value={span(data.dates)} />
+                  <Fact label="Observations"
+                        value={data.stats?.n_obs?.toLocaleString()} />
+                  <Fact label="Asset class" value={data.meta?.asset_class} />
+                  <Fact label="Currency" value={data.meta?.currency} />
+                </div>
+              ) : (
+                <>
+                  <div className="mb-3 grid gap-3 border-b border-lineSoft pb-3 sm:grid-cols-3">
+                    <Fact label="Construction"
+                          value={data.meta?.construction?.method} mono />
+                    <Fact label="History held" value={span(data.dates)} />
+                    <Fact label="Observations"
+                          value={data.stats?.n_obs?.toLocaleString()} />
+                  </div>
+                  {(data.meta?.sources ?? []).length > 0 ? (
+                    <div className="overflow-auto" style={{ maxHeight: 260 }}>
+                      <table className="w-full border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="th">Input</th>
+                            <th className="th">At the provider</th>
+                            <th className="th">Source</th>
+                            <th className="th">History</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.meta.sources.map((src: any) => (
+                            <tr key={src.id} className="border-t border-lineSoft">
+                              <td className="cell">{src.id}</td>
+                              <td className="cell" title={src.name ?? ""}>
+                                {src.label ?? src.id}
+                              </td>
+                              <td className="cell font-sans text-muted">
+                                {src.source}
+                              </td>
+                              <td className="cell text-muted">
+                                {src.first_date
+                                  ? src.first_date + " to " + src.last_date
+                                  : "no data"}
+                                {src.n_obs
+                                  ? " \u00b7 " + Number(src.n_obs).toLocaleString()
+                                  : ""}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="py-4 text-center text-[12px] text-muted">
+                      No named inputs recorded for this construction.
+                    </p>
+                  )}
+                  {data.meta?.construction?.note && (
+                    <p className="mt-2 text-[11px] italic text-muted">
+                      {data.meta.construction.note}
+                    </p>
+                  )}
+                </>
+              )}
+            </Panel>
+
+            <Panel index={3} title="Compounded return"
                    caption="exp(Σ log r) − 1: what holding this series would actually have returned.">
               <Chart
                 height={280} episodes={bands}
@@ -314,7 +407,7 @@ export default function RawPage() {
               />
             </Panel>
 
-            <Panel index={3} title="Rolling volatility"
+            <Panel index={4} title="Rolling volatility"
                    caption="Annualised, at 21, 63 and 252 days. Shaded bands mark well-known market episodes — editorial context, not a model output.">
               <Chart
                 height={280} episodes={bands}
@@ -327,7 +420,7 @@ export default function RawPage() {
               />
             </Panel>
 
-            <Panel index={4} title="Return distribution"
+            <Panel index={5} title="Return distribution"
                    caption={`${data.distribution.n_bins} bins by the Freedman-Diaconis rule; Student-t fit has ${num(data.distribution.t_df, 1)} degrees of freedom. ${data.distribution.n_outside} observations lie outside the drawn range.`}>
               <Chart
                 height={280} numericX
@@ -353,7 +446,7 @@ export default function RawPage() {
               />
             </Panel>
 
-            <Panel index={5} title="Autocorrelation"
+            <Panel index={6} title="Autocorrelation"
                    caption="Returns versus squared returns. Autocorrelation in returns is a stale-pricing warning; in squared returns it is volatility clustering, which is expected.">
               <Chart
                 height={280} numericX
@@ -388,7 +481,7 @@ export default function RawPage() {
 
         {d && (
           <Panel
-            index={6}
+            index={7}
             title="Stationarity battery"
             caption="Computed live on the series above, not read from the stored factor diagnostics — those are for the orthogonalised factors, and a verdict for a different series would be worse than none."
             actions={<VerdictBadge verdict={d.verdict} showLabel title={d.verdict_reason} />}
@@ -438,4 +531,36 @@ export default function RawPage() {
       </div>
     </div>
   );
+}
+
+
+/** A labelled fact in the provenance panel. */
+function Fact({ label, value, mono }: {
+  label: string;
+  value?: React.ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="text-2xs uppercase tracking-label text-muted">{label}</div>
+      <div className={"text-[12px] text-navy " + (mono ? "font-mono" : "")}>
+        {value ?? "—"}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The span actually held, taken from the returned dates rather than the registry.
+ *
+ * A registry first_date is when the provider's series begins; this is the first day
+ * on which a *return* exists here, which is what the charts above are drawn from.
+ * Where the two differ, the one on screen is the honest one.
+ */
+function span(dates?: string[]): string {
+  if (!dates?.length) return "—";
+  const years = (new Date(dates[dates.length - 1]).getTime()
+                 - new Date(dates[0]).getTime()) / (365.25 * 24 * 3600 * 1000);
+  return dates[0] + " to " + dates[dates.length - 1]
+       + " (" + years.toFixed(1) + " years)";
 }

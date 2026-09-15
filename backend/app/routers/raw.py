@@ -17,13 +17,15 @@ panels are useless separately, so eight round trips would buy nothing.
 
 from __future__ import annotations
 
+import json
+import re
 from datetime import date
 
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 
-from backend.app import db
+from backend.app import db, provenance as prov
 from backend.core import distribution as dist
 from backend.core import stationarity as st
 from backend.core import summary as summ
@@ -85,7 +87,84 @@ async def catalog() -> dict:
         ORDER BY COALESCE(i.asset_class, 'Other'), i.instrument_id
         """
     )
+    # Same correction as the detail view: the list is of raw series, so it must not
+    # carry names that describe the residual. The hover title comes from here.
+    factors = [{**f, "model_name": f["name"], "name": raw_name(f["name"])}
+               for f in factors]
     return {"factors": factors, "instruments": instruments}
+
+
+# A parenthetical beginning "ex-" names what the *orthogonalisation* removes, not
+# what the series is: `eq_us` is registered as "US Equity (ex-global)" because that
+# is what it becomes after eq_global is residualised out. On this page the series is
+# plain US equity, so carrying the registry name over would put a claim on screen
+# that is the opposite of what is plotted.
+#
+# Only that prefix is stripped. "(10s-2s)", "(butterfly)", "(SOFR-EFFR)" and
+# "(small minus large)" describe the construction and are as true raw as
+# orthogonalised.
+_EX_QUALIFIER = re.compile(r"\s*\((?:ex|Ex)-[^)]*\)")
+
+
+def raw_name(name: str | None) -> str:
+    return _EX_QUALIFIER.sub("", name or "").strip()
+
+
+async def _instrument_sources(ids: list[str]) -> list[dict]:
+    if not ids:
+        return []
+    rows = await db.fetch(
+        """
+        SELECT i.instrument_id AS id, i.source_ticker, i.source_table,
+               i.asset_class, i.currency, i.is_total_return,
+               c.first_date, c.last_date, c.n_obs
+        FROM ref_instrument i
+        LEFT JOIN (
+            SELECT instrument_id, min(date) AS first_date, max(date) AS last_date,
+                   count(*) AS n_obs
+            FROM fact_input_return WHERE ret_log IS NOT NULL GROUP BY 1
+        ) c USING (instrument_id)
+        WHERE i.instrument_id = ANY($1::text[])
+        """,
+        ids,
+    )
+    return [{**r, "kind": "instrument", "label": r["source_ticker"],
+             "source": prov.instrument_source(r["source_table"])} for r in rows]
+
+
+async def _level_sources(ids: list[str],
+                         tenors: list | None = None) -> list[dict]:
+    """Level series named directly, plus the members of any curve named.
+
+    `tenors` narrows a curve to the legs the factor actually reads. Without it
+    rt_us_slope, a two-legged 10s-2s steepener, lists all eleven Treasury
+    maturities and looks like it consumes the whole curve.
+    """
+    if not ids:
+        return []
+    rows = await db.fetch(
+        """
+        SELECT r.series_id AS id, r.name, r.category, r.unit, r.transform,
+               r.tenor_years, l.first_date, l.last_date, l.n_obs
+        FROM ref_level_series r
+        LEFT JOIN (
+            SELECT series_id, min(date) AS first_date, max(date) AS last_date,
+                   count(*) AS n_obs
+            FROM fact_input_level WHERE value IS NOT NULL GROUP BY 1
+        ) l USING (series_id)
+        WHERE r.series_id = ANY($1::text[]) OR r.curve_id = ANY($1::text[])
+        ORDER BY r.tenor_years NULLS LAST, r.series_id
+        """,
+        ids,
+    )
+    if tenors:
+        wanted = {round(float(t), 4) for t in tenors}
+        rows = [r for r in rows
+                if r["tenor_years"] is None
+                or round(float(r["tenor_years"]), 4) in wanted]
+
+    return [{**r, "kind": "level", "label": str(r["id"]).split(":", 1)[-1],
+             "source": prov.level_series_source(r["id"])} for r in rows]
 
 
 async def _load(kind: str, series_id: str, start: date | None,
@@ -138,9 +217,32 @@ async def _load(kind: str, series_id: str, start: date | None,
     if not rows:
         raise HTTPException(404, f"no returns stored for {kind} {series_id!r}")
 
+    meta = dict(meta)
+
+    if kind == "factor":
+        # The registry name describes the orthogonalised factor; this page plots the
+        # raw one. `name` is corrected and the registry's own wording kept beside it,
+        # so the two are not silently conflated.
+        meta["model_name"] = meta.get("name")
+        meta["name"] = raw_name(meta.get("name"))
+
+        construction = meta.get("construction")
+        if isinstance(construction, str):
+            construction = json.loads(construction or "{}")
+        construction = construction or {}
+        meta["construction"] = construction
+        inputs = construction.get("inputs") or {}
+        named = prov.walk_inputs(inputs)
+        meta["sources"] = (
+            await _instrument_sources(named)
+            + await _level_sources(named, inputs.get("tenors")))
+    else:
+        meta["label"] = meta.get("name")
+        meta["source"] = prov.instrument_source(meta.get("source_table"))
+
     s = pd.Series({r["date"]: float(r["value"]) for r in rows})
     s.index = pd.to_datetime(s.index)
-    return s.sort_index(), dict(meta)
+    return s.sort_index(), meta
 
 
 @router.get("/{kind}/{series_id}")
