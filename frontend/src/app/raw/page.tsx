@@ -14,13 +14,13 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Chart, ChartSkeleton, PALETTE, Panel, Stat, VerdictBadge }
-  from "@/components/Chart";
-import { num, pct, pval } from "@/lib/api";
+import { Chart, ChartSkeleton, PALETTE, Panel, Stat } from "@/components/Chart";
+import { num, pct } from "@/lib/api";
 import { blockStyle } from "@/lib/blocks";
 import { episodeLayout } from "@/lib/episodes";
-import { assess, bySign } from "@/lib/verdict";
+import { bySign } from "@/lib/verdict";
 import { SourceSeries } from "@/components/SourceSeries";
+import { StationarityBattery } from "@/components/StationarityBattery";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
 type Kind = "factor" | "instrument";
@@ -489,53 +489,19 @@ export default function RawPage() {
         )}
 
         {d && (
-          <Panel
+          <StationarityBattery
             index={8}
-            title="Stationarity battery"
-            caption="Computed live on the series above, not read from the stored factor diagnostics — those are for the orthogonalised factors, and a verdict for a different series would be worse than none."
-            actions={<VerdictBadge verdict={d.verdict} showLabel title={d.verdict_reason} />}
-          >
-            {d.verdict_reason && (
-              <p className="mb-3 text-[12px]">{d.verdict_reason}</p>
-            )}
-            {/*
-              Colour is a claim about the number, so it comes from lib/verdict.ts
-              rather than from a rule written here — the Factor Explorer runs the
-              same battery on the orthogonalised series, and the two must not
-              disagree about which p-value is the good one.
-            */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-              {([
-                ["ADF", `p = ${pval(d.adf_p)}`, assess.adf(d.adf_p), "H0: unit root"],
-                ["KPSS", `p = ${pval(d.kpss_p)}`, assess.kpss(d.kpss_p), "H0: stationary"],
-                ["Phillips-Perron", `p = ${pval(d.pp_p)}`, assess.pp(d.pp_p),
-                 "HAC-robust ADF"],
-                ["Ljung-Box (10)", `p = ${pval(d.lb10_p)}`, assess.ljungBox(d.lb10_p),
-                 "H0: no autocorrelation"],
-                ["ARCH-LM", `p = ${pval(d.arch_lm_p)}`, assess.archLm(d.arch_lm_p),
-                 "recorded, never gated"],
-                ["Jarque-Bera", `p = ${pval(d.jb_p)}`, assess.jarqueBera(d.jb_p),
-                 "informational"],
-                ["VR (2)", num(d.vr2), assess.varianceRatio(d.vr2), "1 = random walk"],
-                ["VR (5)", num(d.vr5), assess.varianceRatio(d.vr5), "1 = random walk"],
-                ["VR (10)", num(d.vr10), assess.varianceRatio(d.vr10), "1 = random walk"],
-                ["AC(1)", num(d.ac1, 3), assess.autocorrelation(d.ac1),
-                 "first-order autocorrelation"],
-                ["Zero returns", pct(d.zero_return_share, 1),
-                 assess.zeroReturns(d.zero_return_share), "illiquidity check"],
-              ] as const).map(([label, value, a, what]) => (
-                <Stat key={label} label={label} value={value} tone={a.tone}
-                      hint={`${what} — ${a.reason}`} />
-              ))}
-              <Stat label="Observations" value={d.n_obs?.toLocaleString()} />
-            </div>
-            {d.za_break_date && (
-              <div className="mt-3 rounded border border-warn/30 bg-warn/5 px-3 py-2
-                              text-[12px] text-warn">
-                Zivot-Andrews locates a structural break at <b>{d.za_break_date}</b>.
-              </div>
-            )}
-          </Panel>
+            row={d}
+            caption={
+              <>
+                Computed live on the series above, not read from the stored factor
+                diagnostics — those are for the orthogonalised factors, and a
+                verdict for a different series would be worse than none. Same
+                battery and same thresholds as the Factor Explorer, so the two are
+                directly comparable.
+              </>
+            }
+          />
         )}
       </div>
     </div>

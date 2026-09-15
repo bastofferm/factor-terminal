@@ -13,7 +13,9 @@ import { FactorProfile } from "@/components/FactorProfile";
 import { api, Basis, FactorComparison, FactorMeta, num, pct, pval } from "@/lib/api";
 import { blockColour, blockStyle } from "@/lib/blocks";
 import { episodeLayout } from "@/lib/episodes";
-import { Assessment, assess, bySign } from "@/lib/verdict";
+import { StationarityBattery, useWindowPicker }
+  from "@/components/StationarityBattery";
+import { bySign } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
 
 export default function FactorsPage() {
@@ -551,7 +553,7 @@ export default function FactorsPage() {
 
         <ComparisonPanel data={comparison} accent={accent} episodes={bands} />
 
-        {window252 && <DiagnosticsPanel d={window252} all={diag?.windows ?? []} />}
+        {window252 && <FactorBattery latest={window252} all={diag?.windows ?? []} />}
       </div>
 
       {profileOf && (
@@ -835,106 +837,15 @@ function DistributionPanel({
 }
 
 
-function DiagnosticsPanel({ d, all }: { d: any; all: any[] }) {
-  const [win, setWin] = useState<number>(d.window_days);
-  const row = all.find((w) => w.window_days === win) ?? d;
-
-  const adfRejects = row.adf_p !== null && row.adf_p < 0.05;
-  const kpssRejects = row.kpss_p !== null && row.kpss_p < 0.05;
-  const cell = adfRejects && !kpssRejects ? "stationary"
-    : !adfRejects && kpssRejects ? "unit root"
-    : adfRejects && kpssRejects ? "break / heteroskedasticity"
-    : "inconclusive";
-
-  return (
-    <Panel
-      title="Stationarity battery"
-      caption="ADF and KPSS have opposite nulls; reading them jointly is the point. ARCH effects are recorded, never gated — a GARCH process is strictly stationary."
-      actions={
-        <select className="field w-auto" value={win}
-                onChange={(e) => setWin(Number(e.target.value))}>
-          {all.map((w) => (
-            <option key={w.window_days} value={w.window_days}>
-              {w.window_days === 0 ? "Full history" : `Trailing ${w.window_days}d`}
-            </option>
-          ))}
-        </select>
-      }
-    >
-      <div className="mb-3 flex flex-wrap items-center gap-3 rounded border border-line bg-white px-3 py-2">
-        <VerdictBadge verdict={row.verdict} />
-        <span className="text-[12px]">
-          <b className="font-semibold">{cell}</b>
-          {row.verdict_reason ? ` — ${row.verdict_reason}` : ""}
-        </span>
-        {(row.flags ?? []).map((f: string) => (
-          <span key={f} className="rounded bg-lineSoft px-1.5 py-0.5 font-mono text-2xs text-muted">
-            {f}
-          </span>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-        <Test name="ADF" stat={row.adf_stat} p={row.adf_p}
-              what="H0: unit root" a={assess.adf(row.adf_p)} />
-        <Test name="KPSS" stat={row.kpss_stat} p={row.kpss_p}
-              what="H0: stationary" a={assess.kpss(row.kpss_p)} />
-        <Test name="Phillips-Perron" stat={row.pp_stat} p={row.pp_p}
-              what="HAC-robust ADF" a={assess.pp(row.pp_p)} />
-        <Test name="Ljung-Box (10)" stat={row.lb10_stat} p={row.lb10_p}
-              what="H0: no autocorrelation" a={assess.ljungBox(row.lb10_p)} />
-        <Test name="ARCH-LM" stat={row.arch_lm_stat} p={row.arch_lm_p}
-              what="recorded, never gated" a={assess.archLm(row.arch_lm_p)} />
-        <Test name="Jarque-Bera" stat={row.jb_stat} p={row.jb_p}
-              what="informational" a={assess.jarqueBera(row.jb_p)} />
-      </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-        {([
-          ["VR (2)", num(row.vr2), assess.varianceRatio(row.vr2), "1 = random walk"],
-          ["VR (5)", num(row.vr5), assess.varianceRatio(row.vr5), "1 = random walk"],
-          ["VR (10)", num(row.vr10), assess.varianceRatio(row.vr10), "1 = random walk"],
-          ["AC(1)", num(row.ac1, 3), assess.autocorrelation(row.ac1),
-           "first-order autocorrelation"],
-          ["Zero returns", pct(row.zero_return_share, 1),
-           assess.zeroReturns(row.zero_return_share), "illiquidity check"],
-        ] as const).map(([label, value, a, what]) => (
-          <Stat key={label} label={label} value={value} tone={a.tone}
-                hint={`${what} — ${a.reason}`} />
-        ))}
-        <Stat label="Observations" value={row.n_obs?.toLocaleString()} />
-      </div>
-
-      {row.za_break_date && (
-        <div className="mt-3 rounded border border-warn/30 bg-warn/5 px-3 py-2 text-[12px] text-warn">
-          Zivot-Andrews locates a structural break at <b>{row.za_break_date}</b>
-          {row.za_p !== null && <> (p = {pval(row.za_p)})</>}.
-        </div>
-      )}
-    </Panel>
-  );
-}
-
 /**
- * One test in the battery. The colour is the assessment, not the p-value: what
- * counts as a good outcome differs test by test (ADF wants a rejection, KPSS wants
- * the opposite, ARCH-LM wants nothing at all), so it comes from lib/verdict.ts.
+ * The battery with this page's window picker attached.
+ *
+ * The diagnostics job stores a verdict per window, so a reader can ask whether a
+ * series that passes on full history still passes on the trailing year. The Raw
+ * Explorer computes one window live and has nothing to pick between, which is the
+ * only difference between the two callers.
  */
-function Test({ name, stat, p, what, a }: {
-  name: string; stat: number | null; p: number | null; what: string; a: Assessment;
-}) {
-  const tone = a.tone === "good" ? "text-pass"
-    : a.tone === "warn" ? "text-warn"
-    : a.tone === "bad" ? "text-fail"
-    : "text-navy";
-  return (
-    <div className="rounded border border-line bg-white px-2 py-1.5" title={a.reason}>
-      <div className="text-2xs uppercase tracking-label text-muted">{name}</div>
-      <div className={`font-mono text-sm font-semibold ${tone}`}>p = {pval(p)}</div>
-      <div className="font-mono text-[10px] text-muted">stat {num(stat)}</div>
-      <div className="text-[10px] leading-tight text-muted">{what}</div>
-      <div className={`text-[10px] leading-tight ${
-        a.tone === "neutral" ? "text-muted" : tone}`}>{a.reason}</div>
-    </div>
-  );
+function FactorBattery({ latest, all }: { latest: any; all: any[] }) {
+  const { row, picker } = useWindowPicker(all, latest);
+  return <StationarityBattery row={row} actions={picker} />;
 }
