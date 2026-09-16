@@ -1,13 +1,15 @@
-"""The factor universe: PDF section 2.2's nine blocks, as data.
+"""The factor universe: nine blocks, as data.
 
 Each definition is stored verbatim in ref_factor.construction (JSONB) so that a
 factor value can always be traced to the rule that produced it, and a change to a
-rule is visible as a version bump (PDF section 11).
+rule is visible as a version bump.
 
-Target size is 25-45 factors, per PDF section 4: "breit genug ... aber klein genug,
-um robust zu bleiben".
+Forty factors is a deliberate size. Broad enough to span the cross-asset exposures
+a multi-asset portfolio actually carries, small enough that a 252-day window still
+estimates them: the design already runs a condition number near 150 at forty, and
+doubling the count would put every window past the reliability gate.
 
-`level` is the block hierarchy of PDF section 4. Factors are built in ascending
+`level` is the block hierarchy. Factors are built in ascending
 level order and residualised against the ids in `orth`, so global precedes regional,
 market precedes style, and rates precede credit. That is what stops the credit block
 carrying duration and the value factor from being a sector bet.
@@ -21,8 +23,8 @@ from __future__ import annotations
 CURVE_REF_DURATION = 5.0
 
 # Standardised-change factors (funding spreads, financial conditions, realised vol)
-# come out of their transform as z-scores, not returns. PDF section 2.2 requires
-# every factor to be a return, so they are rescaled to this annualised volatility.
+# come out of their transform as z-scores, not returns. Every factor in this model
+# is a return, so they are rescaled to this annualised volatility.
 #
 # The choice of target is a units convention and nothing more: a constant rescaling
 # k maps beta -> beta/k and sigma -> k*sigma, leaving every predicted variance,
@@ -95,8 +97,7 @@ FACTORS: list[dict] = [
 
     # -----------------------------------------------------------------------
     # 3. Rates. Duration-neutral portfolios of synthetic par bonds, so each
-    #    factor is a genuine return rather than a yield change (section 2.2:
-    #    "Alle Faktoren sind Renditen").
+    #    factor is a genuine return rather than a yield change.
     #
     #    Fixed weights rather than PCA: level/slope/curvature come out directly
     #    interpretable, there is no eigenvector sign-flipping to manage, and no
@@ -232,9 +233,9 @@ FACTORS: list[dict] = [
      "method": "single", "inputs": {"instrument": "DBA"}, "orth": ["cm_broad"]},
 
     # -----------------------------------------------------------------------
-    # 7. Volatility. Strategy returns, not index levels: section 2.2 requires
-    #    "Futures- oder Strategie-Return, nicht nur Indexlevel", and warns that
-    #    short-vol payoffs are convex so a linear beta is only a first approximation.
+    # 7. Volatility. Strategy returns, not index levels: an index level is not
+    #    investable and its change is not a return. Short-vol payoffs are convex,
+    #    so a linear beta on them is only a first approximation.
     #
     #    No rates-vol factor: ^TYVIX was discontinued in 2020 and the warehouse
     #    holds a single row. Realised TLT volatility is the available substitute.
@@ -256,7 +257,7 @@ FACTORS: list[dict] = [
 
     # -----------------------------------------------------------------------
     # 8. Liquidity & Stress. Standardised daily changes plus a cross-asset
-    #    risk-off basket return, per section 2.2.
+    #    risk-off basket return.
     # -----------------------------------------------------------------------
     {"id": "liq_funding", "block": "liquidity", "name": "Funding Spread (SOFR-EFFR)", "level": 0,
      "method": "spread_level", "inputs": {"scale_to_vol": STANDARDIZED_TARGET_VOL, "minuend": "FRED:SOFR", "subtrahend": "FRED:EFFR",
@@ -270,8 +271,8 @@ FACTORS: list[dict] = [
                 "transform": "diff_std", "sparse": True},
      "orth": [],
      "note": "Weekly series; the daily factor is zero between releases rather than "
-             "forward-filled, since a forward fill would manufacture information "
-             "(PDF section 3, Grundregel)."},
+             "forward-filled, since a forward fill would manufacture "
+             "information."},
 
     {"id": "liq_risk_off", "block": "liquidity", "name": "Cross-Asset Risk-Off", "level": 2,
      "method": "basket",

@@ -42,14 +42,12 @@ _CORE_MODULES: list[tuple[str, str]] = [
 # consequence of any single module.
 _OVERVIEW = """
 This is a return-based multi-asset factor model. It uses no holdings and no
-look-through: every exposure is estimated from observed returns, following the
-concept note "Return-based Multi-Asset Faktormodell".
+look-through: every exposure is estimated from observed returns.
 
 WHAT EXISTS
 
-Forty factors span the nine daily proxy blocks of section 2.2 of that note:
-equity, style, rates, credit, FX, commodity, volatility, liquidity, and
-alternative risk premia. All are daily log excess returns over cash (FRED:DFF)
+Forty factors span nine blocks: equity, style, rates, credit, FX, commodity,
+volatility, liquidity, and alternative risk premia. All are daily log excess returns over cash (FRED:DFF)
 in USD.
 
 Data runs from 2000 to the present. Factor inputs are refreshed nightly from
@@ -66,7 +64,7 @@ meaning completely.
 - ret_excess, the RAW factor: the construction formula's own output, a log excess
   return over cash. This is what the factor is.
 - ret_orth, the ORTHOGONALISED factor: that same series after the block hierarchy
-  of section 4 has residualised it against the factors above it. This is what the
+  has residualised it against the factors above it. This is what the
   model consumes by default.
 
 The gap is large rather than a nuance. eq_us raw returns 12.9% a year at 17.3%
@@ -112,12 +110,11 @@ construction; regional total-return ETFs were added instead.
 
 Commodity futures. Yahoo's =F series are stitched front-month prices with an
 artificial jump at every roll — not a return series. The commodity block uses
-total-return ETFs, which include roll and collateral return, as section 2.2
-requires.
+total-return ETFs, whose NAV includes roll and collateral return.
 
 Low-frequency macro is never forward-filled. Filling a weekly series into a daily
-regressor manufactures information and understates standard errors (section 3,
-Grundregel). Such series become sparse release-event factors: the standardised
+regressor manufactures information and understates standard errors. Such
+series become sparse release-event factors: the standardised
 change lands on the publication day and the factor is exactly zero in between.
 
 The trading calendar excludes crypto. Crypto prices seven days a week, which had

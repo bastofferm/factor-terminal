@@ -145,7 +145,7 @@ def test_newey_west_covariance_is_psd(rng):
 # ---------------------------------------------------------------------------
 
 def test_huber_resists_an_outlier(rng):
-    """One bad print should not move the loading much — PDF section 6.1's reason
+    """One bad print should not move the loading much — the reason
     for a robust loss."""
     n = 1000
     X = rng.standard_normal((n, 1)) * 0.01
@@ -261,7 +261,7 @@ def test_ewma_weighting_tracks_a_beta_change(rng):
 
 def test_dimson_recovers_a_delayed_beta(rng):
     """A fund that reacts to the factor a day late shows a contemporaneous beta well
-    below the truth; summing the Dimson lags recovers it (PDF section 6.3)."""
+    below the truth; summing the Dimson lags recovers it."""
     n = 4000
     f = rng.standard_normal(n) * 0.01
     y = 0.4 * f + 0.6 * np.concatenate([[0.0], f[:-1]]) + rng.standard_normal(n) * 0.002

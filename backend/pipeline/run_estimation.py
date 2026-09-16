@@ -1,6 +1,6 @@
 """Roll the regression over time and persist the loadings.
 
-Implements the user-facing controls of PDF section 6: estimation window length,
+The user-facing estimation controls: window length,
 roll-forward step (1d / 1w / 1m / 3m), equal or exponentially-decayed weighting,
 OLS / Huber / ridge, HAC lag choice, Dimson lead-lag, and winsorisation.
 
@@ -145,7 +145,7 @@ def factor_constituents(cur: Any) -> dict[str, set[str]]:
 def blocked_factors(cur: Any, window: int) -> set[str]:
     """Factors whose trailing-window diagnostic says fail.
 
-    PDF section 2 makes stationary inputs a precondition, so a failed series is
+    Stationary inputs are a precondition of the model, so a failed series is
     excluded from estimation rather than merely flagged.
     """
     cur.execute(

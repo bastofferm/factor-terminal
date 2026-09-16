@@ -157,7 +157,7 @@ def _interpret(bt: dict | None, n_unreliable: int) -> list[str]:
 async def decomposition(spec_id: str, instrument_id: str) -> dict:
     """Factor versus specific risk through time, and the block split at the latest date.
 
-    PDF section 9: the question is not what the instrument earned but why it is
+    The question is not what the instrument earned but why it is
     risky, which is answered by the marginal contributions rather than the loadings.
     """
     series = await db.fetch(

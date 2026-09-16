@@ -160,7 +160,7 @@ def _rescale_note(target_vol: float) -> tuple[str, str, Symbol, str]:
                  f"on the same readable scale as the return-based blocks",
                  "constant")
     step = (f"Rescale to {target_vol:.0%} annualised volatility. The transform above "
-            f"yields a z-score, and section 2.2 requires every factor to be a return.")
+            f"yields a z-score, and every factor in this model is a return.")
     return plain, latex, sym, step
 
 
@@ -401,10 +401,10 @@ def _f_level_transform(inputs: dict) -> Formula:
             "The series prints weekly, not daily.",
             "It is NOT forward filled. A filled series carries no new information "
             "between releases, which manufactures autocorrelation, understates "
-            "standard errors and can smuggle in lookahead (section 3, Grundregel).",
+            "standard errors and can smuggle in lookahead.",
             "Instead the standardised change lands on the publication day and the "
-            "factor is exactly zero in between: a release-event factor, sparse daily "
-            "(section 3.2).",
+            "factor is exactly zero in between: a release-event factor, sparse "
+            "daily.",
             "The scaling window counts releases rather than days, so 52 of them is "
             "about a year of the series' own history.",
         ]
@@ -443,7 +443,7 @@ def _f_variance_premium(inputs: dict) -> Formula:
          "The difference is the daily payoff of a short variance position, positive on "
          "average because implied sits above realised.",
          "The payoff is convex in the underlying, so a linear beta on it is a first "
-         "approximation and nothing more (section 2.2)."],
+         "approximation and nothing more."],
     )
 
 

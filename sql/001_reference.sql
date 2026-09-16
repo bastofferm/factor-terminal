@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS ref_factor_block (
 );
 
 COMMENT ON TABLE ref_factor_block IS
-    'The nine daily factor-proxy blocks of PDF section 2.2, plus any derived blocks.';
+    'The nine factor blocks of the model, plus any derived blocks.';
 
 -- Instrument master. One row per tradable/observable series that can feed a factor
 -- or be analysed as a security. `is_total_return` is load-bearing: price-return
@@ -35,7 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_ref_instrument_role  ON ref_instrument (role, is_
 CREATE INDEX IF NOT EXISTS idx_ref_instrument_class ON ref_instrument (asset_class);
 
 -- Factor registry. `construction` is the versioned JSONB spec that build_factors.py
--- executes, so every factor definition change is auditable (PDF section 11).
+-- executes, so every factor definition change is auditable.
 CREATE TABLE IF NOT EXISTS ref_factor (
     factor_id             TEXT PRIMARY KEY,
     block_id              TEXT NOT NULL REFERENCES ref_factor_block(block_id),

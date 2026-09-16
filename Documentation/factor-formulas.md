@@ -1187,8 +1187,8 @@ $$
 1. Yesterday's implied variance is what a variance swap struck at t-1 pays against, so the lag is the contract and not a modelling choice.
 2. Today's realised variance is the squared SPY return, which is what the daily leg of such a swap settles on.
 3. The difference is the daily payoff of a short variance position, positive on average because implied sits above realised.
-4. The payoff is convex in the underlying, so a linear beta on it is a first approximation and nothing more (section 2.2).
-5. Rescale to 10% annualised volatility. The transform above yields a z-score, and section 2.2 requires every factor to be a return.
+4. The payoff is convex in the underlying, so a linear beta on it is a first approximation and nothing more.
+5. Rescale to 10% annualised volatility. The transform above yields a z-score, and every factor in this model is a return.
 
 | Symbol | Source | Meaning |
 |---|---|---|
@@ -1233,7 +1233,7 @@ $$
 2. Differenced, because a volatility level is not stationary.
 3. Standardised on a trailing window, because a change in volatility is not measured in return units.
 4. This is a change in a risk measure, not a tradable return. It stands in for a rates-volatility series because CBOE discontinued ^TYVIX in 2020.
-5. Rescale to 10% annualised volatility. The transform above yields a z-score, and section 2.2 requires every factor to be a return.
+5. Rescale to 10% annualised volatility. The transform above yields a z-score, and every factor in this model is a return.
 
 | Symbol | Source | Meaning |
 |---|---|---|
@@ -1277,7 +1277,7 @@ $$
 
 1. Form the spread between the two quoted levels.
 2. Divide the daily change by its own trailing volatility. Basis points are not comparable with the return-scaled blocks, and the scaling window is strictly trailing: a full-sample standard deviation would leak future volatility into every historical observation.
-3. Rescale to 10% annualised volatility. The transform above yields a z-score, and section 2.2 requires every factor to be a return.
+3. Rescale to 10% annualised volatility. The transform above yields a z-score, and every factor in this model is a return.
 
 | Symbol | Source | Meaning |
 |---|---|---|
@@ -1298,7 +1298,7 @@ Nothing sits above this factor in the hierarchy, so the raw and orthogonalised p
 
 Hierarchy level 0. Method `level_transform`.
 
-> Weekly series; the daily factor is zero between releases rather than forward-filled, since a forward fill would manufacture information (PDF section 3, Grundregel).
+> Weekly series; the daily factor is zero between releases rather than forward-filled, since a forward fill would manufacture information.
 
 **Construction**
 
@@ -1311,10 +1311,10 @@ f_t \leftarrow k\,f_t, \qquad k = \frac{0.1 / \sqrt{252}}{\operatorname{sd}(f)}
 $$
 
 1. The series prints weekly, not daily.
-2. It is NOT forward filled. A filled series carries no new information between releases, which manufactures autocorrelation, understates standard errors and can smuggle in lookahead (section 3, Grundregel).
-3. Instead the standardised change lands on the publication day and the factor is exactly zero in between: a release-event factor, sparse daily (section 3.2).
+2. It is NOT forward filled. A filled series carries no new information between releases, which manufactures autocorrelation, understates standard errors and can smuggle in lookahead.
+3. Instead the standardised change lands on the publication day and the factor is exactly zero in between: a release-event factor, sparse daily.
 4. The scaling window counts releases rather than days, so 52 of them is about a year of the series' own history.
-5. Rescale to 10% annualised volatility. The transform above yields a z-score, and section 2.2 requires every factor to be a return.
+5. Rescale to 10% annualised volatility. The transform above yields a z-score, and every factor in this model is a return.
 
 | Symbol | Source | Meaning |
 |---|---|---|

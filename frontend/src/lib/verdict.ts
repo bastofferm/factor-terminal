@@ -71,8 +71,8 @@ export const assess = {
   },
 
   /**
-   * H0 is no autocorrelation. Rejection is the second stale-pricing signal (§6.3)
-   * and is worth seeing, but it does not make a series unusable on its own — a
+   * H0 is no autocorrelation. Rejection is the second stale-pricing signal and is
+   * worth seeing, but it does not make a series unusable on its own — a
    * mildly autocorrelated return series is still stationary.
    */
   ljungBox: (pv: number | null | undefined): Assessment => {

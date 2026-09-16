@@ -1,7 +1,7 @@
 """Out-of-sample validation of the risk forecast.
 
 Answers the question the model exists to answer: when it says an instrument has 18%
-volatility, is that right? PDF section 11 lists the tests; this module implements them.
+volatility, is that right? This module implements the tests that answer it.
 
 The discipline that makes all of it meaningful is the lag. A forecast for day t must
 use betas and a covariance matrix estimated on data ending at or before t-1. Get that

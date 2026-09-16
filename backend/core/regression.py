@@ -4,10 +4,11 @@ One regression of an instrument's excess return on the factor panel, plus the
 diagnostics needed to decide whether to believe the answer. Pure numpy and scipy —
 statsmodels is used only in the tests, as an independent reference.
 
-The estimator follows PDF section 6.1: a robust loss to bound the influence of a
-single print, ridge to stabilise correlated factors, and Newey-West standard errors
-because daily factor returns are autocorrelated and heteroskedastic. Section 6.2's
-time-variation is handled by the caller, which rolls this over windows.
+Three estimator choices, each answering a specific defect of daily data: a robust
+loss to bound the influence of a single print, ridge to stabilise correlated
+factors, and Newey-West standard errors because daily factor returns are
+autocorrelated and heteroskedastic. Time-variation is handled by the caller, which
+rolls this over windows.
 """
 
 from __future__ import annotations
@@ -123,7 +124,7 @@ def fit(
     `estimator` is 'ols', 'huber' (iteratively reweighted, bounding the influence of
     outliers) or 'ridge' (shrinking correlated loadings toward zero).
 
-    `sample_weights` carries the exponential decay of PDF section 6.2, letting recent
+    `sample_weights` carries an exponential decay, letting recent
     observations dominate without discarding older ones.
 
     Ridge penalises the slopes only, never the intercept, and operates on
@@ -311,7 +312,7 @@ def _vif_by_regression(X: np.ndarray) -> np.ndarray:
 def ewma_weights(n: int, halflife: float) -> np.ndarray:
     """Exponentially decaying weights, most recent observation last and heaviest.
 
-    PDF section 6.2: active funds and CTAs change exposure, so the estimator needs
+    Active funds and CTAs change exposure, so the estimator needs
     to let recent data dominate. A half-life of 60 days weights a one-year-old
     observation at about 5% of today's.
     """
@@ -324,7 +325,7 @@ def ewma_weights(n: int, halflife: float) -> np.ndarray:
 def dimson_design(X: np.ndarray, lags: int) -> np.ndarray:
     """Stack contemporaneous and lagged factor returns.
 
-    PDF section 6.3: a fund that prices before the US close, or holds illiquid
+    A fund that prices before the US close, or holds illiquid
     assets, reacts to a factor with a delay. The Dimson/Scholes-Williams correction
     sums the contemporaneous and lagged coefficients to recover the true beta.
     Early rows become NaN and are dropped by `fit`.
@@ -368,7 +369,7 @@ def beta_stability(
 ) -> tuple[float, float, int]:
     """L1 change and correlation between consecutive loading vectors.
 
-    PDF section 11 wants drift alerts: a sudden jump in the loading vector is either
+    A sudden jump in the loading vector is either
     a genuine style change or an estimation artefact, and both are worth surfacing.
 
     When the two windows were fitted on different factor sets the comparison is made

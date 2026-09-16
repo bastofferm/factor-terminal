@@ -1,6 +1,6 @@
 """Factor covariance, specific risk and the assembled asset covariance.
 
-Implements PDF section 7.1:
+The assembled model is
 
     Sigma_F = a * Sigma_EWMA + (1-a) * Sigma_LT,shrunk
     Sigma_r = B Sigma_F B' + Sigma_eps
@@ -198,7 +198,7 @@ def ledoit_wolf(R: np.ndarray, annualize: bool = True) -> tuple[np.ndarray, floa
 
 def blended(R: np.ndarray, ewma_weight: float = 0.6, halflife: float = 60.0,
             annualize: bool = True) -> tuple[np.ndarray, float, float]:
-    """PDF section 7.1: a * Sigma_EWMA + (1-a) * Sigma_LT,shrunk.
+    """a * Sigma_EWMA + (1-a) * Sigma_LT,shrunk.
 
     EWMA supplies the reaction to the current regime, the shrunk long-term matrix
     supplies stability. Returns (matrix, shrinkage intensity, ewma weight).
@@ -258,7 +258,7 @@ def specific_risk(
     peer_var_ann: float | None = None,
     shrink_weight: float = 0.25,
 ) -> tuple[float, float, bool]:
-    """Idiosyncratic volatility, per PDF section 6.4.
+    """Idiosyncratic volatility.
 
         sigma_eps^2 = max(floor^2, Shrink[EWMA(eps^2), sigma_peer^2])
 
@@ -332,7 +332,7 @@ def risk_contributions(beta: np.ndarray, factor_cov: np.ndarray,
 
     These sum to the systematic volatility (Euler's theorem for a homogeneous
     degree-one function), so adding the specific volatility contribution recovers
-    the total. PDF section 9.
+    the total.
     """
     b = np.asarray(beta, dtype=float).ravel()
     ok = np.isfinite(b)
@@ -351,7 +351,7 @@ def risk_contributions(beta: np.ndarray, factor_cov: np.ndarray,
 # ---------------------------------------------------------------------------
 
 def residual_pca(residual_panel: np.ndarray, n_components: int = 5) -> dict:
-    """PCA on the regression residuals, per PDF section 5.2.
+    """PCA on the regression residuals.
 
     If the economic factors were complete, the residuals would be idiosyncratic and
     their eigenvalues roughly flat. A dominant first component means a common risk

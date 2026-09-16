@@ -191,7 +191,7 @@ async def get_results(spec_id: str, instrument_id: str) -> dict:
 async def stability(spec_id: str, instrument_id: str) -> dict:
     """How much the loading vector moves between windows.
 
-    PDF section 11 treats a jumping loading vector as a drift alert: either the
+    A jumping loading vector is a drift alert: either the
     instrument genuinely changed style, or the estimate is too noisy to act on.
     Either way it belongs in front of the analyst rather than buried.
     """

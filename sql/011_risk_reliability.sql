@@ -8,7 +8,8 @@
 --
 -- The forecast is still stored — suppressing the model's own output would hide the
 -- problem — but it is flagged, and the backtest ignores unreliable rows.
--- PDF section 7.3 ("Modellunsicherheit") requires exactly this kind of penalty.
+-- Model uncertainty is penalised rather than ignored: a forecast built on a
+-- near-singular design is recorded with the reason it cannot be trusted.
 
 ALTER TABLE fact_risk_forecast
     ADD COLUMN IF NOT EXISTS condition_number DOUBLE PRECISION,

@@ -1,7 +1,7 @@
 """Block-hierarchy orthogonalisation.
 
-PDF section 4 ("Faktorhierarchie") builds factors in a fixed order: global before
-regional, market before style, rates before credit. Each level is residualised
+Factors are built in a fixed order: global before regional, market before style,
+rates before credit. Each level is residualised
 against the levels above it, which keeps multicollinearity down and — more
 importantly — keeps the attribution interpretable. Without it a credit factor
 carries duration, and a value factor is mostly a sector bet.

@@ -173,7 +173,7 @@ def test_trend_factor_correlates_with_managed_futures_etfs(panels):
 # ---------------------------------------------------------------------------
 
 def test_every_factor_is_on_a_return_scale(panels):
-    """PDF section 2.2 requires all factors to be returns. A z-score factor that
+    """Every factor in this model is a return. A z-score factor that
     escaped rescaling would show an annualised volatility near 1600%."""
     F, _, _ = panels
     vol = F.std() * np.sqrt(252)
