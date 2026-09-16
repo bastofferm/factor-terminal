@@ -29,13 +29,17 @@ OUT = Path("screenshots")
 # grids switch at Tailwind's xl breakpoint of 1280px.
 WIDTH, HEIGHT = 1600, 1000
 
-PAGES: list[tuple[str, str, str]] = [
-    ("/",          "01-data-health",     "Data Health"),
-    ("/factors",   "02-factor-explorer", "Factor Explorer"),
-    ("/raw",       "03-raw-explorer",    "Raw Explorer"),
-    ("/matrix",    "04-covariance-pca",  "Covariance & PCA"),
-    ("/loadings",  "05-loadings-lab",    "Loadings Lab"),
-    ("/risk",      "06-risk-lens",       "Risk Lens"),
+# path, file stem, label, and whether the page draws Plotly charts. The last field
+# decides what "finished rendering" means: waiting for a chart node on a page that
+# has none costs the timeout and reports a failure that is not one.
+PAGES: list[tuple[str, str, str, bool]] = [
+    ("/",          "01-data-health",     "Data Health",      False),
+    ("/factors",   "02-factor-explorer", "Factor Explorer",  True),
+    ("/raw",       "03-raw-explorer",    "Raw Explorer",     True),
+    ("/matrix",    "04-covariance-pca",  "Covariance & PCA", True),
+    ("/loadings",  "05-loadings-lab",    "Loadings Lab",     True),
+    ("/risk",      "06-risk-lens",       "Risk Lens",        True),
+    ("/ops",       "07-operations",      "Operations",       False),
 ]
 
 # Seconds each frame is held in the GIF. Long enough to read the panel headings.
@@ -70,16 +74,16 @@ async def capture(full_page: bool) -> list[Path]:
             reduced_motion="reduce",
         )
 
-        for path, name, label in PAGES:
+        for path, name, label, charts in PAGES:
             print(f"  {label} ...", flush=True)
             await page.goto(f"{BASE}{path}", wait_until="networkidle", timeout=60_000)
 
-            # Wait for the page's own content rather than a fixed sleep. Data Health
-            # is the one page with no charts, so it waits for a panel instead.
-            selector = "section" if path == "/" else ".js-plotly-plot"
+            # Wait for the page's own content rather than a fixed sleep, and for the
+            # content that page actually has: a chart-free page waits for a panel.
+            selector = ".js-plotly-plot" if charts else "section"
             try:
                 await page.wait_for_selector(selector, timeout=45_000)
-                if selector != "section":
+                if charts:
                     # Let every chart on the page mount, not only the first.
                     await page.wait_for_function(
                         "document.querySelectorAll('.js-plotly-plot').length >= 2",

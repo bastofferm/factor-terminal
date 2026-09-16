@@ -20,6 +20,7 @@ const NAV = [
   { href: "/matrix", label: "Covariance & PCA" },
   { href: "/loadings", label: "Loadings Lab" },
   { href: "/risk", label: "Risk Lens" },
+  { href: "/ops", label: "Operations" },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {

@@ -119,15 +119,25 @@ async def instruments(role: str | None = None, live_only: bool = True) -> list[d
 
 
 @router.get("/specs")
-async def specs() -> list[dict]:
+async def specs(instrument: str | None = None) -> list[dict]:
+    """Every stored specification, newest first.
+
+    `instrument` adds `covers_instrument`, which is what a page actually needs to
+    pick a sensible default: the newest spec is frequently one estimated for some
+    other security, and offering it for this one produces an empty result and an
+    error message where a working page was expected.
+    """
     return await db.fetch(
         """
-        SELECT s.*, count(DISTINCT l.instrument_id) AS n_instruments
+        SELECT s.*,
+               count(DISTINCT l.instrument_id) AS n_instruments,
+               bool_or(l.instrument_id IS NOT DISTINCT FROM $1) AS covers_instrument
         FROM dim_model_spec s
         LEFT JOIN fact_loading l USING (spec_id)
         GROUP BY s.spec_id
         ORDER BY s.created_at DESC
-        """
+        """,
+        instrument,
     )
 
 

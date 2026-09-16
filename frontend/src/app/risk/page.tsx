@@ -34,12 +34,25 @@ export default function RiskPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Default to a spec that will actually return something for this security.
+   *
+   * The newest spec is often one estimated for a different name, and choosing it
+   * lands the reader on an error where a working page was expected. Preference
+   * order: covers this security, then has any loadings at all, then whatever is
+   * newest.
+   */
   useEffect(() => {
-    api.specs().then((s) => {
+    api.specs(instrument).then((s) => {
       setSpecs(s);
-      if (s.length) setSpecId(s[0].spec_id);
+      if (!s.length) return;
+      const best =
+        s.find((x: any) => x.covers_instrument) ??
+        s.find((x: any) => (x.n_instruments ?? 0) > 0) ??
+        s[0];
+      setSpecId(best.spec_id);
     }).catch(() => {});
-  }, []);
+  }, [instrument]);
 
   const run = () => {
     if (!specId) return;
