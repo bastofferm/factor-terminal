@@ -4,6 +4,10 @@ What the setup scripts in this folder actually create, and how the backend uses
 it. [README.md](README.md) is the install manual; this is the reference behind
 it.
 
+> **[architecture.pdf](architecture.pdf)** is this document typeset, with both
+> workflow diagrams drawn in TikZ and the schema inventory dumped from the running
+> database at build time. Rebuild it with `python -m scripts.build_architecture`.
+
 For the statistics rather than the plumbing, see
 [the paper](../Documentation/factor-model-paper.pdf) — §7 is the operating
 workflow with a flowchart, §8 the architecture at a higher level, and Appendix A

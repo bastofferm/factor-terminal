@@ -7,6 +7,8 @@ what to do when a step fails.
 [**ARCHITECTURE.md**](ARCHITECTURE.md) in this folder describes what you are
 installing — the schema table by table, the backend layering, and the contract
 the warehouse has to satisfy. Read it if a step here does not make sense.
+[**architecture.pdf**](architecture.pdf) is the same thing typeset, with the
+workflow and the request lifecycle as diagrams.
 
 ---
 
