@@ -153,7 +153,7 @@ class PcaRequest(BaseModel):
 async def pca(req: PcaRequest) -> dict:
     """Principal components of the factor panel.
 
-    PDF section 5 keeps PCA as a control on the economic factors, not a replacement:
+    PCA is kept as a control on the economic factors, not a replacement:
     it shows how much common structure the named factors already span, and PC1 is
     usually a global risk-on/risk-off direction.
     """
@@ -204,8 +204,8 @@ async def rolling_correlation(req: RollingCorrRequest) -> dict:
     """Correlation of one pair through time.
 
     A stable average correlation can hide a pair that was uncorrelated for a decade
-    and moved to 0.8 in a crisis, which is exactly the behaviour PDF section 7.2
-    warns about under Krisenkorrelation.
+    and moved to 0.8 in a crisis, which is the behaviour that makes a full-sample
+    correlation matrix dangerous in exactly the periods it matters most.
     """
     panel, _ = await _panel([req.factor_a, req.factor_b], None, None, req.basis)
     if req.factor_a not in panel or req.factor_b not in panel:

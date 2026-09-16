@@ -33,7 +33,7 @@ JOB = "run_risk"
 COV_WINDOW = 504
 
 # Cross-sectional shrinkage target for specific risk, and the floor below which an
-# instrument's idiosyncratic volatility is not believed (PDF section 6.4).
+# instrument's idiosyncratic volatility is not believed.
 SPECIFIC_SHRINK = 0.25
 SPECIFIC_FLOOR_ANN = 0.02
 
@@ -100,8 +100,8 @@ def reliability(cond: float, vif: float,
     With 40 factors on a 252-day window, a period where only a handful of factors
     yet exist leaves the design near-singular. The betas then explode in offsetting
     pairs and beta' Sigma beta with them - AAPL produced a 360% predicted volatility
-    that way. PDF section 7.3 requires model uncertainty to be penalised rather than
-    ignored, so such windows are flagged and kept out of the scoring.
+    that way. Model uncertainty is penalised rather than ignored, so such windows
+    are flagged and kept out of the scoring.
 
     The VIF limit applies only on the orthogonalised panel, and the asymmetry is not
     a convenience. On the raw panel high VIFs are what the factor set *is*: eq_us

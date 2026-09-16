@@ -328,7 +328,7 @@ export default function MatrixPage() {
                     the two poles read off the ends.
                   </div>
                   <div className="mt-1">
-                    PDF section 5 keeps PCA as a control on the economic factors, not
+                    PCA is kept as a control on the economic factors, not
                     a replacement: the question it answers is whether the named
                     factors already span the common structure.
                   </div>
@@ -366,7 +366,7 @@ export default function MatrixPage() {
 
       <Panel
         title="Rolling pairwise correlation"
-        caption="A stable full-sample correlation can hide a pair that was uncorrelated for a decade and went to 0.8 in a crisis — the Krisenkorrelation problem of PDF section 7.2."
+        caption="A stable full-sample correlation can hide a pair that was uncorrelated for a decade and went to 0.8 in a crisis. That is the behaviour that makes a single correlation matrix dangerous in exactly the periods it matters most."
         actions={
           data && pair && (
             <div className="flex gap-2">

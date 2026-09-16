@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app import db
-from backend.app.routers import chat, factors, loadings, matrix, meta, raw, risk
+from backend.app.routers import chat, factors, loadings, matrix, meta, ops, raw, risk
 from backend.app.settings import get_settings
 
 
@@ -31,8 +31,9 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Daily Multi-Asset Factor Model",
-        description="Return-based factor model over the nine daily proxy blocks of "
-                    "section 2.2 of the concept note.",
+        description="Return-based multi-asset factor model: forty daily factors "
+                    "across nine blocks, with rolling loadings and out-of-sample "
+                    "risk validation.",
         version="0.1.0",
         lifespan=lifespan,
     )
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(risk.router, prefix="/api/risk", tags=["risk"])
     app.include_router(raw.router, prefix="/api/raw", tags=["raw"])
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+    app.include_router(ops.router, prefix="/api/ops", tags=["ops"])
 
     @app.get("/api/health")
     async def health() -> dict:

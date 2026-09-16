@@ -281,7 +281,7 @@ def _weekly_on_daily_grid(n_days=1400, period=5, seed_=4):
 
 
 def test_sparse_release_is_zero_between_releases():
-    """PDF section 3.2: the factor carries information only on the publication day.
+    """The factor carries information only on the publication day.
     Anything else forward-fills a stale number into a daily regressor."""
     v = _weekly_on_daily_grid()
     out = tr.sparse_release_change(v, standardize=False)

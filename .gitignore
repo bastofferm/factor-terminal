@@ -19,9 +19,8 @@ npm-debug.log*
 .env.local
 .env.*.local
 
-# The concept note this repository implements. Excluded from a public repository
-# because it is the one artefact here not written as part of this project; add it
-# back by deleting this line if it is yours to publish.
+# Reference reading kept alongside the project. Excluded from a public repository
+# because it is the one artefact here not written as part of this project.
 Return_Based_Multi_Asset_Faktormodell.pdf
 
 # Editors and OS

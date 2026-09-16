@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS fact_risk_forecast (
 CREATE INDEX IF NOT EXISTS idx_risk_forecast_lookup
     ON fact_risk_forecast (spec_id, instrument_id, as_of_date DESC);
 
--- Risk decomposition by factor block over time (PDF section 9).
+-- Risk decomposition by factor block over time.
 CREATE TABLE IF NOT EXISTS fact_risk_contribution (
     spec_id       TEXT NOT NULL REFERENCES dim_model_spec(spec_id) ON DELETE CASCADE,
     instrument_id TEXT NOT NULL,

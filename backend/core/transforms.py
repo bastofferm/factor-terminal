@@ -1,10 +1,9 @@
 """Turn raw inputs into stationary return series.
 
-PDF section 2.2 requires factors to be returns, not levels. Yields and spreads are
-I(1), so they enter only as changes, and yield changes additionally get scaled by
-modified duration to become synthetic bond returns
-("Duration-normalisierte Renditefaktoren oder Yield Changes mit synthetischer
-Bondrendite").
+Every factor in this model is a return, never a level. Yields and spreads are
+I(1), so they enter only as changes, and a yield change is additionally scaled by
+modified duration to become a synthetic bond return — a change in a yield is not a
+return, and regressing on one silently mixes units.
 
 Pure functions over numpy arrays; no I/O.
 """
@@ -118,7 +117,7 @@ def spread_change_to_excess_return(
 
         r_excess = -SpreadDuration * d(OAS) + OAS_{t-1}/252
 
-    This is the duration-matched excess return of PDF section 2.2: it contains no
+    This is a duration-matched excess return: it contains no
     government-rate component by construction, so the credit block stays orthogonal
     to the rates block and duration is not counted twice.
     """
@@ -146,9 +145,9 @@ def log_diff(values: np.ndarray) -> np.ndarray:
 def diff_standardized(values: np.ndarray, window: int = 252, min_periods: int = 60) -> np.ndarray:
     """Daily change divided by its own trailing volatility.
 
-    PDF section 2.2 asks for "standardisierte tägliche Änderungen" for the liquidity
-    and stress block, whose raw units (index points, basis points) are not
-    comparable across series.
+    The liquidity and stress block is built from standardised daily changes,
+    because its raw units (index points, basis points) are not comparable across
+    series or with the return-scaled blocks.
 
     The scaling window is strictly trailing — a full-sample standard deviation would
     leak future volatility into every historical observation and quietly inflate
@@ -231,12 +230,11 @@ def sparse_release_change(
 ) -> np.ndarray:
     """Turn a low-frequency series observed on a daily grid into a release-event factor.
 
-    PDF section 3 forbids forward-filling a quarterly or weekly series into a daily
-    regressor: the filled series carries no new information between releases, which
-    manufactures autocorrelation, understates standard errors and can smuggle in
-    lookahead. Section 3.2 gives the alternative — "Release-Event-Faktoren, sparse
-    daily": the change is recorded on the day it is published and the factor is
-    exactly zero on every other day.
+    A quarterly or weekly series is never forward-filled into a daily regressor:
+    the filled series carries no new information between releases, which manufactures
+    autocorrelation, understates standard errors and can smuggle in lookahead. The
+    alternative used here is a release-event factor — the change is recorded on the
+    day it is published and the factor is exactly zero on every other day.
 
     `values` is the series aligned to the daily calendar with NaN where there was no
     observation. The result is zero on non-release days, the standardised change on

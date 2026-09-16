@@ -150,7 +150,7 @@ def test_variance_break_with_zivot_andrews(rng):
 def test_smoothed_series_flagged_as_stale(rng):
     """A moving-average-smoothed return series — the signature of appraisal pricing
     or a stale NAV — has positive autocorrelation and a variance ratio above 1.
-    PDF section 6.3 calls this out explicitly for illiquid funds."""
+    It is the classic signature of an illiquid or smoothed series."""
     raw = rng.standard_normal(N) * 0.01
     smoothed = np.convolve(raw, np.ones(3) / 3.0, mode="valid")
 

@@ -40,7 +40,7 @@ _WHAT_IT_DOES: dict[str, str] = {
                    "Treasury curve, funding spreads and financial-conditions "
                    "indices. Levels are stored raw and made stationary later, at "
                    "construction time.",
-    "build_factors": "Constructs the forty factors of section 2.2 from the "
+    "build_factors": "Constructs the forty factors from the "
                      "instrument and level panels, in block-hierarchy order, and "
                      "residualises each one against the factors above it. Writes "
                      "both series: the raw factor and the orthogonalised one.",

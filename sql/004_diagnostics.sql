@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS fact_series_diagnostics (
     max_abs_return    DOUBLE PRECISION,
 
     -- Verdict: fail blocks the series from estimation; warn surfaces amber in the UI
-    -- and feeds the model confidence score (PDF section 7.3).
+    -- and feeds the model confidence score.
     verdict           TEXT NOT NULL,
     verdict_reason    TEXT,
     flags             TEXT[] NOT NULL DEFAULT '{}',

@@ -1,14 +1,19 @@
 # Return-Based Multi-Asset Factor Model
 
-**As built.** A revision of the original concept note, rewritten against the
-implementation. Where the two differ, this document follows the implementation and
-says why the design changed.
+**As built.** This document describes the model that is running, in the form it
+runs. Every number in it was measured on the panel below rather than assumed, and
+where a design decision went one way rather than another the reason is given.
 
-Written in English to match the rest of the repository; the original note is in
-German.
+A typeset version of this material — with a flowchart of how the terminal works,
+the statistical methodology stated formally as an appendix, and the factor registry
+in full — is [factor-model-paper.pdf](factor-model-paper.pdf); rebuild it with
+`python -m scripts.build_paper`.
+[amzn-case-study.pdf](amzn-case-study.pdf) works a single security end to end on
+both factor panels, with every chart and every quoted number generated from the
+database by `python -m scripts.build_case_study --pdf`.
 
-Panel as of 2026-09-11 · 40 factors · 198 instruments · 50 level series ·
-200,072 factor observations · 221 tests.
+Panel as of 2026-09-11 · 40 factors in 9 blocks · 203 instruments · 53 level
+series · 200,072 factor observations from 2003-12-02 · 340 tests.
 
 ---
 
@@ -20,8 +25,7 @@ fund own* but *what does its return actually move with* — which is the only
 question answerable for a fund that reports holdings quarterly, or for a strategy
 whose positions change faster than its disclosures.
 
-The consequence is a standing obligation the original note states plainly and this
-implementation takes seriously: a return-based model measures realised
+The consequence is a standing obligation: a return-based model measures realised
 sensitivities, so it must be defended against spurious correlation, stale pricing,
 non-stationarity and short histories. Most of the engineering below is that defence.
 
@@ -36,20 +40,20 @@ All factors are daily log excess returns over cash (`FRED:DFF`) in USD.
 
 ## 2. Input data
 
-### 2.1 What the concept note asked for, and what the data supported
+### 2.1 What each block needs, and what the data supported
 
-Section 2.2 of the note specifies nine blocks of daily factor proxies. Each was
-audited against what was actually obtainable before anything was built. The audit
-is the most consequential part of the project, because a factor built on the wrong
-series is worse than a missing factor: it looks fine and is wrong.
+The model spans nine blocks of daily factor proxies. Each was audited against what
+was actually obtainable before anything was built. The audit is the most
+consequential part of the project, because a factor built on the wrong series is
+worse than a missing factor: it looks fine and is wrong.
 
 | Block | Verdict | Action |
 |---|---|---|
-| Rates | Excellent — complete US, EA and JP curves daily from FRED, ECB, BOJ, MOF | Used as specified |
-| Credit | Excellent — full ICE BofA OAS ladder (AAA→CCC) plus IG/HY/loan/EM ETFs | Used as specified |
-| Equity Style | Good — style ETFs plus Fama-French and AQR for validation | Used, with the caveat in §2.3 |
-| Volatility | Good — VIX futures ETFs, not index levels | Used as specified |
-| Commodities | Good — total-return ETFs | Used, **not** the futures series; see §2.2 |
+| Rates | Excellent — complete US, EA and JP curves daily from FRED, ECB, BOJ, MOF | Used in full |
+| Credit | Excellent — full ICE BofA OAS ladder (AAA→CCC) plus IG/HY/loan/EM ETFs | Used in full |
+| Equity Style | Good — style ETFs plus Fama-French and AQR for validation | Used, with the caveat in §2.3 below |
+| Volatility | Good — VIX futures ETFs, not index levels | Used in full |
+| Commodities | Good — total-return ETFs | Used, **not** the futures series; see §2.2 below |
 | Alt. Risk Premia | Good — constructible in-house from the return panel | Built rather than sourced |
 | **Equity Market** | **Insufficient** — only price-return index levels | 12 total-return ETFs added |
 | **Rates (Gilt)** | **Missing** — no daily UK curve anywhere in the warehouse | `IGLT.L` added as a total-return proxy |
@@ -74,13 +78,14 @@ dividends. Used as equity factors they bias every equity beta down by the divide
 yield. They are flagged `is_total_return = false` and excluded from construction.
 
 **Commodity futures are not a return series.** Yahoo's `=F` series are stitched
-front-month prices with an artificial jump at every roll. The concept note is
-explicit that roll and collateral return matter, so the commodity block uses
-total-return funds, which include both.
+front-month prices with an artificial jump at every roll. A commodity return is
+the spot move plus the roll plus the collateral yield, so the commodity block uses
+total-return funds, which include all three.
 
 **Low-frequency macro is never forward-filled.** Filling a weekly series into a
-daily regressor manufactures information and understates standard errors — §3 of
-the note, *Grundregel*. Such series become sparse release-event factors: the
+daily regressor manufactures information and understates standard errors: the
+filled days carry no news, yet the regression counts them as independent
+observations. Such series become sparse release-event factors: the
 standardised change lands on the publication day and the factor is exactly zero in
 between.
 
@@ -93,7 +98,7 @@ because the matrix endpoint started returning 8 factors instead of 39.
 ### 2.3 The weakest inputs, stated plainly
 
 The style block uses long-only ETFs residualised against market and sector, not
-true long-short portfolios. §4 below quantifies how close that gets to the academic
+true long-short portfolios. §4 quantifies how close that gets to the academic
 factors. Quality and low-volatility are the weakest proxies in the set and should
 not be leaned on.
 
@@ -101,7 +106,7 @@ not be leaned on.
 
 ## 3. Stationarity
 
-Every model input must be a stationary return series, and the note treats this as a
+Every model input must be a stationary return series, and this is treated as a
 precondition rather than a diagnostic. A single ADF test is useless as a gate — on
 daily returns it rejects almost always — so the battery is built around what
 actually goes wrong with financial series.
@@ -110,7 +115,7 @@ actually goes wrong with financial series.
 |---|---|---|
 | ADF × KPSS, read **jointly** | A level that should have been differenced | Blocks |
 | Zivot-Andrews | A structural break masquerading as a unit root | Flags |
-| Lo-MacKinlay variance ratio | Stale or smoothed pricing (§6.3 of the note) | Flags |
+| Lo-MacKinlay variance ratio | Stale or smoothed pricing | Flags |
 | Ljung-Box | Autocorrelation — the second stale-pricing signal | Flags |
 | ARCH-LM | Volatility clustering | **Records, never gates** |
 | Zero-return share | Illiquidity | Flags |
@@ -127,7 +132,7 @@ stationary. Gating on ARCH-LM would exclude essentially every financial series, 
 the reason to know about clustering is that it argues for HAC standard errors — not
 against the factor.
 
-Current state: 32 pass, 8 warn, 0 fail on the trailing 252-day window.
+Current state: 30 pass, 10 warn, 0 fail on the trailing 252-day window.
 
 ---
 
@@ -216,8 +221,8 @@ usually reported for true long-short portfolios.
 Regressing a security on both `eq_global` and raw `eq_japan` is a poor idea: the
 two are strongly correlated, the design matrix is ill-conditioned, and the betas
 come out as large offsetting numbers that mean nothing individually. The block
-hierarchy of §4 of the note removes the overlap, so each block's loading answers a
-specific question.
+hierarchy of §4 removes the overlap, so each block's loading answers a specific
+question.
 
 The implementation choice that matters is **when** the residualisation is fitted.
 
@@ -368,8 +373,8 @@ after, and the average loading that produced it. Measured on the common sample:
 Two rows are worth dwelling on. `fx_carry` still correlates +0.16 with `fx_jpy`
 after residualisation — the sign has flipped but the magnitude has not gone away,
 which is what a three-legged basket dominated by one funding currency looks like
-even after the currency is regressed out; the note on that factor already says to
-treat its loading sceptically, and this is the measurement behind it. And
+even after the currency is regressed out; the factor's own registry entry already
+says to treat its loading sceptically, and this is the measurement behind it. And
 `arp_trend` has *negative* variance removed: the residual is fractionally noisier
 than the factor it came from. That is not a defect in the arithmetic but a property
 of a causal fit — a loading estimated on the trailing two years and applied for the
@@ -380,8 +385,10 @@ and moving. Both are shown rather than smoothed over.
 
 ## 6. Exposure estimation
 
-Rolling regression of an instrument's excess return on the factor panel, with the
-controls the note asks for exposed as user choices rather than hard-coded:
+Rolling regression of an instrument's excess return on the factor panel. Every
+control that changes the answer is a user choice rather than a hard-coded constant,
+because each one is a modelling judgement and none has a default that is right for
+every instrument:
 
 - **Estimation window** 63 – 756 days
 - **Roll-forward step** 1d / 1w / 1m / 3m / 6m
@@ -401,9 +408,10 @@ window.
 
 ### Beta stability
 
-§11 of the note treats a jumping loading vector as a drift alert. Two measures are
-kept: the L1 change in the whole vector and its correlation with the previous
-window.
+A loading vector that jumps between windows is a drift alert: the exposure the
+model reports is no longer the exposure it reported last month, and a risk number
+built on it inherits that instability. Two measures are kept — the L1 change in the
+whole vector, and its correlation with the previous window.
 
 The comparison is made on the factors **common to both windows**, with the size of
 that common set recorded. An earlier version refused to compare whenever the usable
@@ -427,8 +435,9 @@ by eigenvalue clipping followed by a rescale that puts the factor volatilities b
 where they were — clipping alone inflates the diagonal and shifts every risk number.
 
 Specific risk is shrunk 25% toward the cross-sectional median and floored at 2%
-annualised, per §6.4 of the note: a single short or unusually quiet history should
-not produce a falsely precise idiosyncratic risk.
+annualised: a single short or unusually quiet history should not produce a falsely
+precise idiosyncratic risk, and the floor is the model's admission that it cannot
+see every risk a security carries.
 
 **The covariance page is computed on the orthogonalised factors and must be.** The
 loadings are loadings on that set, and portfolio risk is β′Σβ, so Σ has to be the
@@ -440,7 +449,7 @@ For a forecast dated *t*, the loadings come from a window ending at or before *t
 and the covariance from returns up to *t*; the realised volatility it is compared
 against covers *t+1 … t+h*. The lag is enforced structurally, not by convention.
 
-Scoring follows §11:
+Four tests, each answering a different question:
 
 - **Bias statistic** — standard deviation of returns divided by the forecast in
   force. Target 1.
@@ -482,14 +491,23 @@ over-reacts. The application says so where the statistic is displayed.
 
 ## 8. What is not built
 
-The concept note also specifies portfolio optimisation (§8), performance
-attribution (§10) and a mixed-frequency state-space layer (§3.3). None of these are
-implemented. The covariance matrix is optimiser-ready — positive semi-definite, with
-interpretable exposures — but no optimiser sits on top of it.
+Three things a factor model of this kind is often expected to carry are absent, and
+are absent deliberately rather than by oversight.
 
-Macro release-surprise factors (§3.4) are implemented only as the sparse
-release-event transform described in §2.2 above; there is no announcement-window
-lead-lag structure and no Kalman-filtered latent macro state.
+**Portfolio optimisation and performance attribution.** The covariance matrix is
+optimiser-ready — positive semi-definite, with interpretable exposures — but no
+optimiser sits on top of it, and no attribution layer decomposes a realised return
+into factor contributions. Both are downstream consumers of the model rather than
+parts of it, and building either before the risk forecast has been shown to be
+right would be building on an unverified base.
+
+**A mixed-frequency state-space layer.** Macro release surprises are implemented
+only as the sparse release-event transform described in §2.2: the standardised
+change lands on the publication day and the factor is zero in between. There is no
+announcement-window lead-lag structure and no Kalman-filtered latent macro state
+interpolating the releases onto a daily grid. Interpolation is exactly the
+forward-fill this model refuses elsewhere, with a filter in front of it; doing it
+properly means committing to a state equation the data here cannot identify.
 
 ---
 
@@ -555,9 +573,9 @@ results:
 | Forecast validation | `backend/core/risk.py` |
 | Density estimation | `backend/core/distribution.py` |
 | Factor definitions | `backend/pipeline/factor_defs.py` |
-| Schema | `sql/` (14 migrations) |
+| Schema | `sql/` (15 migrations) |
 | API | `backend/app/` |
-| Interface | `frontend/` |
+| Interface | `frontend/` (seven pages) |
 
 `backend/core` holds pure functions over arrays with no database access. That
 boundary is what makes the accuracy claims checkable, and it is the main

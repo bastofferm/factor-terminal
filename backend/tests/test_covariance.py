@@ -323,7 +323,7 @@ def test_risk_contributions_sum_to_systematic_volatility():
 # ---------------------------------------------------------------------------
 
 def test_residual_pca_finds_a_hidden_common_factor(rng):
-    """PDF section 5.2: a dominant first residual component means the economic
+    """A dominant first residual component means the economic
     factor set is missing a common risk."""
     n, m = 4000, 8
     hidden = rng.standard_normal(n) * 0.01

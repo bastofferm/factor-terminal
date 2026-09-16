@@ -231,6 +231,8 @@ export interface Spec {
   estimator: string;
   weighting: string;
   n_instruments: number;
+  /** Only present when specs() was called with an instrument. */
+  covers_instrument?: boolean | null;
   created_at: string;
 }
 
@@ -320,7 +322,10 @@ export const api = {
   securities: (q: string, types = "equity,etf", limit = 40) =>
     get<{ query: string; types: string[]; total: number; shown: number;
           results: Security[] }>("/api/meta/securities", { q, types, limit }),
-  specs: () => get<Spec[]>("/api/meta/specs"),
+  // `instrument` makes each row say whether it covers that security, which is
+  // what lets a page default to a spec that will actually return something.
+  specs: (instrument?: string) =>
+    get<Spec[]>("/api/meta/specs", { instrument }),
   dataHealth: () => get<any>("/api/meta/data-health"),
   run: (runId: string) => get<RunDetail>(`/api/meta/runs/${runId}`),
   factorSparklines: (basis: Basis = "excess") =>
@@ -366,7 +371,55 @@ export const api = {
     get<any>(`/api/risk/standardized/${specId}/${encodeURIComponent(instrumentId)}`, p),
   decomposition: (specId: string, instrumentId: string) =>
     get<any>(`/api/risk/decomposition/${specId}/${encodeURIComponent(instrumentId)}`),
+
+  opsStatus: () => get<OpsStatus>("/api/ops/status"),
+  opsRefresh: () => get<RefreshRun>("/api/ops/refresh"),
+  opsStartRefresh: (full = false) =>
+    post<RefreshRun>(`/api/ops/refresh?full=${full}`, {}),
+  opsCancelRefresh: () => post<{ cancelled: string }>("/api/ops/refresh/cancel", {}),
 };
+
+// --- operations ----------------------------------------------------------
+
+export interface RefreshStage {
+  key: string;
+  label: string;
+  detail: string;
+  state: "pending" | "running" | "ok" | "failed";
+  seconds: number | null;
+  note: string | null;
+}
+
+export interface RefreshRun {
+  run_id?: string;
+  full?: boolean;
+  status: "idle" | "running" | "ok" | "failed";
+  returncode?: number | null;
+  started_at?: string;
+  finished_at?: string | null;
+  elapsed_seconds?: number;
+  stages: RefreshStage[];
+  log: string[];
+}
+
+export interface OpsStatus {
+  as_of: string;
+  layers: {
+    layer: string; nightly: boolean; last_date: string | null;
+    n_rows: number; n_series: number;
+  }[];
+  jobs: {
+    job: string; mode: string; status: string;
+    started_at: string; finished_at: string | null;
+    rows_out: number | null; n_failed: number | null; error: string | null;
+    duration_seconds: number;
+  }[];
+  stale_instruments: {
+    instrument_id: string; source_ticker: string;
+    last_obs: string; is_live: boolean; days_behind: number;
+  }[];
+  refresh: RefreshRun | null;
+}
 
 // --- formatting ----------------------------------------------------------
 

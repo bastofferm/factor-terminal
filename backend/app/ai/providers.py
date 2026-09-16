@@ -28,9 +28,10 @@ BASE_URL = "https://api.deepseek.com/v1"
 ALLOWED_HOSTS = frozenset({"api.deepseek.com"})
 ENV_KEYS = ("DEEPSEEK_API_KEY", "DEEPSEEK_KEY")
 
-# Overridable because the right answer is empirical, not documented — see
-# scripts/probe_deepseek.py and the note in the plan about reasoning tiers
-# returning empty content on large prompts.
+# Overridable because the right answer is empirical, not documented: the reasoning
+# tiers can spend their whole output budget on hidden reasoning and return empty
+# content on a large prompt, which is this application's normal case. Run
+# scripts/probe_deepseek.py against the real corpus before changing it.
 DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
 REQUEST_TIMEOUT = 120.0

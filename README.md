@@ -1,26 +1,32 @@
 # Daily Multi-Asset Factor Model
 
-A fully return-based factor model implementing the nine daily proxy blocks of §2.2
-of a concept note on return-based multi-asset factor modelling (not included in
-this repository), with an analyst frontend for
-inspecting factors, the covariance structure, rolling loadings, and — the point of
-the exercise — whether the model's predicted risk for a security is actually right.
+A fully return-based factor model: forty daily factors across nine blocks, with an
+analyst frontend for inspecting factors, the covariance structure, rolling
+loadings, and — the point of the exercise — whether the model's predicted risk for
+a security is actually right.
 
 No holdings, no look-through. Every model input is a stationary return series, and
 that is tested rather than assumed.
 
-![The six pages of the terminal](screenshots/factor-terminal.gif)
+![The pages of the terminal](screenshots/factor-terminal.gif)
 
 *Data Health, Factor Explorer, Raw Explorer, Covariance & PCA, Loadings Lab, Risk
-Lens. Regenerate with `python -m scripts.capture_screenshots` while the app is
-running.*
+Lens, Operations. Regenerate with `python -m scripts.capture_screenshots` while the
+app is running.*
 
 **[Documentation/return-based-multi-asset-factor-model.md](Documentation/return-based-multi-asset-factor-model.md)**
-is the model write-up: what the concept note asked for, what the data actually
-supported, the decisions taken where the two differed, and the measured validation.
+is the model write-up: what each block needs, what the data actually supported, the
+decisions taken where the two differed, and the measured validation.
 **[Documentation/factor-formulas.md](Documentation/factor-formulas.md)** gives every
 one of the forty factors as a formula over named instruments, with the exact
 equation that orthogonalises it.
+**[Documentation/factor-model-paper.pdf](Documentation/factor-model-paper.pdf)** is
+the same material typeset as a paper, with a flowchart of how the terminal works,
+the statistical methodology as an appendix, and a chapter on the software
+architecture.
+**[Documentation/amzn-case-study.pdf](Documentation/amzn-case-study.pdf)** works one
+security end to end on both factor panels — eleven charts, and the argument for the
+hierarchy made out of sample on a single name.
 
 ---
 
@@ -74,11 +80,36 @@ frontend, say:
 cd frontend && npm run dev                     # http://localhost:3100
 ```
 
-The nightly refresh is one command:
+## Keeping the data current
+
+Three ways to run the same chain — mirror the warehouse, fetch Yahoo and FRED,
+re-check coverage, rebuild all forty factors on both bases, re-run the stationarity
+battery. It stops at the first fatal failure, because a factor built on
+half-refreshed inputs looks current and is not. About two minutes.
+
+**From the app.** The **Operations** tab: one button, *Update all series*. The six
+stages fill in as a checklist, the scheduler's own log streams underneath, and the
+page shows how many days behind the panel each layer of the model is — so the
+question that comes before the button is answered on the same screen.
+
+**Once, from a shell:**
 
 ```bash
-python -m backend.pipeline.scheduler --once     # or omit --once to run as a daemon
+python -m backend.pipeline.scheduler --once
 ```
+
+**As a daemon**, which runs it at 23:00 local — after the US close and the FRED
+daily refresh, before midnight so the run is stamped with the day whose data it
+fetched:
+
+```bash
+python -m backend.pipeline.scheduler
+```
+
+The exit code is meaningful: non-zero means a fatal stage failed. A refresh does
+*not* re-estimate loadings or re-score risk — both are per-specification and are
+computed on demand — and does not back-fill a restated history, which is what
+**Full rebuild** (`--full`) is for.
 
 ---
 
@@ -92,9 +123,9 @@ backend/
                 covariance · risk · distribution
   pipeline/     ingestion, construction and estimation jobs
   app/          FastAPI: thin routers over raw SQL, plus the DeepSeek assistant
-  tests/        337 tests, mostly against simulated data with known parameters
-frontend/       Next.js 14 + Plotly, six pages
-scripts/        one-off tooling: model probe, backfills, screenshot capture
+  tests/        352 tests, mostly against simulated data with known parameters
+frontend/       Next.js 14 + Plotly, seven pages
+scripts/        model probe, backfills, screenshots, and the two document builds
 ```
 
 The `backend/core` boundary is the main design decision. Every statistical routine
@@ -131,15 +162,17 @@ dividends; using them as equity factors biases every beta down by the dividend
 yield. They are marked `is_total_return = false` and excluded from construction.
 
 **Commodity futures.** Yahoo `=F` series are stitched front-month prices with a jump
-at every roll — not a return series. The commodity block uses total-return ETFs,
-which include roll and collateral, as §2.2 requires.
+at every roll — not a return series. A commodity return is the spot move plus the
+roll plus the collateral yield, so the commodity block uses total-return ETFs,
+which include all three.
 
 **Low-frequency macro is never forward-filled.** A weekly series filled into a daily
-regressor manufactures information and understates standard errors (§3, Grundregel).
-Such series become sparse release-event factors: the standardised change lands on
-the publication day and the factor is exactly zero in between.
+regressor manufactures information and understates standard errors: the filled days
+carry no news, yet the regression counts them as independent observations. Such
+series become sparse release-event factors: the standardised change lands on the
+publication day and the factor is exactly zero in between.
 
-**Orthogonalisation is causal.** The block hierarchy of §4 is applied on a trailing
+**Orthogonalisation is causal.** The block hierarchy is applied on a trailing
 504-day window, refitted monthly. Full-sample residualisation would be exactly
 orthogonal but would put future information into historical factor values — which
 would flatter the model precisely where it is being judged. Measured residual
@@ -220,7 +253,7 @@ The battery is built to catch what actually goes wrong:
 |---|---|
 | ADF × KPSS, read jointly | A level that should have been differenced |
 | Zivot-Andrews | A structural break masquerading as a unit root |
-| Lo-MacKinlay variance ratio | Stale or smoothed pricing (§6.3) |
+| Lo-MacKinlay variance ratio | Stale or smoothed pricing |
 | Ljung-Box | Autocorrelation, the second stale-pricing signal |
 | ARCH-LM | Volatility clustering — **recorded, never gated**: a GARCH process is strictly stationary |
 | Zero-return share | Illiquidity; the cheapest and often most telling check |
@@ -233,7 +266,7 @@ break-or-heteroskedasticity, or inconclusive. Only the second blocks a series.
 ## Verification
 
 ```bash
-python -m pytest -q                                    # 337 tests
+python -m pytest -q                       # 349 pass; 3 more need a populated DB
 python -m pytest backend/tests/test_factor_validation.py   # needs a populated DB
 ```
 

@@ -12,7 +12,7 @@ load-bearing and were the main findings of the data audit:
 
 2. `transform`. Yields and spreads are I(1) levels. They enter the model only as
    daily changes, and yields additionally get duration-scaled into synthetic bond
-   returns (PDF section 2.2: "Duration-normalisierte Renditefaktoren").
+   returns, normalised by duration so the legs are comparable across tenors.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ NEW_INSTRUMENTS: list[dict] = [
     {"ticker": "EWJ",  "name": "MSCI Japan",             "asset_class": "Equity TR", "region": "japan"},
     {"ticker": "EEM",  "name": "MSCI Emerging Markets",  "asset_class": "Equity TR", "region": "em"},
     {"ticker": "IEMG", "name": "Core MSCI EM",           "asset_class": "Equity TR", "region": "em"},
-    # Gilt exposure: the only curve of the four named in section 2.2 with no daily
+    # Gilt exposure: the only one of the four rates curves with no daily
     # yield series anywhere in the warehouse. London-listed, so GBP.
     {"ticker": "IGLT.L", "name": "iShares Core UK Gilts", "asset_class": "Govt Bond",
      "region": "uk", "currency": "GBP"},
@@ -159,9 +159,10 @@ def classify_cross_asset(ticker: str, asset_class: str | None) -> dict:
         return {"is_total_return": False, "role": "factor_input",
                 "notes": "FX spot; carry leg added separately from policy-rate differentials"}
 
-    # Crypto: tradable, but outside the section 2.2 universe.
+    # Crypto: tradable, but outside the factor universe.
     if ac == "Crypto" or ticker.endswith("-USD"):
-        return {"is_total_return": True, "role": "analysis", "notes": "outside section 2.2 scope"}
+        return {"is_total_return": True, "role": "analysis",
+                "notes": "outside the factor universe"}
 
     # Everything else is an ETF: Yahoo Adj Close is dividend-adjusted.
     return {"is_total_return": True, "role": "both", "notes": None}

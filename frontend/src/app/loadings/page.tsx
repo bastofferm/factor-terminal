@@ -453,7 +453,7 @@ export default function LoadingsPage() {
             title="Beta stability"
             caption={
               <>
-                How far the whole loading vector moves between windows. PDF section 11
+                How far the whole loading vector moves between windows. The model
                 treats a jump as a drift alert: either the security changed style, or
                 the estimate is too noisy to act on. Windows are compared on the
                 factors common to both — the factor set moves as coverage allows, and

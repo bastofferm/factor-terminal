@@ -5,7 +5,7 @@ import { Shell } from "@/components/Shell";
 export const metadata: Metadata = {
   title: "Factor Terminal",
   description:
-    "Daily return-based multi-asset factor model over the nine proxy blocks of section 2.2",
+    "Daily return-based multi-asset factor model: forty factors across nine blocks",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

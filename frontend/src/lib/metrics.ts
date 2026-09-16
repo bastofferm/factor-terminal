@@ -283,4 +283,43 @@ export const METRICS: Record<string, Metric> = {
         + "suggests. On the raw panel this runs near 50% and on the orthogonalised "
         + "panel near 35% — the difference is what the block hierarchy removes.",
   },
+
+  // --- operations --------------------------------------------------------
+  panelAsOf: {
+    title: "Panel as-of date",
+    what: "The newest observation anywhere in the instrument panel.",
+    how: "max(date) over fact_input_return, across every mirrored and fetched "
+       + "series.",
+    read: "Every other age on this page is measured against this date rather than "
+        + "against today, so a weekend or a holiday does not paint the whole model "
+        + "stale when nothing is wrong.",
+  },
+  widestGap: {
+    title: "Widest layer gap",
+    what: "How far the most out-of-date layer of the model lags the panel.",
+    how: "Calendar days between that layer's newest row and the panel's as-of date, "
+       + "taken over instrument returns, level series and factor returns.",
+    read: "Zero or one on a trading day means the chain ran end to end. A gap of "
+        + "several days means a stage is failing quietly — the factors will still "
+        + "compute, on inputs that stopped moving.",
+  },
+  staleInstruments: {
+    title: "Stale live instruments",
+    what: "Instruments still marked live that are more than five days behind the "
+        + "panel.",
+    how: "ref_instrument.last_obs against max(date), restricted to series the "
+       + "liveness gate has not already retired.",
+    read: "Discontinued series are excluded on purpose: they are flagged and kept "
+        + "so the factors that used them keep their history. A *live* series "
+        + "drifting is a vendor change, a rename or a credential, and it is the "
+        + "thing worth chasing after a refresh.",
+  },
+  lastRefresh: {
+    title: "Last refresh",
+    what: "When the most recent stage of the nightly chain finished.",
+    how: "The newest finished_at across every job in the ETL run log.",
+    read: "Last night's timestamp is the normal state during the day. Several days "
+        + "old means the scheduler is not running and the model is quietly living "
+        + "on whatever it last fetched.",
+  },
 };

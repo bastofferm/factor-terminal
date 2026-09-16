@@ -1,6 +1,6 @@
 """Construct the daily factor returns defined in factor_defs.
 
-Runs the block hierarchy of PDF section 4: factors are built in ascending level
+Runs the block hierarchy: factors are built in ascending level
 order, and each is residualised against the already-built factors named in its
 `orth` list on a trailing window, so no historical factor value contains information
 from its own future.
@@ -92,7 +92,7 @@ def trading_calendar(cur: Any) -> set:
     filtered out of the covariance matrix while forward-filled rates factors
     survive.
 
-    Crypto is outside the section 2.2 universe anyway (role 'analysis'), so the
+    Crypto is outside the factor universe anyway (role 'analysis'), so the
     calendar is taken from the factor instruments, restricted to weekdays, and
     requires a quorum of them to report.
     """
@@ -249,12 +249,11 @@ DAILY_COVERAGE_THRESHOLD = 0.5
 def _level_transform(p: Panels, inputs: dict) -> pd.Series:
     """Transform a level series into a stationary daily series.
 
-    Lower-frequency series are NOT forward filled. PDF section 3's Grundregel is
-    explicit that forward-filling a low-frequency series into a daily regressor
-    manufactures information, understates standard errors and can smuggle in
-    lookahead. Instead such a series becomes a sparse release-event factor
-    (section 3.2): the standardised change lands on the publication day and the
-    factor is exactly zero in between.
+    Lower-frequency series are NOT forward filled. Filling a low-frequency series
+    into a daily regressor manufactures information, understates standard errors and
+    can smuggle in lookahead. Instead such a series becomes a sparse release-event
+    factor: the standardised change lands on the publication day and the factor is
+    exactly zero in between.
     """
     s = p.level(inputs["series"])
     values = s.to_numpy()

@@ -11,7 +11,7 @@ wrong in a daily multi-asset factor model:
 
   * ADF x KPSS jointly   -> is this really I(0), or was the transform skipped?
   * Zivot-Andrews        -> when the two disagree, is it a break rather than a root?
-  * Lo-MacKinlay VR      -> stale or smoothed pricing (PDF section 6.3)
+  * Lo-MacKinlay VR      -> stale or smoothed pricing
   * Ljung-Box            -> autocorrelation, the second stale-pricing signal
   * ARCH-LM              -> volatility clustering. NOT a stationarity violation:
                             a GARCH process is strictly stationary. Recorded as an
@@ -234,7 +234,7 @@ def analyse(
     `returns` must already be a return (or a differenced level). Passing a price or
     yield level is exactly the mistake this function exists to catch.
 
-    `sparse=True` marks a release-event factor (PDF section 3.2), which is zero on
+    `sparse=True` marks a release-event factor, which is zero on
     every non-publication day by construction. Such a series is ~80% zeros, which
     the liquidity and stale-pricing gates would otherwise read as a dead instrument.
     For these the statistically meaningful object is the sequence of releases, so
