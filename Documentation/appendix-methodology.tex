@@ -1,0 +1,557 @@
+% =====================================================================
+%  Appendices. Included by factor-model-paper.tex.
+% =====================================================================
+\appendix
+\newpage
+
+\section{Statistical methodology}
+\label{app:method}
+
+This appendix states each procedure in the form in which it is implemented, including
+the conventions --- bandwidth rules, degrees of freedom, boundary handling --- that
+decide whether two nominally identical implementations agree. Every routine named
+here is a pure function over arrays in \code{backend/core} and is exercised by the
+test suite against a process whose answer is known analytically.
+
+\subsection{Conventions}
+
+The significance level is $\alpha = 0.05$ throughout, and every $p$-value is stored
+and displayed so that a reader may disagree with the threshold. Returns are natural
+logarithms. Annualisation uses 252 trading days: a daily standard deviation is
+multiplied by $\sqrt{252}$ and a daily mean by 252. Sample standard deviations use
+$\mathrm{ddof}=1$ unless stated; the Ledoit-Wolf derivation is the exception and is
+noted where it arises.
+
+% ---------------------------------------------------------------------
+\subsection{The stationarity battery}
+\label{app:stationarity}
+
+A single Dickey-Fuller test is useless as a gate on daily returns: it rejects almost
+always, so it cannot discriminate. The battery is therefore built around what
+actually goes wrong with financial series --- an untransformed level, a structural
+break, stale pricing, illiquidity --- with each test given the role its own null
+hypothesis supports.
+
+\subsubsection{Unit-root tests, read jointly}
+
+\begin{description}[leftmargin=1.6em,style=nextline,itemsep=0.35ex]
+\item[Augmented Dickey-Fuller \citep{dickey1979}.] $H_0$: a unit root is present. Lag
+  order is selected by AIC; the regression includes a constant, which is the right
+  specification for an excess return with a possible non-zero mean.
+\item[KPSS \citep{kpss1992}.] $H_0$: the series \emph{is} stationary --- the exact
+  complement of ADF. Level stationarity, with the automatic Newey-West bandwidth.
+\item[Phillips-Perron \citep{phillips1988}.] Same null as ADF but with a
+  non-parametric correction for serial correlation and heteroskedasticity in place of
+  ADF's augmentation lags. Reported alongside as a robustness check, not gated on.
+\end{description}
+
+ADF and KPSS have opposite nulls, and reading them together yields four verdicts where
+either alone yields two. This is the single most useful idea in the battery:
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Joint reading of ADF and KPSS at $\alpha = 0.05$.}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{ADF} & \textbf{KPSS} & \textbf{Verdict} & \textbf{Consequence} \\
+\midrule
+rejects & does not reject & stationary & pass \\
+does not reject & rejects & \textbf{unit root} & \textbf{fail} --- must be differenced \\
+rejects & rejects & break or heteroskedasticity & warn \\
+does not reject & does not reject & inconclusive --- usually too short & warn \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Only the second row blocks a series. The third is the interesting one: both tests
+rejecting is not a contradiction but a signature --- it indicates a structural break or
+strong heteroskedasticity rather than a clean unit root, and it is the only condition
+under which the Zivot-Andrews test is run.
+
+\subsubsection{Structural break}
+
+\textbf{Zivot-Andrews \citep{zivot1992}} tests a unit root against stationarity around
+a single endogenously determined break, searching every candidate break date and
+taking the minimum statistic. It is by far the most expensive test in the battery,
+which is why it runs only when the joint reading says ``not a clean unit root'' and at
+least 100 observations are available. The estimated break date is stored, because a
+break in 2008-09 and a break in 2020-03 invite different conclusions.
+
+\subsubsection{Stale pricing}
+
+\textbf{Lo-MacKinlay variance ratio \citep{lo1988}}, heteroskedasticity-robust, at
+lags $q \in \{2,5,10\}$:
+
+\begin{equation}
+\mathrm{VR}(q) \;=\; \frac{\operatorname{Var}\!\left(\sum_{j=0}^{q-1} r_{t-j}\right)}{q \operatorname{Var}(r_t)} .
+\end{equation}
+
+Under a random walk $\mathrm{VR}=1$. Values above 1 indicate positive autocorrelation
+--- trending or smoothed pricing --- and values below 1 mean reversion. The
+heteroskedasticity-robust variant is essential: daily returns are conditionally
+heteroskedastic by construction, and the homoskedastic version rejects on that alone.
+
+\begin{decision}{A level, not a return}
+The \code{arch} package's variance-ratio implementation consumes a \emph{price level}
+and differences internally. Passing returns to it differences twice, giving
+$\mathrm{VR} \approx 1/q$ and flagging every clean factor as mean-reverting. The
+implementation here therefore reconstructs a level by cumulative summation before
+calling it, and a test asserts that a smoothed series shows $\mathrm{VR} > 1$ --- which
+is how the defect was found.
+\end{decision}
+
+\textbf{Ljung-Box \citep{ljung1978}} at 10 lags, $H_0$: no autocorrelation up to lag
+10. It is the second stale-pricing signal, and is also computed on squared returns,
+where rejection indicates volatility clustering rather than predictability in the mean.
+
+\subsubsection{Conditional heteroskedasticity}
+
+\textbf{Engle's ARCH-LM \citep{engle1982}} at 10 lags, $H_0$: no conditional
+heteroskedasticity. \emph{This test is recorded and never gated on.} A GARCH process
+is strictly stationary; gating on ARCH-LM would exclude essentially every financial
+series ever published. The reason to know about clustering is that it argues for HAC
+standard errors --- not against the factor.
+
+\subsubsection{Distribution and liquidity}
+
+Skewness, excess kurtosis (Fisher convention, zero for a Gaussian) and the
+Jarque-Bera statistic are recorded. Like ARCH-LM, Jarque-Bera is never gated on: fat
+tails are the normal condition of a daily return series.
+
+The \textbf{zero-return share} is the cheapest and frequently the most telling check in
+the battery. Above 50\% the series is not really trading daily and the verdict fails;
+above 20\% it warns. The \textbf{maximum absolute return} is recorded as a
+data-integrity check --- a single print of $-5.775$ in log space is not a market event
+but a corporate action or a bad first row.
+
+\subsubsection{Verdict assembly}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Condition} & \textbf{Verdict} & \textbf{Flag} \\
+\midrule
+Joint reading is ``unit root'' & fail & \code{unit\_root} \\
+Fewer than 60 observations & fail & \code{too\_short} \\
+Zero variance & fail & \code{constant} \\
+Zero-return share $> 0.50$ & fail & \code{illiquid} \\
+\addlinespace
+Joint reading inconclusive & warn & \code{inconclusive\_unit\_root} \\
+Joint reading is ``break'' & warn & \code{structural\_break} \\
+Fewer than 252 observations & warn & \code{short\_history} \\
+Zero-return share $> 0.20$ & warn & \code{sparse\_trading} \\
+$|\mathrm{VR}-1| > 0.25$ with a significant $p$ & warn & \code{stale\_pricing} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Every flag carries a human-readable reason, and the reason rather than the flag is
+what the interface displays.
+
+\subsubsection{Sparse release factors}
+
+A release-event factor is zero on roughly 80\% of days by construction. The liquidity
+and stale-pricing gates would read that as a dead instrument. For a series marked
+sparse, the tests therefore run on the non-zero subsequence --- the statistically
+meaningful object is the sequence of releases --- and the sparsity is reported rather
+than penalised. A short window over such a factor holds few releases, so it warns
+instead of failing, with the reason directing the reader to the full-history
+diagnostic where power is adequate.
+
+% ---------------------------------------------------------------------
+\subsection{Regression}
+\label{app:regression}
+
+\subsubsection{Weighted least squares}
+
+With design matrix $X$ (a column of ones followed by the factor panel) and weights $w$
+normalised to mean one, the estimator solves the weighted normal equations. Equal
+weighting sets $w_t = 1$; exponential weighting sets
+
+\begin{equation}
+w_t \;\propto\; 2^{-(T-t)/H},
+\end{equation}
+
+for half-life $H$ in days, again normalised to mean one so that the effective sample
+size is comparable across settings.
+
+\subsubsection{Huber}
+
+Robust regression \citep{huber1964} by iteratively reweighted least squares, five
+iterations, with tuning constant $\delta = 1.345$ --- the value giving 95\% asymptotic
+efficiency under Gaussian errors. The weight function is
+
+\begin{equation}
+\psi(z) \;=\; \begin{cases} 1 & |z| \le \delta \\ \delta/|z| & |z| > \delta\end{cases},
+\qquad z_t = \frac{\varepsilon_t}{\hat s},
+\end{equation}
+
+with $\hat s$ a robust scale estimate of the residuals. Observations inside $\delta$
+robust standard deviations keep unit weight; those outside are downweighted in
+proportion to their distance rather than discarded.
+
+\subsubsection{Ridge}
+\label{app:ridge}
+
+The penalty applies to standardised slopes so that $\lambda$ does not depend on
+whether a factor is quoted in percent or in decimals, and the intercept is left
+unpenalised so that $\alpha$ is not biased toward zero. Penalising
+$\sum_j (b_j \sigma_j)^2$ gives normal equations
+
+\begin{equation}
+\left(X^{\prime}X + \lambda n \operatorname{diag}(\sigma^2)\right) b \;=\; X^{\prime}y ,
+\end{equation}
+
+so the penalty is \emph{multiplied} by $\sigma^2$.
+
+\begin{decision}{The sign of an exponent}
+The original implementation divided by $\sigma^2$ instead. For daily returns with
+$\sigma \approx 0.01$ that inflates the penalty by a factor of $10^4$, and $\lambda=1$
+shrank every loading to exactly zero. The regression still returned, still reported an
+$R^2$, and still produced a loading vector; it was simply the zero vector. A test that
+asserts a modest ridge penalty leaves a known loading recognisable is what caught it.
+\end{decision}
+
+\subsubsection{HAC standard errors}
+
+Newey-West \citep{newey1987} with Bartlett (triangular) weights:
+
+\begin{equation}
+V \;=\; (X^{\prime}X)^{-1}\left[S_0 + \sum_{\ell=1}^{L} w_\ell\left(\Gamma_\ell + \Gamma_\ell^{\prime}\right)\right](X^{\prime}X)^{-1},
+\qquad w_\ell = 1 - \frac{\ell}{L+1},
+\end{equation}
+
+where $\Gamma_\ell$ is the lag-$\ell$ autocovariance of the score vectors
+$\varepsilon_t x_t$. Bartlett weights guarantee a positive semi-definite result, which
+a truncated (unweighted) kernel does not. The automatic bandwidth is
+
+\begin{equation}
+L \;=\; \left\lfloor 4\left(\frac{T}{100}\right)^{2/9} \right\rfloor ,
+\end{equation}
+
+giving 4 lags at 100 observations, 5 at 252 and 6 at 1000. The bandwidth is
+deliberately small: autocorrelation in daily returns is short-lived, and the cost of
+over-specifying $L$ is a noisy covariance estimate.
+
+\subsubsection{Dimson lead-lag}
+
+The design is augmented with $L$ lagged copies of the factor panel and the
+coefficients are summed factor by factor (Section \ref{sec:dimson}). Only lags are
+included; a lead would use tomorrow's factor return to explain today's security
+return, which is unavailable at forecast time.
+
+The standard error of the sum uses the full coefficient covariance:
+
+\begin{equation}
+\operatorname{se}\!\left(\hat\beta^{\mathrm{Dimson}}_j\right)
+= \sqrt{\textstyle\sum_{\ell}\sum_{m} \operatorname{Cov}\!\left(\hat\beta^{(\ell)}_j, \hat\beta^{(m)}_j\right)} .
+\end{equation}
+
+The lag coefficients are typically negatively correlated, so the diagonal-only
+approximation $\sqrt{\sum_\ell \operatorname{se}^2}$ overstates the uncertainty. It is
+used only as a conservative fallback when no covariance is supplied, and the caller is
+told to treat the resulting interval as wide.
+
+\subsubsection{Collinearity diagnostics}
+
+The \textbf{condition number} is the ratio of the largest to the smallest singular
+value of the standardised design matrix. It is the invariant that governs how far
+$\beta^{\prime}\Sigma\beta$ can be amplified by near-collinearity, and it is what the
+reliability gate of Section \ref{sec:reliability} reads.
+
+\textbf{Variance inflation factors} are computed from the inverse correlation matrix,
+
+\begin{equation}
+\mathrm{VIF}_j \;=\; \left[R^{-1}\right]_{jj},
+\qquad R = \operatorname{corr}(X),
+\end{equation}
+
+which is algebraically identical to $1/(1-R_j^2)$ from $k$ auxiliary regressions but
+costs one matrix inversion rather than $k$ least-squares fits --- a material difference
+at $k=40$ over a thousand rolling windows. The auxiliary-regression form is retained
+in the code as the reference implementation, and a test asserts the two agree.
+
+\subsubsection{Beta stability}
+
+Between consecutive windows, on the factors common to both:
+
+\begin{equation}
+d_{L_1} = \sum_{j \in C} \left|\beta_j^{(t)} - \beta_j^{(t-1)}\right|,
+\qquad
+\rho = \operatorname{corr}\!\left(\beta^{(t)}_C, \beta^{(t-1)}_C\right),
+\qquad |C| \text{ recorded.}
+\end{equation}
+
+Recording $|C|$ is not optional: $d_{L_1}$ falls mechanically as the common basis
+narrows, so the two must be read together.
+
+% ---------------------------------------------------------------------
+\subsection{Orthogonalisation}
+\label{app:orth}
+
+Given a target series $y$ and a regressor block $X$ drawn from the levels above it in
+the hierarchy, the rolling residual is computed as follows.
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.3ex]
+\item Coefficients are refitted at $t$ whenever $t$ has reached the next refit point,
+  on the trailing window $[\max(0,\,t-504),\,t)$, requiring at least
+  $\max(252,\ k+2)$ complete observations. The window is half-open: the fit uses data
+  strictly before $t$.
+\item The next refit point is set to $t + 21$.
+\item The residual at $t$ is $y_t - \hat a - \hat b^{\prime}X_t$, using whichever
+  coefficients are currently in force.
+\item Before the first successful fit, the residual is undefined rather than equal to
+  the raw series --- a factor's orthogonalised history starts when it can be
+  estimated, not before.
+\end{enumerate}
+
+Two variants exist for comparison and are exercised by the test suite: an expanding
+window, and an exact full-sample fit. Table \ref{tab:causal} reports what each costs.
+The full-sample variant is the only one that achieves exact orthogonality, and it is
+the only one that uses future information; it is never used to build the panel.
+
+A Gram-Schmidt routine is also available, which orthogonalises a panel's columns
+sequentially left to right. It is used for diagnostics rather than construction,
+because the block hierarchy --- not column order --- is what encodes the economic
+argument about which factor should absorb shared variation.
+
+% ---------------------------------------------------------------------
+\subsection{Covariance estimation}
+\label{app:cov}
+
+\subsubsection{Sample}
+
+The unbiased sample covariance on complete rows, annualised by 252. Included as a
+baseline and as the reference against which shrinkage is tested; it is not a
+sensible choice at $K=39$ on a rolling window.
+
+\subsubsection{Exponentially weighted}
+
+RiskMetrics-style, with weights $w_t \propto 2^{-(T-t)/H}$ normalised to sum to one
+and a default half-life of $H=60$ days. Two details matter.
+
+Deviations are taken from the \emph{weighted} mean rather than the simple mean, so
+the estimate is internally consistent. And the result is bias-corrected for weighted
+sampling,
+
+\begin{equation}
+\hat\Sigma = \frac{\sum_t w_t (x_t-\bar x_w)(x_t-\bar x_w)^{\prime}}{1 - \sum_t w_t^2},
+\end{equation}
+
+since $1/\sum_t w_t^2$ is the effective sample size when the weights sum to one.
+
+\begin{decision}{Sixty days, not eleven}
+The classic RiskMetrics $\lambda = 0.94$ corresponds to a half-life of about 11 days.
+That is too jumpy for a risk model used to set limits: the forecast moves materially
+on a single day's return. Sixty days is the usual compromise and is the default here.
+\end{decision}
+
+\subsubsection{Ledoit-Wolf shrinkage}
+
+Shrinkage toward a \emph{constant-correlation} target \citep{ledoit2003}. The target
+$F$ keeps each factor's own variance and replaces every correlation by the average
+correlation $\bar r$:
+
+\begin{equation}
+F_{ij} = \bar r\, s_i s_j \;\; (i \neq j), \qquad F_{ii} = s_i^2 .
+\end{equation}
+
+This is a considerably better description of a factor panel than the identity target
+used in the simpler version of the method, which asserts that the factors are
+uncorrelated --- precisely the assumption a factor panel violates.
+
+The optimal intensity is
+
+\begin{equation}
+\delta^{\star} = \max\!\left\{0,\ \min\!\left\{1,\ \frac{\pi - \rho}{\gamma}\cdot\frac{1}{T}\right\}\right\},
+\qquad \hat\Sigma = \delta^{\star} F + (1-\delta^{\star}) S,
+\end{equation}
+
+where $\pi$ is the summed asymptotic variance of the sample covariance entries, $\rho$
+the asymptotic covariance between the target's estimation error and the sample's, and
+$\gamma = \|F - S\|_F^2$ the squared misspecification of the target. The derivation
+assumes the maximum-likelihood scaling for $S$ (divisor $T$), which is what the
+implementation uses internally; the result is converted to the unbiased scaling
+(divisor $T-1$) before being returned, so that it is directly comparable with the
+sample estimator. The realised $\delta^{\star}$ is stored on the result --- it is
+informative in itself, since a high intensity says the sample estimate was carrying
+little signal.
+
+\subsubsection{Blend}
+
+$\Sigma = a\,\Sigma_{\mathrm{EWMA}} + (1-a)\,\Sigma_{\mathrm{shrunk}}$, default
+$a = 0.6$. The EWMA leg supplies responsiveness to the current regime; the shrunk leg
+supplies conditioning. This is the default estimator.
+
+\subsubsection{Positive semi-definiteness}
+
+Every estimate is checked. Where the smallest eigenvalue is negative, the matrix is
+repaired by clipping eigenvalues at a small positive floor and reconstructing, then
+\emph{rescaled} so that the diagonal returns to the original factor variances.
+
+The rescale is the part that is easy to omit and important to keep: clipping alone
+raises the diagonal, which raises every volatility computed from the matrix. The
+repair is recorded on the result rather than applied silently.
+
+\subsubsection{Specific risk}
+
+\begin{equation}
+\sigma^2_\varepsilon \;=\; \max\!\left\{\sigma^2_{\mathrm{floor}},\;
+(1-k)\,\mathrm{EWMA}_H\!\left[\varepsilon_t^2\right] \cdot 252 \;+\; k\,\sigma^2_{\mathrm{peer}}\right\},
+\end{equation}
+
+with $H = 60$ days, $k = 0.25$, and $\sigma_{\mathrm{floor}} = 2\%$ annualised. The
+peer variance is the cross-sectional median residual volatility across every
+instrument estimated under the same specification, squared. Both the raw and the
+floored values are returned, along with a flag recording whether the floor bound,
+so that a floored number is never mistaken for a measured one.
+
+\subsubsection{Assembly and attribution}
+
+\begin{equation}
+\Sigma_r = B\,\Sigma_F\,B^{\prime} + \operatorname{diag}(\sigma^2_\varepsilon),
+\qquad
+\sigma_p = \sqrt{\beta^{\prime}\Sigma_F\beta + \sigma^2_\varepsilon} .
+\end{equation}
+
+Risk contributions use the standard Euler decomposition,
+$\mathrm{RC}_j = \beta_j\,(\Sigma_F\beta)_j / \sigma_p$, which sums to the factor part
+of total risk exactly. Contributions are aggregated to block level for display,
+because a forty-row contribution table is not a decomposition anyone reads.
+
+% ---------------------------------------------------------------------
+\subsection{Forecast evaluation}
+\label{app:eval}
+
+\subsubsection{Realised volatility and alignment}
+
+For horizon $h$, realised volatility at $t$ is the annualised standard deviation of
+$r_{t+1},\dots,r_{t+h}$. The forecast it is compared against uses loadings from a
+window ending at or before $t$ and a covariance estimated on returns up to $t$. The
+forward window is constructed by an explicit shift rather than by a rolling operation
+with a default alignment, because an off-by-one in this direction is lookahead and
+produces a flatteringly good result.
+
+\subsubsection{Bias statistics}
+
+Two are computed. The \textbf{mean bias ratio} is
+$\overline{\sigma^{\mathrm{real}}/\sigma^{\mathrm{pred}}}$; it is intuitive but noisy,
+being a ratio of volatilities and therefore right-skewed. The \textbf{bias statistic}
+is the sharper and is what the text quotes:
+
+\begin{equation}
+z_t = \frac{r_t}{\sigma^{\mathrm{pred}}_t},
+\qquad
+\mathrm{bias} = \operatorname{sd}(z_t),
+\end{equation}
+
+the standard deviation of returns divided by the volatility forecast in force at
+each date. It equals 1 when the model is calibrated and exceeds 1 when risk is
+underestimated. The kurtosis of $z$ is recorded alongside it: a bias statistic of 1
+with a kurtosis of 8 describes a model that is right on average and wrong in the
+tails.
+
+\subsubsection{Mincer-Zarnowitz}
+
+Realised variance regressed on predicted variance \citep{mincer1969}:
+
+\begin{equation}
+\left(\sigma^{\mathrm{real}}_t\right)^2 = a + b\left(\sigma^{\mathrm{pred}}_t\right)^2 + u_t,
+\qquad H_0:\ (a,b) = (0,1).
+\end{equation}
+
+Run on variances rather than volatilities, because variance is what the model
+forecasts and what aggregates linearly. Individual $t$-tests for $a=0$ and $b=1$ are
+reported together with a joint Wald test,
+$W = (\hat\theta - \theta_0)^{\prime} V^{-1} (\hat\theta - \theta_0) \sim \chi^2_2$.
+
+HAC standard errors are not optional here. Overlapping realised windows --- a 21-day
+forward window observed daily --- induce strong serial correlation in $u_t$ by
+construction, and ordinary standard errors would reject far too often. Section
+\ref{sec:risk} gives the separate caveat on interpreting the slope.
+
+\subsubsection{Value at risk and expected shortfall}
+
+\begin{equation}
+\mathrm{VaR}_t(\alpha) = -z_\alpha\,\frac{\sigma^{\mathrm{pred}}_t}{\sqrt{252}},
+\end{equation}
+
+under either a Gaussian quantile or a scaled Student-$t$ quantile with 5 degrees of
+freedom, the latter being the more honest default for daily returns. Expected
+shortfall is computed at the 97.5\% level under the same distributional choice.
+
+\subsubsection{Kupiec proportion of failures}
+
+\citep{kupiec1995} A likelihood ratio on the exception \emph{count}, $\chi^2_1$:
+
+\begin{equation}
+\mathrm{LR}_{\mathrm{POF}} = -2\left[(T-x)\log(1-p) + x\log p - (T-x)\log(1-\hat\pi) - x\log\hat\pi\right],
+\end{equation}
+
+with $p = 1-\alpha$, $x$ exceptions in $T$ observations and $\hat\pi = x/T$. At the
+boundaries $x = 0$ or $x = T$ the ratio is degenerate; the implementation falls back
+to an exact two-sided binomial probability rather than returning a spurious statistic.
+
+\subsubsection{Christoffersen conditional coverage}
+
+\citep{christoffersen1998} $H_0$: the correct rate \emph{and} independence.
+Transitions are counted as $n_{ij}$ (from state $i$ to state $j$, breach = 1), and
+
+\begin{equation}
+\mathrm{LR}_{\mathrm{CC}} = \mathrm{LR}_{\mathrm{POF}} + \mathrm{LR}_{\mathrm{IND}} \sim \chi^2_2 .
+\end{equation}
+
+Where the transition counts cannot identify the independence term --- no breach ever
+follows a non-breach, or one of the states is never visited --- the implementation
+reports Kupiec alone on one degree of freedom rather than pretending to test
+something the data cannot support.
+
+This is the test that matters most and is reported even when it fails, because
+clustered breaches are the dangerous failure: a model can produce exactly the right
+number of exceptions over a decade and place them all in one week.
+
+% ---------------------------------------------------------------------
+\subsection{Density estimation}
+\label{app:density}
+
+The distribution panel exists to answer one question --- how far from Gaussian is this
+series, and where --- so its defaults are chosen to keep the tails visible rather than
+to produce a smooth picture.
+
+\paragraph{Robust scale.} The smaller of the sample standard deviation and
+$\mathrm{IQR}/1.349$. The two coincide for a Gaussian sample; on a fat-tailed series
+the second is much smaller, and taking the minimum ties bandwidth and bin width to the
+bulk of the distribution, which is where resolution is wanted.
+
+\paragraph{Bin count.} Freedman-Diaconis \citep{freedman1981},
+$h = 2\,\mathrm{IQR}\,n^{-1/3}$, with the resulting count clamped to $[20, 220]$ for
+legibility. Scott's rule uses the standard deviation and would be inflated by exactly
+the outliers that create the problem.
+
+\paragraph{Bandwidth.} Silverman's rule \citep{silverman1986} on the robust scale,
+$h = 0.9\,s\,n^{-1/5}$. Using the plain standard deviation here over-smooths a
+fat-tailed series into a flat blob.
+
+\paragraph{Overlays and range.} A Gaussian fit and a Student-$t$ fit are drawn over
+the empirical density; the comparison between them is the whole purpose of the panel.
+The drawing range is the 0.1st to 99.9th percentile, and the observations outside it
+are \emph{counted and reported}, not silently dropped --- a plot that hid its own tail
+would be worse than the naive one it replaces.
+
+\newpage
+% =====================================================================
+\section{Factor registry}
+\label{app:registry}
+
+The forty factors, their block, their hierarchy level and the factors each is
+residualised against. Level 0 factors are used raw. A factor's orthogonalisation
+targets are always factors at a lower level, so the hierarchy is acyclic by
+construction and the panel can be built in one pass.
+
+The construction of each factor --- the exact formula over named instruments --- is
+given in the companion document \emph{factor-formulas}, which is generated from this
+same registry.
+
+\input{registry-table}
