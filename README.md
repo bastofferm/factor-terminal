@@ -65,7 +65,9 @@ It checks the prerequisites, creates the database, applies the fifteen migration
 and then tells you which command to run next. Its companion
 **[ARCHITECTURE.md](HowToSetupTerminalLocally/ARCHITECTURE.md)** documents the
 schema table by table, the backend layering, and the contract the warehouse has to
-satisfy if you want to point the model at your own.
+satisfy if you want to point the model at your own —
+**[typeset as a PDF](HowToSetupTerminalLocally/architecture.pdf)**, with the
+system and the request lifecycle drawn as diagrams.
 
 The same thing by hand:
 
