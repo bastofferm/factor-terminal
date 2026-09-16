@@ -83,9 +83,9 @@ break in 2008-09 and a break in 2020-03 invite different conclusions.
 \textbf{Lo-MacKinlay variance ratio \citep{lo1988}}, heteroskedasticity-robust, at
 lags $q \in \{2,5,10\}$:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \mathrm{VR}(q) \;=\; \frac{\operatorname{Var}\!\left(\sum_{j=0}^{q-1} r_{t-j}\right)}{q \operatorname{Var}(r_t)} .
-\end{equation}
+\end{empheq}
 
 Under a random walk $\mathrm{VR}=1$. Values above 1 indicate positive autocorrelation
 --- trending or smoothed pricing --- and values below 1 mean reversion. The
@@ -170,9 +170,9 @@ With design matrix $X$ (a column of ones followed by the factor panel) and weigh
 normalised to mean one, the estimator solves the weighted normal equations. Equal
 weighting sets $w_t = 1$; exponential weighting sets
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 w_t \;\propto\; 2^{-(T-t)/H},
-\end{equation}
+\end{empheq}
 
 for half-life $H$ in days, again normalised to mean one so that the effective sample
 size is comparable across settings.
@@ -183,10 +183,10 @@ Robust regression \citep{huber1964} by iteratively reweighted least squares, fiv
 iterations, with tuning constant $\delta = 1.345$ --- the value giving 95\% asymptotic
 efficiency under Gaussian errors. The weight function is
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \psi(z) \;=\; \begin{cases} 1 & |z| \le \delta \\ \delta/|z| & |z| > \delta\end{cases},
 \qquad z_t = \frac{\varepsilon_t}{\hat s},
-\end{equation}
+\end{empheq}
 
 with $\hat s$ a robust scale estimate of the residuals. Observations inside $\delta$
 robust standard deviations keep unit weight; those outside are downweighted in
@@ -200,9 +200,9 @@ whether a factor is quoted in percent or in decimals, and the intercept is left
 unpenalised so that $\alpha$ is not biased toward zero. Penalising
 $\sum_j (b_j \sigma_j)^2$ gives normal equations
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \left(X^{\prime}X + \lambda n \operatorname{diag}(\sigma^2)\right) b \;=\; X^{\prime}y ,
-\end{equation}
+\end{empheq}
 
 so the penalty is \emph{multiplied} by $\sigma^2$.
 
@@ -218,18 +218,18 @@ asserts a modest ridge penalty leaves a known loading recognisable is what caugh
 
 Newey-West \citep{newey1987} with Bartlett (triangular) weights:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 V \;=\; (X^{\prime}X)^{-1}\left[S_0 + \sum_{\ell=1}^{L} w_\ell\left(\Gamma_\ell + \Gamma_\ell^{\prime}\right)\right](X^{\prime}X)^{-1},
 \qquad w_\ell = 1 - \frac{\ell}{L+1},
-\end{equation}
+\end{empheq}
 
 where $\Gamma_\ell$ is the lag-$\ell$ autocovariance of the score vectors
 $\varepsilon_t x_t$. Bartlett weights guarantee a positive semi-definite result, which
 a truncated (unweighted) kernel does not. The automatic bandwidth is
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 L \;=\; \left\lfloor 4\left(\frac{T}{100}\right)^{2/9} \right\rfloor ,
-\end{equation}
+\end{empheq}
 
 giving 4 lags at 100 observations, 5 at 252 and 6 at 1000. The bandwidth is
 deliberately small: autocorrelation in daily returns is short-lived, and the cost of
@@ -244,10 +244,10 @@ return, which is unavailable at forecast time.
 
 The standard error of the sum uses the full coefficient covariance:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \operatorname{se}\!\left(\hat\beta^{\mathrm{Dimson}}_j\right)
 = \sqrt{\textstyle\sum_{\ell}\sum_{m} \operatorname{Cov}\!\left(\hat\beta^{(\ell)}_j, \hat\beta^{(m)}_j\right)} .
-\end{equation}
+\end{empheq}
 
 The lag coefficients are typically negatively correlated, so the diagonal-only
 approximation $\sqrt{\sum_\ell \operatorname{se}^2}$ overstates the uncertainty. It is
@@ -263,10 +263,10 @@ reliability gate of Section \ref{sec:reliability} reads.
 
 \textbf{Variance inflation factors} are computed from the inverse correlation matrix,
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \mathrm{VIF}_j \;=\; \left[R^{-1}\right]_{jj},
 \qquad R = \operatorname{corr}(X),
-\end{equation}
+\end{empheq}
 
 which is algebraically identical to $1/(1-R_j^2)$ from $k$ auxiliary regressions but
 costs one matrix inversion rather than $k$ least-squares fits --- a material difference
@@ -277,12 +277,12 @@ in the code as the reference implementation, and a test asserts the two agree.
 
 Between consecutive windows, on the factors common to both:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 d_{L_1} = \sum_{j \in C} \left|\beta_j^{(t)} - \beta_j^{(t-1)}\right|,
 \qquad
 \rho = \operatorname{corr}\!\left(\beta^{(t)}_C, \beta^{(t-1)}_C\right),
 \qquad |C| \text{ recorded.}
-\end{equation}
+\end{empheq}
 
 Recording $|C|$ is not optional: $d_{L_1}$ falls mechanically as the common basis
 narrows, so the two must be read together.
@@ -336,9 +336,9 @@ Deviations are taken from the \emph{weighted} mean rather than the simple mean, 
 the estimate is internally consistent. And the result is bias-corrected for weighted
 sampling,
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \hat\Sigma = \frac{\sum_t w_t (x_t-\bar x_w)(x_t-\bar x_w)^{\prime}}{1 - \sum_t w_t^2},
-\end{equation}
+\end{empheq}
 
 since $1/\sum_t w_t^2$ is the effective sample size when the weights sum to one.
 
@@ -354,9 +354,9 @@ Shrinkage toward a \emph{constant-correlation} target \citep{ledoit2003}. The ta
 $F$ keeps each factor's own variance and replaces every correlation by the average
 correlation $\bar r$:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 F_{ij} = \bar r\, s_i s_j \;\; (i \neq j), \qquad F_{ii} = s_i^2 .
-\end{equation}
+\end{empheq}
 
 This is a considerably better description of a factor panel than the identity target
 used in the simpler version of the method, which asserts that the factors are
@@ -364,10 +364,10 @@ uncorrelated --- precisely the assumption a factor panel violates.
 
 The optimal intensity is
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \delta^{\star} = \max\!\left\{0,\ \min\!\left\{1,\ \frac{\pi - \rho}{\gamma}\cdot\frac{1}{T}\right\}\right\},
 \qquad \hat\Sigma = \delta^{\star} F + (1-\delta^{\star}) S,
-\end{equation}
+\end{empheq}
 
 where $\pi$ is the summed asymptotic variance of the sample covariance entries, $\rho$
 the asymptotic covariance between the target's estimation error and the sample's, and
@@ -397,10 +397,10 @@ repair is recorded on the result rather than applied silently.
 
 \subsubsection{Specific risk}
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \sigma^2_\varepsilon \;=\; \max\!\left\{\sigma^2_{\mathrm{floor}},\;
 (1-k)\,\mathrm{EWMA}_H\!\left[\varepsilon_t^2\right] \cdot 252 \;+\; k\,\sigma^2_{\mathrm{peer}}\right\},
-\end{equation}
+\end{empheq}
 
 with $H = 60$ days, $k = 0.25$, and $\sigma_{\mathrm{floor}} = 2\%$ annualised. The
 peer variance is the cross-sectional median residual volatility across every
@@ -410,11 +410,11 @@ so that a floored number is never mistaken for a measured one.
 
 \subsubsection{Assembly and attribution}
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \Sigma_r = B\,\Sigma_F\,B^{\prime} + \operatorname{diag}(\sigma^2_\varepsilon),
 \qquad
 \sigma_p = \sqrt{\beta^{\prime}\Sigma_F\beta + \sigma^2_\varepsilon} .
-\end{equation}
+\end{empheq}
 
 Risk contributions use the standard Euler decomposition,
 $\mathrm{RC}_j = \beta_j\,(\Sigma_F\beta)_j / \sigma_p$, which sums to the factor part
@@ -441,11 +441,11 @@ $\overline{\sigma^{\mathrm{real}}/\sigma^{\mathrm{pred}}}$; it is intuitive but 
 being a ratio of volatilities and therefore right-skewed. The \textbf{bias statistic}
 is the sharper and is what the text quotes:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 z_t = \frac{r_t}{\sigma^{\mathrm{pred}}_t},
 \qquad
 \mathrm{bias} = \operatorname{sd}(z_t),
-\end{equation}
+\end{empheq}
 
 the standard deviation of returns divided by the volatility forecast in force at
 each date. It equals 1 when the model is calibrated and exceeds 1 when risk is
@@ -457,10 +457,10 @@ tails.
 
 Realised variance regressed on predicted variance \citep{mincer1969}:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \left(\sigma^{\mathrm{real}}_t\right)^2 = a + b\left(\sigma^{\mathrm{pred}}_t\right)^2 + u_t,
 \qquad H_0:\ (a,b) = (0,1).
-\end{equation}
+\end{empheq}
 
 Run on variances rather than volatilities, because variance is what the model
 forecasts and what aggregates linearly. Individual $t$-tests for $a=0$ and $b=1$ are
@@ -474,9 +474,9 @@ construction, and ordinary standard errors would reject far too often. Section
 
 \subsubsection{Value at risk and expected shortfall}
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \mathrm{VaR}_t(\alpha) = -z_\alpha\,\frac{\sigma^{\mathrm{pred}}_t}{\sqrt{252}},
-\end{equation}
+\end{empheq}
 
 under either a Gaussian quantile or a scaled Student-$t$ quantile with 5 degrees of
 freedom, the latter being the more honest default for daily returns. Expected
@@ -486,9 +486,9 @@ shortfall is computed at the 97.5\% level under the same distributional choice.
 
 \citep{kupiec1995} A likelihood ratio on the exception \emph{count}, $\chi^2_1$:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \mathrm{LR}_{\mathrm{POF}} = -2\left[(T-x)\log(1-p) + x\log p - (T-x)\log(1-\hat\pi) - x\log\hat\pi\right],
-\end{equation}
+\end{empheq}
 
 with $p = 1-\alpha$, $x$ exceptions in $T$ observations and $\hat\pi = x/T$. At the
 boundaries $x = 0$ or $x = T$ the ratio is degenerate; the implementation falls back
@@ -499,9 +499,9 @@ to an exact two-sided binomial probability rather than returning a spurious stat
 \citep{christoffersen1998} $H_0$: the correct rate \emph{and} independence.
 Transitions are counted as $n_{ij}$ (from state $i$ to state $j$, breach = 1), and
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \mathrm{LR}_{\mathrm{CC}} = \mathrm{LR}_{\mathrm{POF}} + \mathrm{LR}_{\mathrm{IND}} \sim \chi^2_2 .
-\end{equation}
+\end{empheq}
 
 Where the transition counts cannot identify the independence term --- no breach ever
 follows a non-breach, or one of the states is never visited --- the implementation

@@ -53,6 +53,22 @@ To stop, close the two minimised *Factor Terminal* windows.
 
 ## First-time setup
 
+**[HowToSetupTerminalLocally/](HowToSetupTerminalLocally/)** is the full manual —
+PostgreSQL per platform, the database, the foreign-data wrapper, troubleshooting,
+and a guided bootstrap:
+
+```bash
+python HowToSetupTerminalLocally/bootstrap.py
+```
+
+It checks the prerequisites, creates the database, applies the fifteen migrations,
+and then tells you which command to run next. Its companion
+**[ARCHITECTURE.md](HowToSetupTerminalLocally/ARCHITECTURE.md)** documents the
+schema table by table, the backend layering, and the contract the warehouse has to
+satisfy if you want to point the model at your own.
+
+The same thing by hand:
+
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
 cp .env.example .env
@@ -126,6 +142,8 @@ backend/
   tests/        352 tests, mostly against simulated data with known parameters
 frontend/       Next.js 14 + Plotly, seven pages
 scripts/        model probe, backfills, screenshots, and the two document builds
+HowToSetupTerminalLocally/
+                install manual, schema reference, and a guided bootstrap
 ```
 
 The `backend/core` boundary is the main design decision. Every statistical routine

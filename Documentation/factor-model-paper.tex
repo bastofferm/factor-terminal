@@ -16,6 +16,9 @@
 
 \usepackage[a4paper,top=30mm,bottom=28mm,left=32mm,right=32mm]{geometry}
 \usepackage{amsmath,amssymb}
+\usepackage{mathtools}
+\usepackage{empheq}
+\usepackage[most]{tcolorbox}
 \usepackage{booktabs,array,longtable,tabularx}
 \usepackage{xcolor}
 \usepackage{titlesec}
@@ -95,6 +98,26 @@
 }
 
 \newcommand{\code}[1]{\texttt{\small #1}}
+
+% ---------------------------------------------------------------------
+%  Display equations sit in a tinted panel with a navy edge.
+%
+%  A paper of this kind is read twice: once linearly, and once by someone
+%  hunting for the one formula they need. The panel is for the second reader
+%  — it makes the equations findable by scanning rather than by reading, and
+%  it ties them to the same navy the section headings and the application use.
+%  empheq keeps the equation number outside the panel, where a cross-reference
+%  expects to find it.
+% ---------------------------------------------------------------------
+\newtcbox{\eqbox}{
+  enhanced, nobeforeafter, tcbox raise base,
+  boxrule=0pt, sharp corners=all,
+  top=7pt, bottom=7pt, left=13pt, right=13pt,
+  colback=paper, colframe=paper,
+  borderline west={2pt}{0pt}{navy},
+}
+\newcommand{\eqn}[1]{\begin{empheq}[box=\eqbox]{equation}#1\end{empheq}}
+
 
 % =====================================================================
 \begin{document}
@@ -254,18 +277,18 @@ Throughout, $r_{i,t}$ is the log return of security $i$ on day $t$, $r_{f,t}$ th
 cash rate for that day, and $F_t \in \mathbb{R}^{K}$ the vector of factor returns.
 The model is
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 r_{i,t} - r_{f,t} \;=\; \alpha_i \;+\; \beta_i^{\prime} F_t \;+\; \varepsilon_{i,t},
 \qquad \mathbb{E}[\varepsilon_{i,t} \mid F_t] = 0,
 \label{eq:model}
-\end{equation}
+\end{empheq}
 
 and the risk decomposition that follows from it is
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \operatorname{Var}(r_p) \;=\; \beta_p^{\prime}\,\Sigma_F\,\beta_p \;+\; w^{\prime}\Sigma_\varepsilon\,w ,
 \label{eq:risk}
-\end{equation}
+\end{empheq}
 
 with $\Sigma_F$ the factor covariance matrix, $\Sigma_\varepsilon$ the (diagonal)
 specific covariance, and $w$ portfolio weights. All factors are daily log excess
@@ -357,12 +380,12 @@ are not eligible for construction.
 \paragraph{Yields.} A yield is $I(1)$ and is never a regressor. A constant-maturity
 yield becomes the synthetic total return of a par bond at that tenor:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 r_t \;=\; -D_{\mathrm{mod}}\!\left(y_{t-1}\right)\,\Delta y_t
 \;+\; \tfrac{1}{2}\,C\!\left(y_{t-1}\right)\left(\Delta y_t\right)^2
 \;+\; \frac{y_{t-1}}{252},
 \label{eq:ytr}
-\end{equation}
+\end{empheq}
 
 with duration and convexity evaluated at \emph{yesterday's} yield. Evaluating them at
 $y_t$ would price the move using information contained in the move itself. When a
@@ -372,9 +395,9 @@ return directly.
 \paragraph{Spreads.} An option-adjusted spread becomes a duration-matched credit
 excess return,
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 r_t \;=\; -D_{\mathrm{spr}}\,\Delta s_t \;+\; \frac{s_{t-1}}{252},
-\end{equation}
+\end{empheq}
 
 which by construction contains no government-rate component. This is what keeps the
 credit block from double-counting the duration already carried by the rates block.
@@ -474,17 +497,17 @@ cannot drift away from the code that produced the data.
 The 10s--2s steepener illustrates why the appendix is necessary. Its registry entry
 reads \code{curve}; its definition is
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 f_t = 5 \cdot \bigl(u^{(10y)}_t - u^{(2y)}_t\bigr),
 \qquad
 u^{(T)}_t = \frac{b^{(T)}_t}{D^{(T)}_{t-1}},
-\end{equation}
+\end{empheq}
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 b^{(T)}_t = -D^{(T)}_{t-1}\,\Delta y^{(T)}_t
 + \tfrac{1}{2} C^{(T)}_{t-1}\,\bigl(\Delta y^{(T)}_t\bigr)^2
 + \frac{y^{(T)}_{t-1} - c_{t-1}}{252}.
-\end{equation}
+\end{empheq}
 
 Yield changes at the two tenors become bond returns by equation \eqref{eq:ytr}; each
 leg is divided by its own duration so that the two are comparable in units; and the
@@ -551,10 +574,10 @@ forty-factor model where no single pair looks alarming.
 The block hierarchy removes the overlap. A factor at level $\ell$ is replaced by its
 residual after projection onto the factors at levels below it:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \tilde f^{(\ell)}_t \;=\; f^{(\ell)}_t \;-\; \hat a \;-\; \hat b^{\prime} f^{(<\ell)}_t .
 \label{eq:resid}
-\end{equation}
+\end{empheq}
 
 The loading on $\tilde f^{(\ell)}$ then answers a specific question --- what this
 block adds beyond the blocks above it --- rather than an ambiguous one.
@@ -860,11 +883,11 @@ contemporaneous beta is then biased toward zero. The Dimson correction
 \citep{dimson1979}, in the tradition of \citet{scholes1977}, adds lagged factor
 returns to the design and sums the coefficients:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 r_{i,t} = \alpha + \sum_{\ell=0}^{L} \beta^{(\ell)\prime} F_{t-\ell} + \varepsilon_t,
 \qquad
 \hat\beta^{\mathrm{Dimson}} = \sum_{\ell=0}^{L} \hat\beta^{(\ell)} .
-\end{equation}
+\end{empheq}
 
 Only lags are included, not leads: a lead would use tomorrow's factor return to
 explain today's security return, which is unavailable at forecast time and would make
@@ -925,11 +948,11 @@ The factor covariance is estimated by one of four methods --- sample, exponentia
 weighted, Ledoit-Wolf shrinkage to a constant-correlation target, or a blend of the
 last two:
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \Sigma_F \;=\; a\,\Sigma_{\mathrm{EWMA}} \;+\; (1-a)\,\Sigma_{\mathrm{shrunk}},
 \qquad
 \Sigma_r \;=\; B\,\Sigma_F\,B^{\prime} \;+\; \Sigma_\varepsilon .
-\end{equation}
+\end{empheq}
 
 Shrinkage is not optional at this dimension. With 39 factors on a rolling window, the
 sample covariance is badly conditioned, and an optimiser handed an indefinite matrix
@@ -952,11 +975,11 @@ rather than applied silently.
 
 Idiosyncratic volatility is
 
-\begin{equation}
+\begin{empheq}[box=\eqbox]{equation}
 \sigma^2_\varepsilon \;=\; \max\!\left\{\,\sigma^2_{\mathrm{floor}},\;
 (1-k)\,\mathrm{EWMA}\!\left[\varepsilon_t^2\right] + k\,\sigma^2_{\mathrm{peer}} \right\},
 \qquad k = 0.25,\;\; \sigma_{\mathrm{floor}} = 2\%\ \mathrm{p.a.}
-\end{equation}
+\end{empheq}
 
 Each of the three elements answers a different failure. The exponentially weighted
 estimate tracks the current regime rather than averaging over a decade. Shrinkage
