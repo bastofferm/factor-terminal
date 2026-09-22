@@ -37,26 +37,141 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # The chain, in the order the scheduler runs it. Held here as well so the interface
 # can draw the whole sequence before the first line of log arrives — a progress list
 # that materialises stage by stage tells you nothing about how much is left.
-STAGES: list[dict[str, str]] = [
+#
+# `detail` is the line under the label; `body` is what the row expands to. The
+# longer text lives here rather than in the page for the same reason the stage list
+# does: this is the file that has to change when the chain changes, and a
+# description that lives next to the thing it describes is one that gets updated
+# with it. `reads` and `writes` are the part people actually come looking for —
+# "which table did that stage touch" is the first question a stale number raises.
+# `reads` is prose and `writes` is a table list, deliberately: that question is
+# only ever asked about what a stage wrote.
+STAGES: list[dict[str, Any]] = [
     {"key": "sync_warehouse", "label": "Mirror the warehouse",
      "detail": "Equity, fund and FX prices over postgres_fdw, plus the security "
                "catalogue. Runs first because it seeds the registries the ingests "
-               "then refresh."},
+               "then refresh.",
+     "command": "python -m backend.pipeline.sync",
+     "fatal": True,
+     "reads": "the xbrl_sec warehouse, schema sec, over postgres_fdw",
+     "writes": "ref_instrument · ref_level_series · ref_security · "
+               "fact_input_return · fact_input_level · fact_input_fx · "
+               "fact_reference_factor · ref_calendar",
+     "body": [
+         "Nine steps, each one a single INSERT … SELECT across the foreign-data "
+         "wrapper, so no row is marshalled through Python. Two seed registries — "
+         "the instrument list from the warehouse's cross-asset universe, the "
+         "level-series list from its macro catalogue — and the rest move data: "
+         "returns, macro levels, FX, and the Fama-French reference datasets.",
+         "Every transfer resumes from its own watermark, the newest date already "
+         "stored for that table, so a nightly run moves one day and a first run "
+         "moves fifteen years.",
+         "The 5,376 US and 4,500 JP equity names are deliberately not mirrored. "
+         "That is 31M rows for a tool that examines one security at a time, so "
+         "single names are pulled on demand instead.",
+     ]},
     {"key": "ingest_yahoo", "label": "Fetch the factor universe",
      "detail": "Total-return fund and index prices from Yahoo for every instrument "
-               "a factor is built from."},
+               "a factor is built from.",
+     "command": "python -m backend.pipeline.ingest_yahoo",
+     "fatal": True,
+     "reads": "Yahoo Finance",
+     "writes": "fact_input_return",
+     "body": [
+         "Covers what the warehouse does not carry: regional total-return equity "
+         "ETFs, where the warehouse holds only price-return index levels, and UK "
+         "gilts. A factor built on a price-return index quietly drops the "
+         "dividend, which is most of the difference between two regional equity "
+         "blocks.",
+         "Incremental by watermark, with instruments that share a start date "
+         "batched into one download — the trick that makes a daily refresh cheap "
+         "— and every request retried with backoff.",
+         "A symbol that has stopped publishing shows up here as a failed "
+         "download and does not fail the stage. It becomes visible two stages "
+         "later, when coverage marks it no longer live.",
+     ]},
     {"key": "ingest_fred", "label": "Fetch the level series",
      "detail": "Treasury curves, the ICE BofA spread ladder, policy rates and the "
-               "financial-conditions indices from FRED."},
+               "financial-conditions indices from FRED.",
+     "command": "python -m backend.pipeline.ingest_fred",
+     "fatal": True,
+     "reads": "the FRED REST API at stlouisfed.org",
+     "writes": "fact_input_level",
+     "body": [
+         "Levels, not returns: a yield curve and a spread ladder are stored as "
+         "the levels they are, and the factor definitions difference them where a "
+         "difference is what the factor means.",
+         "This is what closes the liquidity and stress gap. TED and LIBOR-OIS are "
+         "discontinued, so funding stress has to come from SOFR-based rates and "
+         "the Fed and St. Louis financial-conditions indices instead.",
+         "Series ids are stored namespaced — FRED:SOFR — matching the warehouse "
+         "convention, so the two sources cannot collide on a shared name.",
+     ]},
     {"key": "liveness", "label": "Re-check coverage",
      "detail": "Recomputes each instrument's last observation and liveness so the "
-               "gate sees what the two ingests just fetched."},
+               "gate sees what the two ingests just fetched.",
+     "command": "python -m backend.pipeline.sync",
+     "fatal": True,
+     "reads": "the instrument returns, as they now stand",
+     "writes": "ref_instrument (first_obs, last_obs, n_obs, is_live) · ref_calendar",
+     "body": [
+         "The same nine steps as stage 1, run again. The transfers are no-ops the "
+         "second time — no watermark has moved — and the point is the last two "
+         "steps, which could not see the Yahoo and FRED rows the first time "
+         "because those rows did not exist yet.",
+         "Coverage recomputes each instrument's first and last observation and "
+         "sets it live when its last observation is inside the staleness window. "
+         "The calendar is then rebuilt with the count of live instruments per "
+         "day.",
+         "This is a gate rather than a report. A stale instrument silently "
+         "poisons a covariance matrix: it contributes zero variance and zero "
+         "correlation, and nothing about the output looks wrong.",
+     ]},
     {"key": "build_factors", "label": "Build the forty factors",
      "detail": "Constructs every factor and both bases — raw excess returns and "
-               "the block-hierarchy residuals."},
+               "the block-hierarchy residuals.",
+     "command": "python -m backend.pipeline.build_factors",
+     "fatal": True,
+     "reads": "the instrument returns, macro levels and FX the stages above stored",
+     "writes": "ref_factor · fact_factor_return (ret_excess and ret_orth)",
+     "body": [
+         "Each factor is a formula over named instruments, evaluated on one "
+         "shared calendar. They are built in ascending hierarchy order, so a "
+         "factor is only ever residualised against factors that already exist.",
+         "Two bases are written for every day. ret_excess is the raw excess "
+         "return; ret_orth is what is left after projecting out the factors named "
+         "in that factor's orth list. Downstream code chooses which one it wants "
+         "rather than having the choice made for it here.",
+         "The projection runs on a trailing window by default. A full-sample "
+         "residualisation would be exactly orthogonal and would put today's "
+         "information into a 2016 factor value — flattering the model precisely "
+         "where it is being judged.",
+     ]},
     {"key": "diagnostics", "label": "Run the stationarity battery",
      "detail": "Advisory, not fatal: a warning on one factor does not stop the run, "
-               "and the estimator reads the verdicts itself."},
+               "and the estimator reads the verdicts itself.",
+     "command": "python -m backend.pipeline.run_diagnostics",
+     "fatal": False,
+     "reads": "the factor returns just built, and the instrument returns",
+     "writes": "fact_series_diagnostics",
+     "body": [
+         "Every factor and every instrument is tested twice: over its full "
+         "history, and over the trailing estimation window. A series can be "
+         "perfectly well behaved across twenty years and broken over the last six "
+         "months, and it is the recent window that governs whether today's risk "
+         "number can be trusted.",
+         "A battery rather than one test, because ADF alone rejects the unit root "
+         "on daily returns essentially always. ADF and KPSS are read jointly; "
+         "Zivot-Andrews decides whether a disagreement is a break rather than a "
+         "root; variance ratios and Ljung-Box catch stale or smoothed pricing; "
+         "ARCH-LM is recorded as an estimator-choice signal rather than a "
+         "violation, since a GARCH process is strictly stationary; and the "
+         "zero-return share catches illiquidity, which is the cheapest check and "
+         "often the most telling.",
+         "Nothing here stops the chain. The verdicts are stored and the estimator "
+         "reads them, which is the only place a judgement about a series can "
+         "actually change a number.",
+     ]},
 ]
 
 # The scheduler logs one line per stage transition. Parsing its own output rather

@@ -49,7 +49,18 @@ export default function OpsPage() {
   const [run, setRun] = useState<RefreshRun | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  // Which stages are expanded. Several at once, because the question people
+  // arrive with is usually comparative — which of these two wrote that table.
+  const [openStages, setOpenStages] = useState<Set<string>>(new Set());
   const logRef = useRef<HTMLPreElement | null>(null);
+
+  const toggleStage = (key: string) =>
+    setOpenStages((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const load = useCallback(() => {
     api.opsStatus()
@@ -218,33 +229,88 @@ export default function OpsPage() {
             </div>
           }
         >
-          <ol className="space-y-1.5">
-            {(run?.stages ?? []).map((s, i) => (
-              <li key={s.key}
-                  className="flex items-start gap-2.5 rounded px-1.5 py-1
-                             transition hover:bg-lineSoft/60"
-                  title={s.detail}>
-                <span className="mt-[5px] shrink-0">
-                  <StageDot state={s.state} />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-baseline justify-between gap-3">
-                    <span className={`text-[12px] ${
-                      s.state === "running" ? "font-semibold text-navy"
-                      : s.state === "failed" ? "text-fail"
-                      : s.state === "ok" ? "text-ink" : "text-muted"}`}>
-                      {i + 1}. {s.label}
+          <ol className="space-y-1">
+            {(run?.stages ?? []).map((s, i) => {
+              const open = openStages.has(s.key);
+              return (
+                <li key={s.key}
+                    className={`rounded border transition ${
+                      open ? "border-line bg-lineSoft/30"
+                           : "border-transparent hover:bg-lineSoft/60"}`}>
+                  <button type="button"
+                          onClick={() => toggleStage(s.key)}
+                          aria-expanded={open}
+                          aria-controls={`stage-${s.key}`}
+                          className="flex w-full items-start gap-2.5 px-1.5 py-1 text-left">
+                    <span className="mt-[5px] shrink-0">
+                      <StageDot state={s.state} />
                     </span>
-                    <span className="shrink-0 font-mono text-[10.5px] text-muted">
-                      {s.note ?? fmtSecs(s.seconds)}
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-baseline justify-between gap-3">
+                        <span className={`text-[12px] ${
+                          s.state === "running" ? "font-semibold text-navy"
+                          : s.state === "failed" ? "text-fail"
+                          : s.state === "ok" ? "text-ink" : "text-muted"}`}>
+                          {i + 1}. {s.label}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1.5
+                                         font-mono text-[10.5px] text-muted">
+                          {s.note ?? fmtSecs(s.seconds)}
+                          <Chevron open={open} />
+                        </span>
+                      </span>
+                      <span className="mt-0.5 block text-[10.5px] leading-snug text-muted">
+                        {s.detail}
+                      </span>
                     </span>
-                  </span>
-                  <span className="mt-0.5 block text-[10.5px] leading-snug text-muted">
-                    {s.detail}
-                  </span>
-                </span>
-              </li>
-            ))}
+                  </button>
+
+                  {open && (
+                    <div id={`stage-${s.key}`}
+                         className="mb-1.5 ml-[22px] mr-1.5 space-y-2 border-l
+                                    border-line pl-3 text-[10.5px] leading-relaxed
+                                    text-ink">
+                      {(s.body ?? []).map((p, k) => <p key={k}>{p}</p>)}
+
+                      <dl className="grid grid-cols-[4.2rem_1fr] gap-x-2 gap-y-1">
+                        {s.reads && (
+                          <>
+                            <dt className="text-muted">Reads</dt>
+                            <dd>{s.reads}</dd>
+                          </>
+                        )}
+                        {s.writes && (
+                          <>
+                            <dt className="text-muted">Writes</dt>
+                            <dd className="break-words font-mono text-[10px]">
+                              {s.writes}
+                            </dd>
+                          </>
+                        )}
+                        <dt className="text-muted">If it fails</dt>
+                        <dd>
+                          {s.fatal === false
+                            ? "Advisory. The run carries on and the chain still finishes."
+                            : "Fatal. The chain stops here rather than build the " +
+                              "stages after it on half-refreshed inputs."}
+                        </dd>
+                        {s.command && (
+                          <>
+                            <dt className="text-muted">On its own</dt>
+                            <dd>
+                              <code className="rounded bg-lineSoft px-1 py-px
+                                               font-mono text-[10px]">
+                                {s.command}
+                              </code>
+                            </dd>
+                          </>
+                        )}
+                      </dl>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ol>
 
           {run && run.run_id && (
@@ -410,6 +476,18 @@ export default function OpsPage() {
         </p>
       </Panel>
     </div>
+  );
+}
+
+/** The affordance that says a stage row opens. Rotates rather than swaps glyph. */
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg viewBox="0 0 10 10" aria-hidden="true"
+         className={`h-2.5 w-2.5 shrink-0 transition-transform duration-150
+                     ${open ? "rotate-90" : ""}`}>
+      <path d="M3.5 1.5 L7 5 L3.5 8.5" fill="none" stroke="currentColor"
+            strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
