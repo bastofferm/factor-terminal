@@ -388,6 +388,17 @@ export interface RefreshStage {
   state: "pending" | "running" | "ok" | "failed";
   seconds: number | null;
   note: string | null;
+  /**
+   * What the row expands to. Optional throughout: the server owns this copy, and
+   * a page served against an older build should render the stage list rather than
+   * throw on a missing paragraph.
+   */
+  body?: string[];
+  reads?: string;
+  writes?: string;
+  command?: string;
+  /** False for an advisory stage, whose failure does not stop the chain. */
+  fatal?: boolean;
 }
 
 export interface RefreshRun {
