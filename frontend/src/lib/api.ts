@@ -458,6 +458,15 @@ export const api = {
   /** Block risk budgeting through a security's betas. */
   matrixBlocks: (body: Record<string, unknown>) =>
     post<BlockResult>("/api/matrix/blocks", body),
+  /**
+   * Everything the Raw Explorer shows for one series, in one response: the
+   * stored price, the returns, the distribution, the QQ points and the
+   * stationarity verdict. Shared with that page on purpose, so two screens
+   * cannot disagree about the same security.
+   */
+  rawSeries: (kind: "factor" | "instrument", id: string,
+              p?: { start?: string; end?: string }) =>
+    get<any>(`/api/raw/${kind}/${encodeURIComponent(id)}`, p),
   pca: (body: Record<string, unknown>) => post<any>("/api/matrix/pca", body),
   rollingCorrelation: (body: Record<string, unknown>) =>
     post<any>("/api/matrix/rolling-correlation", body),
