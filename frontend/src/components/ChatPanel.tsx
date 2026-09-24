@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import type { PageSnapshot } from "@/lib/chat-context";
 
 export interface ChatSnapshot {
   page: string;
@@ -29,10 +30,13 @@ export function ChatPanel({
   open,
   onClose,
   snapshot,
+  snapshots = [],
 }: {
   open: boolean;
   onClose: () => void;
   snapshot: ChatSnapshot;
+  /** Every page that has drawn, so a question can be about any of them. */
+  snapshots?: PageSnapshot[];
 }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -70,7 +74,8 @@ export function ChatPanel({
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: question, history, snapshot, thread_id: threadId }),
+          body: JSON.stringify({ message: question, history, snapshot,
+                                 snapshots, thread_id: threadId }),
         });
 
         if (!res.ok || !res.body) {
@@ -124,7 +129,7 @@ export function ChatPanel({
         setBusy(false);
       }
     },
-    [busy, messages, snapshot, threadId]
+    [busy, messages, snapshot, snapshots, threadId]
   );
 
   if (!open) return null;

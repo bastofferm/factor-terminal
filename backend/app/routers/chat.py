@@ -45,6 +45,11 @@ class ChatRequest(BaseModel):
     # what it is showing, and pinning a schema here would mean editing this file
     # every time a panel gains a number.
     snapshot: dict | None = None
+    # Every page that has rendered this session, the active one included, each
+    # carrying its own page and capture time. Sent so a question asked on one
+    # screen can be about a figure seen on another; the labels are what keep
+    # those apart.
+    snapshots: list[dict] | None = None
     thread_id: str | None = None
 
 
@@ -108,7 +113,7 @@ async def chat(req: ChatRequest) -> StreamingResponse:
             503, "No DeepSeek API key is configured on the server "
                  "(set DEEPSEEK_API_KEY).")
 
-    canonical, sources = await context.build(question, req.snapshot)
+    canonical, sources = await context.build(question, req.snapshot, req.snapshots)
 
     messages: list[dict] = [
         {"role": "system", "content": prompts.SYSTEM},

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.app import db
@@ -21,6 +22,12 @@ from backend.app import db
 # in size, and rendered as data rather than interpolated as instructions.
 MAX_SNAPSHOT_CHARS = 12_000
 MAX_RETRIEVED_FACTORS = 4
+
+# The active page gets the budget above. The other tabs share this one, and no
+# single one of them may take more than its slice: seven pages at twelve
+# thousand characters each would crowd out the question being asked.
+MAX_OTHER_PAGES_CHARS = 12_000
+MAX_ONE_OTHER_PAGE_CHARS = 3_000
 
 
 def _fmt(value: Any) -> Any:
@@ -36,16 +43,80 @@ def _fmt(value: Any) -> Any:
     return value
 
 
+def _as_json(payload: Any, limit: int) -> str:
+    text = json.dumps(_fmt(payload), indent=1, default=str, ensure_ascii=False)
+    return text if len(text) <= limit else text[:limit] + "\n… (truncated)"
+
+
 def render_snapshot(snapshot: dict | None) -> str:
     """The figures currently on screen, as a labelled JSON block."""
     if not snapshot:
         return ""
     page = snapshot.get("page") or "unknown"
-    payload = _fmt({k: v for k, v in snapshot.items() if k != "page"})
-    text = json.dumps(payload, indent=1, default=str, ensure_ascii=False)
-    if len(text) > MAX_SNAPSHOT_CHARS:
-        text = text[:MAX_SNAPSHOT_CHARS] + "\n… (truncated)"
-    return f"## On screen now — page `{page}`\n\n```json\n{text}\n```"
+    body = _as_json({k: v for k, v in snapshot.items() if k != "page"},
+                    MAX_SNAPSHOT_CHARS)
+    return f"## On screen now — page `{page}`\n\n```json\n{body}\n```"
+
+
+def render_other_pages(snapshots: list[dict] | None, active_page: str | None) -> str:
+    """What the other tabs last drew, each labelled with its page and age.
+
+    Carried so a question asked on one screen can be about a figure seen on
+    another, which is most of how anyone actually uses the app. The labels are
+    the whole safety property: these numbers were rendered at some earlier
+    moment, possibly before a data refresh, and quoting one as though it were on
+    screen now would be worse than not having it at all. So each block says
+    which page it came from and when, and the prompt is told to say so too.
+    """
+    if not snapshots:
+        return ""
+
+    now = datetime.now(timezone.utc)
+    blocks: list[str] = []
+    spent = 0
+    for snap in snapshots:
+        page = snap.get("page") or "unknown"
+        if not page or page == active_page:
+            continue
+        data = snap.get("data") or {}
+        if not data:
+            continue
+        if spent >= MAX_OTHER_PAGES_CHARS:
+            blocks.append(f"- `{page}`: rendered, omitted for space")
+            continue
+
+        body = _as_json(data, min(MAX_ONE_OTHER_PAGE_CHARS,
+                                  MAX_OTHER_PAGES_CHARS - spent))
+        spent += len(body)
+        blocks.append(f"### `{page}` — {_age(snap.get('captured_at'), now)}\n\n"
+                      f"```json\n{body}\n```")
+
+    if not blocks:
+        return ""
+    return ("## Other tabs, as they were last drawn\n\n"
+            "These are not on screen now. Each was rendered at the time shown "
+            "and may predate a refresh, so name the page and say when it was "
+            "drawn before quoting anything from here.\n\n" + "\n\n".join(blocks))
+
+
+def _age(captured_at: Any, now: datetime) -> str:
+    """How long ago, in words. Unknown stays unknown rather than becoming now."""
+    if not captured_at:
+        return "time unknown"
+    try:
+        at = datetime.fromisoformat(str(captured_at).replace("Z", "+00:00"))
+    except ValueError:
+        return "time unknown"
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    seconds = max(0, int((now - at).total_seconds()))
+    if seconds < 90:
+        return "seconds ago"
+    if seconds < 3600:
+        return f"{seconds // 60} min ago"
+    if seconds < 86_400:
+        return f"{seconds // 3600} h ago"
+    return f"{seconds // 86_400} d ago"
 
 
 async def known_factor_ids() -> list[str]:
@@ -156,11 +227,14 @@ async def data_freshness() -> str:
     return "\n".join(out)
 
 
-async def build(question: str, snapshot: dict | None) -> tuple[str, list[str]]:
+async def build(question: str, snapshot: dict | None,
+                snapshots: list[dict] | None = None) -> tuple[str, list[str]]:
     """Return (canonical block, list of what it contains) for one turn.
 
     The second element drives the context chip in the UI, so the analyst can see
-    what the answer was grounded on rather than having to trust it.
+    what the answer was grounded on rather than having to trust it. Other tabs
+    appear in it too: a reader who is told the answer came from four pages needs
+    to know which four.
     """
     parts: list[str] = []
     sources: list[str] = []
@@ -169,10 +243,18 @@ async def build(question: str, snapshot: dict | None) -> tuple[str, list[str]]:
     if state:
         parts.append(state)
 
+    active_page = str(snapshot.get("page") or "") if snapshot else ""
     rendered = render_snapshot(snapshot)
     if rendered:
         parts.append(rendered)
-        sources.append(f"page {snapshot.get('page', '?')}")
+        sources.append(f"page {active_page or '?'}")
+
+    others = render_other_pages(snapshots, active_page)
+    if others:
+        parts.append(others)
+        sources.extend(
+            f"{s.get('page')} (other tab)" for s in (snapshots or [])
+            if s.get("page") and s.get("page") != active_page and s.get("data"))
 
     # Anything the question names that the snapshot does not already carry.
     on_screen = str(snapshot.get("factor_id") or "") if snapshot else ""
