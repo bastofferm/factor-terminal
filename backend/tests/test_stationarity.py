@@ -197,6 +197,56 @@ def test_short_history_fails(rng):
     assert "too_short" in d.flags
 
 
+def test_a_round_trip_is_a_bad_print(rng):
+    """USDTWD, 25 October 2011: 29.25 to 1.80 and back to 30.11 the next day.
+
+    The tell is not the size. It is that the price returns to where it started,
+    which no market does and every bad print does.
+    """
+    x = rng.standard_normal(N) * 0.01
+    x[100], x[101] = -2.7874, 2.8162
+
+    d = st.analyse(x)
+
+    assert d.verdict == "fail"
+    assert "price_spike" in d.flags
+    assert "bad print" in d.verdict_reason
+
+
+def test_a_collapse_that_holds_is_a_market(rng):
+    """SVXY, 6 February 2018: 143.64 to 24.48, and it stayed there.
+
+    Larger than many artefacts and smaller than some, so a magnitude bound alone
+    would either miss the artefacts or condemn this. Marking a real event "fail"
+    every night is how a gate gets ignored.
+    """
+    x = rng.standard_normal(N) * 0.01
+    x[100] = -1.7695
+
+    d = st.analyse(x)
+
+    assert d.verdict == "warn"
+    assert "extreme_return" in d.flags
+    assert "price_spike" not in d.flags
+    assert "impossible_return" not in d.flags
+
+
+def test_a_move_nothing_could_hold_fails_without_a_reversal(rng):
+    """UNI-USD: a factor of 15,000 in a day, never given back."""
+    x = rng.standard_normal(N) * 0.01
+    x[100] = 9.664
+
+    d = st.analyse(x)
+
+    assert d.verdict == "fail"
+    assert "impossible_return" in d.flags
+
+
+def test_an_ordinary_series_trips_none_of_it(rng):
+    d = st.analyse(rng.standard_normal(N) * 0.01)
+    assert not {"price_spike", "impossible_return", "extreme_return"} & set(d.flags)
+
+
 def test_constant_series_fails():
     d = st.analyse(np.zeros(500))
     assert d.verdict == "fail"

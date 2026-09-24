@@ -104,6 +104,22 @@ export interface SeriesStats {
  * blocks above it. For a level-0 factor there is nothing above it, `identical` is
  * true, and the two series are the same numbers.
  */
+/**
+ * One stored series a factor is built from, exactly as stored: an instrument's
+ * adjusted close, a macro level, an exchange rate. `unit` is per series because a
+ * factor can mix a price in dollars with a rate in percent, and a chart that puts
+ * those on one axis is lying about scale. `missing` means the construction names
+ * an identifier nothing is stored under — reported rather than dropped.
+ */
+export interface FactorInput {
+  id: string;
+  kind: "instrument" | "level" | "fx" | "missing";
+  label: string;
+  unit: string | null;
+  dates: string[];
+  values: number[];
+}
+
 export interface FactorComparison {
   factor_id: string;
   name: string;
@@ -246,6 +262,12 @@ export interface MatrixResult {
   covariance: number[][];
   correlation: number[][];
   volatilities: number[];
+  /** Active factors before the coverage rule; `names` is what survived it. */
+  n_available?: number;
+  /** Factors the coverage rule excluded, with why. Never silently dropped. */
+  dropped?: { factor_id: string; coverage: number; first_date: string }[];
+  /** Earliest start at which every factor has data from day one. */
+  earliest_start_for_all?: string | null;
   diagnostics: {
     shrink_intensity: number | null;
     blend_weight: number | null;
@@ -337,6 +359,10 @@ export const api = {
       basis: Basis; dates: string[]; returns: number[];
       cumulative: number[]; compounded: number[];
     }>(`/api/factors/${id}/series`, p),
+  /** The stored series a factor is built from, as stored — prices and levels. */
+  factorInputs: (id: string, p?: { start?: string; end?: string }) =>
+    get<{ factor_id: string; series: FactorInput[] }>(
+      `/api/factors/${id}/inputs`, p),
   factorStats: (id: string, p?: FactorQuery) =>
     get<any>(`/api/factors/${id}/stats`, p),
   factorRollingRisk: (id: string, windows = "21,63,252", p?: FactorQuery) =>

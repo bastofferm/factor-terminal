@@ -95,6 +95,126 @@ async def series(factor_id: str, start: date | None = None, end: date | None = N
     return out
 
 
+@router.get("/{factor_id}/inputs")
+async def inputs(factor_id: str, start: date | None = None,
+                 end: date | None = None) -> dict:
+    """The stored series a factor is built from, as stored.
+
+    Nothing is derived here: an instrument returns its adjusted close and a level
+    series returns its level. That is the point of the endpoint. A cumulated
+    return path is a construction, and when the construction is what is in doubt
+    it cannot also be the evidence — a bad first observation moved the whole
+    compounded path down by 78% and left a plausible-looking shape behind it.
+
+    Units are reported per series rather than assumed, because a factor can be
+    built from a price in dollars and a rate in percent at the same time, and
+    putting those on one axis would be a chart that lies about scale.
+    """
+    row = await db.fetchrow(
+        "SELECT construction FROM ref_factor WHERE factor_id = $1", factor_id)
+    if row is None:
+        raise HTTPException(404, f"no factor {factor_id!r}")
+
+    construction = row["construction"]
+    if isinstance(construction, str):
+        construction = json.loads(construction)
+    raw_inputs = (construction or {}).get("inputs") or {}
+    names: list[str] = []
+    _walk_inputs(raw_inputs, names)
+    names = list(dict.fromkeys(names))
+    if not names:
+        return {"factor_id": factor_id, "series": [], "note": "no stored inputs"}
+
+    # A construction names four different kinds of thing and they live in four
+    # tables. Resolving by lookup rather than by the key it sat under means a
+    # factor that mixes them - a gilt ETF priced in GBP, say - comes back whole.
+    instruments = {r["id"]: r for r in await db.fetch(
+        "SELECT instrument_id AS id, currency, asset_class FROM ref_instrument "
+        "WHERE instrument_id = ANY($1)", names)}
+    level_meta = {r["id"]: r for r in await db.fetch(
+        "SELECT series_id AS id, name, unit FROM ref_level_series "
+        "WHERE series_id = ANY($1)", names)}
+    curves = {r["curve_id"] for r in await db.fetch(
+        "SELECT DISTINCT curve_id FROM ref_level_series "
+        "WHERE curve_id = ANY($1)", names)}
+    currencies = {r["ccy"] for r in await db.fetch(
+        "SELECT DISTINCT ccy FROM fact_input_fx WHERE ccy = ANY($1)", names)}
+
+    # A curve input carries the tenors it wants; without them the whole curve is
+    # the honest answer rather than an arbitrary subset.
+    tenors = raw_inputs.get("tenors") if isinstance(raw_inputs, dict) else None
+
+    async def level_rows(series_id: str) -> list:
+        return await db.fetch(
+            """
+            SELECT date, value FROM fact_input_level
+            WHERE series_id = $1 AND value IS NOT NULL
+              AND ($2::date IS NULL OR date >= $2)
+              AND ($3::date IS NULL OR date <= $3)
+            ORDER BY date
+            """, series_id, start, end)
+
+    def packed(sid: str, kind: str, label: str, unit: str | None, rows) -> dict:
+        return {"id": sid, "kind": kind, "label": label, "unit": unit,
+                "dates": [r["date"].isoformat() for r in rows],
+                "values": [round(float(r["value"]), 6) for r in rows]}
+
+    series: list[dict] = []
+    for name in names:
+        if name in instruments:
+            meta = instruments[name]
+            # An instrument's id is its ticker, which is the label a reader wants;
+            # the asset class is what tells them why it is in this factor.
+            label = f"{name} · {meta['asset_class']}" if meta["asset_class"] else name
+            rows = await db.fetch(
+                """
+                SELECT date, adj_close AS value FROM fact_input_return
+                WHERE instrument_id = $1 AND adj_close IS NOT NULL
+                  AND ($2::date IS NULL OR date >= $2)
+                  AND ($3::date IS NULL OR date <= $3)
+                ORDER BY date
+                """, name, start, end)
+            series.append(packed(name, "instrument", label,
+                                 meta["currency"] or "price", rows))
+
+        elif name in level_meta:
+            meta = level_meta[name]
+            series.append(packed(name, "level", meta["name"] or name,
+                                 meta["unit"] or "level", await level_rows(name)))
+
+        elif name in curves:
+            legs = await db.fetch(
+                "SELECT series_id, name, unit, tenor_years FROM ref_level_series "
+                "WHERE curve_id = $1 AND ($2::numeric[] IS NULL "
+                "                         OR tenor_years = ANY($2)) "
+                "ORDER BY tenor_years", name, tenors)
+            for leg in legs:
+                series.append(packed(
+                    leg["series_id"], "level",
+                    leg["name"] or f"{name} {float(leg['tenor_years']):g}y",
+                    leg["unit"] or "percent", await level_rows(leg["series_id"])))
+
+        elif name in currencies:
+            rows = await db.fetch(
+                """
+                SELECT date, usd_per_unit AS value FROM fact_input_fx
+                WHERE ccy = $1 AND usd_per_unit IS NOT NULL
+                  AND ($2::date IS NULL OR date >= $2)
+                  AND ($3::date IS NULL OR date <= $3)
+                ORDER BY date
+                """, name, start, end)
+            series.append(packed(name, "fx", f"{name} per USD", "USD", rows))
+
+        else:
+            # Named in the construction but not stored under that id anywhere.
+            # Reported rather than dropped: a silently missing leg is how a factor
+            # ends up built from less than it claims.
+            series.append({"id": name, "kind": "missing", "label": name,
+                           "unit": None, "dates": [], "values": []})
+
+    return {"factor_id": factor_id, "series": series}
+
+
 @router.get("/{factor_id}/stats")
 async def summary_stats(factor_id: str, start: date | None = None,
                         end: date | None = None, basis: str = "orth") -> dict:
@@ -344,7 +464,12 @@ def _walk_inputs(node, out: list[str]) -> None:
     elif isinstance(node, dict):
         for key, v in node.items():
             # 'shape' and 'tenors' describe the recipe, not its ingredients.
-            if key in ("shape", "transform", "window", "lookback", "sparse"):
+            # 'inverted' likewise: it lists the currency legs of a carry basket
+            # that are quoted the other way round, so its values are labels like
+            # "JPY" and not instruments. Collecting them made fx_carry claim two
+            # inputs it does not have.
+            if key in ("shape", "transform", "window", "lookback", "sparse",
+                       "inverted", "sign", "scale_to_vol"):
                 continue
             _walk_inputs(v, out)
 

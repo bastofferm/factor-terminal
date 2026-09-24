@@ -46,6 +46,22 @@ def _watermark(cur: Any, table: str, where: str = "") -> str | None:
     return row[0].isoformat() if row and row[0] else None
 
 
+# Every incremental transfer below resumes each series from its own last date,
+# not from the newest date in the table.
+#
+# One watermark for a whole table is wrong the moment its series move at
+# different speeds, and all of these tables hold hundreds that do. Take the
+# newest date anywhere in fact_input_level and an ECB yield four months behind
+# can never catch up: the clause asks for rows newer than the leader, and the
+# laggard has none of those. It stays four months behind through any number of
+# nightly runs, and only a full resync moves it. That is exactly what happened
+# to the euro and Japanese rates factors, and why pressing "Update all series"
+# never fixed them.
+#
+# The cost is one grouped scan of the target table per transfer. What it buys is
+# an incremental path that can close a gap instead of only extending a lead.
+
+
 # ---------------------------------------------------------------------------
 # reference seeding
 # ---------------------------------------------------------------------------
@@ -165,8 +181,10 @@ def seed_level_series(cur: Any) -> int:
 
 def sync_returns(cur: Any, full: bool) -> int:
     """fact_cross_asset -> fact_input_return, for instruments we actually mirror."""
-    wm = None if full else _watermark(cur, "fact_input_return")
-    clause = "" if wm is None else f"AND f.date > DATE '{wm}'"
+    clause = "" if full else "AND (w.wm IS NULL OR f.date > w.wm)"
+    join = "" if full else (
+        "LEFT JOIN (SELECT instrument_id, max(date) AS wm FROM fact_input_return "
+        "           GROUP BY 1) w ON w.instrument_id = f.ticker")
     cur.execute(
         f"""
         INSERT INTO fact_input_return
@@ -175,6 +193,7 @@ def sync_returns(cur: Any, full: bool) -> int:
                f.volume, f.currency, 'warehouse'
         FROM warehouse_sec.fact_cross_asset f
         JOIN ref_instrument i ON i.instrument_id = f.ticker
+        {join}
         WHERE i.source_table = 'fact_cross_asset' {clause}
         ON CONFLICT (instrument_id, date) DO UPDATE SET
             close = EXCLUDED.close, adj_close = EXCLUDED.adj_close,
@@ -187,14 +206,17 @@ def sync_returns(cur: Any, full: bool) -> int:
 
 def sync_levels(cur: Any, full: bool) -> int:
     """fact_macro -> fact_input_level, restricted to registered level series."""
-    wm = None if full else _watermark(cur, "fact_input_level")
-    clause = "" if wm is None else f"AND m.date > DATE '{wm}'"
+    clause = "" if full else "AND (w.wm IS NULL OR m.date > w.wm)"
+    join = "" if full else (
+        "LEFT JOIN (SELECT series_id, max(date) AS wm FROM fact_input_level "
+        "           GROUP BY 1) w ON w.series_id = m.series_id")
     cur.execute(
         f"""
         INSERT INTO fact_input_level (series_id, date, value, source)
         SELECT m.series_id, m.date, m.value, 'warehouse'
         FROM warehouse_sec.fact_macro m
         JOIN ref_level_series r ON r.series_id = m.series_id
+        {join}
         WHERE m.value IS NOT NULL {clause}
         ON CONFLICT (series_id, date) DO UPDATE SET value = EXCLUDED.value
         """
@@ -203,12 +225,15 @@ def sync_levels(cur: Any, full: bool) -> int:
 
 
 def sync_fx(cur: Any, full: bool) -> int:
-    wm = None if full else _watermark(cur, "fact_input_fx")
-    clause = "" if wm is None else f"WHERE fx_date > DATE '{wm}'"
+    clause = "" if full else "WHERE (w.wm IS NULL OR f.fx_date > w.wm)"
+    join = "" if full else (
+        "LEFT JOIN (SELECT ccy, max(date) AS wm FROM fact_input_fx "
+        "           GROUP BY 1) w ON w.ccy = f.ccy")
     cur.execute(
         f"""
         INSERT INTO fact_input_fx (ccy, date, usd_per_unit)
-        SELECT ccy, fx_date, usd_per_unit FROM warehouse_sec.fact_fx {clause}
+        SELECT f.ccy, f.fx_date, f.usd_per_unit
+        FROM warehouse_sec.fact_fx f {join} {clause}
         ON CONFLICT (ccy, date) DO UPDATE SET usd_per_unit = EXCLUDED.usd_per_unit
         """
     )
@@ -217,8 +242,11 @@ def sync_fx(cur: Any, full: bool) -> int:
 
 def sync_reference_factors(cur: Any, full: bool) -> int:
     """Daily Fama-French and AQR series, for out-of-sample validation only."""
-    wm = None if full else _watermark(cur, "fact_reference_factor")
-    clause = "" if wm is None else f"AND date > DATE '{wm}'"
+    clause = "" if full else "AND (w.wm IS NULL OR ff.date > w.wm)"
+    join = "" if full else (
+        "LEFT JOIN (SELECT dataset, factor, max(date) AS wm "
+        "           FROM fact_reference_factor GROUP BY 1, 2) w "
+        "  ON w.dataset = ff.dataset AND w.factor = ff.factor")
     datasets = ",".join(f"'{d}'" for d in REFERENCE_DATASETS)
     # Two conventions live in this one warehouse table. The Ken French loader fills
     # return_pct in percent (0.5 = +0.5%); the AQR loader fills only `value`, as a
@@ -227,13 +255,14 @@ def sync_reference_factors(cur: Any, full: bool) -> int:
     cur.execute(
         f"""
         INSERT INTO fact_reference_factor (dataset, factor, date, ret_pct, ret_log)
-        SELECT dataset, factor, date,
-               COALESCE(return_pct, value * 100.0),
-               COALESCE(return_log, ln(1.0 + value))
-        FROM warehouse_sec.fact_fama_french
-        WHERE dataset IN ({datasets})
-          AND COALESCE(return_pct, value) IS NOT NULL
-          AND (return_pct IS NOT NULL OR value > -1.0) {clause}
+        SELECT ff.dataset, ff.factor, ff.date,
+               COALESCE(ff.return_pct, ff.value * 100.0),
+               COALESCE(ff.return_log, ln(1.0 + ff.value))
+        FROM warehouse_sec.fact_fama_french ff
+        {join}
+        WHERE ff.dataset IN ({datasets})
+          AND COALESCE(ff.return_pct, ff.value) IS NOT NULL
+          AND (ff.return_pct IS NOT NULL OR ff.value > -1.0) {clause}
         ON CONFLICT (dataset, factor, date) DO UPDATE SET
             ret_pct = EXCLUDED.ret_pct, ret_log = EXCLUDED.ret_log
         """

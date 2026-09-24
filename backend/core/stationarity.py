@@ -44,6 +44,22 @@ ZERO_SHARE_WARN = 0.20
 # |VR - 1| beyond this, with a significant p-value, means stale or trending pricing.
 VR_WARN = 0.25
 
+# A single enormous daily return is either a market or a broken price, and the
+# magnitude does not tell you which. SVXY genuinely fell 83% on 6 February 2018
+# and stayed down; USDTWD "fell" 94% on 25 October 2011 and was back at 30.11 the
+# next day. Those are 1.77 and 2.79 in log terms — the fake one is the larger.
+#
+# What separates them is whether the move reverses. A print that round-trips is an
+# error; a collapse that holds is news. So the reversal is the gate, and the pure
+# magnitude bound is set high enough that only the indefensible trips it: 2.0 is a
+# factor of 7.4 in one day, which no traded instrument does and then keeps.
+MAX_ABS_RETURN_FAIL = 2.0
+MAX_ABS_RETURN_WARN = 0.50
+
+# How completely a neighbouring return has to undo an extreme one before it counts
+# as a round trip rather than two real moves in a row.
+REVERSAL_TOL = 0.25
+
 
 @dataclass
 class Diagnostics:
@@ -382,6 +398,39 @@ def analyse(
             verdict = "warn" if verdict == "pass" else verdict
             flags.append("illiquid")
             reasons.append(f"{d.zero_return_share:.0%} of returns are exactly zero")
+
+    # A single extreme observation, judged on whether it reverses. Every other test
+    # here is a distributional statement, and one absurd value is not a
+    # distribution — which is how a -152% day on the global equity factor was once
+    # measured, labelled "fat_tails" and passed.
+    if d.max_abs_return is not None and d.max_abs_return > MAX_ABS_RETURN_WARN:
+        i = int(np.argmax(np.abs(x)))
+        peak = float(x[i])
+        neighbours = [float(x[j]) for j in (i - 1, i + 1) if 0 <= j < len(x)]
+        # A round trip: an adjacent return of the opposite sign that gives back
+        # nearly all of this one, leaving the price where it started.
+        round_trip = any(n * peak < 0 and abs(n + peak) < REVERSAL_TOL * abs(peak)
+                         for n in neighbours)
+
+        if round_trip:
+            verdict = "fail"
+            flags.append("price_spike")
+            reasons.append(
+                f"a move of {peak:+.2f} in log terms is undone by the adjacent "
+                f"observation; the price returns to where it started, which is a "
+                f"bad print rather than a market")
+        elif d.max_abs_return > MAX_ABS_RETURN_FAIL:
+            verdict = "fail"
+            flags.append("impossible_return")
+            reasons.append(
+                f"one observation moves the series by a factor of "
+                f"{float(np.exp(d.max_abs_return)):.1f} in a single day "
+                f"(log {peak:+.2f}) and does not come back")
+        else:
+            verdict = "warn" if verdict == "pass" else verdict
+            flags.append("extreme_return")
+            reasons.append(
+                f"largest single move is {peak:+.2f} in log terms, and it holds")
 
     # Stale pricing: a variance ratio far from 1 that is also significant.
     # Skipped for sparse factors, where the zeros mechanically inflate the ratio.
