@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Chart, PALETTE, Panel } from "@/components/Chart";
 import { api, Basis, MatrixResult, num, pct } from "@/lib/api";
+import { BlockAttribution } from "@/components/BlockAttribution";
 import { MetricCard, MetricStrip, alignFor } from "@/components/MetricCard";
 import { METRICS } from "@/lib/metrics";
 import { usePublishSnapshot } from "@/lib/chat-context";
@@ -495,6 +496,23 @@ export default function MatrixPage() {
           </>
         )}
       </Panel>
+
+      {/* Everything above describes the factors. What follows describes what
+          they cost, which needs an exposure vector and therefore a security. */}
+      <div className="border-t border-line pt-4">
+        <h2 className="mb-1 text-2xs font-semibold uppercase tracking-label text-muted">
+          Block risk budgeting
+        </h2>
+        <p className="mb-3 max-w-4xl text-[11px] leading-relaxed text-muted">
+          The panels above are statements about the factor panel itself. These
+          ask what it costs: which block of the matrix drives a security&rsquo;s
+          risk, how much the blocks spill into one another, whether that changes
+          when markets are loud, and which factor inside a block is doing the
+          work. The first three need an exposure to be about anything, so they
+          are measured through one representative security per asset class.
+        </p>
+        <BlockAttribution start={start} method={method} basis={basis} />
+      </div>
     </div>
   );
 }

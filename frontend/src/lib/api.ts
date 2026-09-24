@@ -252,6 +252,78 @@ export interface Spec {
   created_at: string;
 }
 
+/**
+ * Block risk budgeting: what each block of the covariance costs a security, and
+ * what each block looks like inside.
+ *
+ * The two halves take different inputs and it matters. `share`, `standalone`,
+ * `block_correlation` and `regimes` are statements about a held exposure and
+ * move with the security. `pc1_share`, `centrality` and `pc1_loading` are
+ * properties of the covariance and do not move at all.
+ */
+export interface BlockFactor {
+  factor_id: string;
+  beta: number;
+  ctr: number;
+  share_of_block: number;
+  share_of_total: number;
+  vol: number | null;
+  pc1_loading: number | null;
+  centrality: number | null;
+}
+
+export interface BlockRow {
+  block_id: string;
+  name: string;
+  n_factors: number;
+  ctr: number;
+  share: number;
+  standalone: number;
+  own_variance_share: number;
+  cross_variance_share: number;
+  pc1_share: number | null;
+  factors: BlockFactor[];
+}
+
+export interface RegimeSide {
+  sigma: number;
+  blocks: string[];
+  share: number[];
+  block_correlation: number[][];
+  mean_cross_correlation: number;
+}
+
+export interface BlockResult {
+  instrument_id: string | null;
+  basis: Basis;
+  method: string;
+  n_obs: number;
+  n_factors: number;
+  excluded_factors: string[];
+  start: string;
+  end: string;
+  sigma: number;
+  undiversified: number;
+  diversification: number;
+  fit: {
+    spec_id: string; window_end: string; r2: number | null;
+    adj_r2: number | null; resid_vol_ann: number | null; n_obs: number;
+  } | null;
+  blocks: BlockRow[];
+  block_order: string[];
+  block_names: string[];
+  block_correlation: number[][];
+  variance_share: number[][];
+  proxies: {
+    instrument_id: string; asset_class: string; label: string; note: string;
+  }[];
+  regimes?: {
+    available: boolean; reason?: string; quantile?: number;
+    n_stress?: number; n_calm?: number; method?: string;
+    calm?: RegimeSide; stress?: RegimeSide;
+  };
+}
+
 export interface MatrixResult {
   names: string[];
   blocks: (string | null)[];
@@ -383,6 +455,9 @@ export const api = {
     get<FactorComparison>(`/api/factors/${id}/comparison`, p),
 
   matrix: (body: Record<string, unknown>) => post<MatrixResult>("/api/matrix", body),
+  /** Block risk budgeting through a security's betas. */
+  matrixBlocks: (body: Record<string, unknown>) =>
+    post<BlockResult>("/api/matrix/blocks", body),
   pca: (body: Record<string, unknown>) => post<any>("/api/matrix/pca", body),
   rollingCorrelation: (body: Record<string, unknown>) =>
     post<any>("/api/matrix/rolling-correlation", body),
