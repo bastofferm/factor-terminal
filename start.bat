@@ -6,6 +6,16 @@ rem ---------------------------------------------------------------------------
 rem Starts the API and the web app, waits until both answer, then opens the
 rem browser. Safe to run twice: anything already serving is left alone rather
 rem than started a second time.
+rem
+rem   start.bat             start, and say how old the data is
+rem   start.bat --refresh   run the nightly chain first, then start
+rem
+rem The age line is always printed and the refresh never happens on its own.
+rem Checking that both services answer is a statement about the servers, not
+rem about what they serve: a panel four months stale opens looking exactly like
+rem a current one. Saying so costs a second. Refreshing costs minutes, and a
+rem launcher that spends them without being asked is one nobody uses to look
+rem something up quickly.
 rem ---------------------------------------------------------------------------
 
 cd /d "%~dp0"
@@ -16,6 +26,11 @@ set "PY=.venv\Scripts\python.exe"
 set "API_URL=http://127.0.0.1:%API_PORT%/api/health"
 set "WEB_URL=http://127.0.0.1:%WEB_PORT%/"
 set "OPEN_URL=http://localhost:%WEB_PORT%"
+
+set "REFRESH=0"
+if /i "%~1"=="--refresh" set "REFRESH=1"
+if /i "%~1"=="-r"        set "REFRESH=1"
+if /i "%~1"=="/refresh"  set "REFRESH=1"
 
 echo.
 echo   FACTOR TERMINAL
@@ -50,6 +65,30 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+
+rem --- data ------------------------------------------------------------------
+rem
+rem Before the services, because the chain writes what they will serve and the
+rem browser should not open on a panel that is about to change under it.
+
+if "!REFRESH!"=="1" (
+    echo   [^>] Refreshing the data. This takes a few minutes.
+    echo.
+    "%PY%" -m backend.pipeline.scheduler --once
+    if errorlevel 1 (
+        echo.
+        echo   [X] The refresh stopped at a failed stage. The chain stops at the
+        echo       first fatal failure rather than build factors on half-refreshed
+        echo       inputs, so nothing downstream ran.
+        echo.
+        pause
+        exit /b 1
+    )
+    echo.
+)
+
+"%PY%" -m scripts.data_age
+echo.
 
 rem --- backend ---------------------------------------------------------------
 
@@ -149,6 +188,7 @@ echo.
 echo   API docs   http://127.0.0.1:%API_PORT%/docs
 echo   Logs       the two minimised "Factor Terminal" windows
 echo   To stop    close those two windows
+echo   Refresh    start.bat --refresh  (runs the nightly chain first)
 echo.
 call :sleep 6
 exit /b 0

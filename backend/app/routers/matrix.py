@@ -97,6 +97,20 @@ async def matrix(req: MatrixRequest) -> dict:
         raise HTTPException(
             400, "fewer than two factors have data across this period; "
                  "try a later start date")
+
+    # What the rule above excluded, and the date from which nothing would be.
+    # Reporting it is not decoration: a matrix headed "39 factors" when the model
+    # has forty is a matrix someone will quote as the model's, and the difference
+    # has to be visible on the screen rather than inferable from a count.
+    dropped = [
+        {"factor_id": f,
+         "coverage": round(float(coverage[f]), 4),
+         "first_date": panel[f].first_valid_index().isoformat()}
+        for f in coverage.index if f not in keep
+    ]
+    first_dates = [panel[f].first_valid_index() for f in coverage.index]
+    earliest_all = max(d for d in first_dates if d is not None)
+
     panel = panel[keep].dropna()
     if len(panel) < 60:
         raise HTTPException(400, f"only {len(panel)} complete observations; "
@@ -124,6 +138,11 @@ async def matrix(req: MatrixRequest) -> dict:
         "n_obs": res.n_obs,
         "start": panel.index.min().isoformat(),
         "end": panel.index.max().isoformat(),
+        "n_available": int(len(coverage)),
+        "dropped": dropped,
+        # The earliest start at which every factor has data from day one, so the
+        # page can offer the trade rather than describe it.
+        "earliest_start_for_all": earliest_all.isoformat() if earliest_all else None,
         "covariance": res.cov[np.ix_(idx, idx)].round(8).tolist(),
         "correlation": corr[np.ix_(idx, idx)].round(5).tolist(),
         "volatilities": res.vols[idx].round(6).tolist(),

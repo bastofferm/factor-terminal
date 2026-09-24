@@ -25,6 +25,7 @@ export default function FactorsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [series, setSeries] = useState<any>(null);
+  const [inputs, setInputs] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
   const [risk, setRisk] = useState<any>(null);
   const [hist, setHist] = useState<any>(null);
@@ -60,6 +61,7 @@ export default function FactorsPage() {
     // samples or a different series.
     const p = { basis, ...(start ? { start } : {}) };
     setError(null);
+    setInputs(null);
     Promise.all([
       api.factorSeries(selected, p),
       api.factorStats(selected, p),
@@ -69,10 +71,14 @@ export default function FactorsPage() {
       api.factorACF(selected, p),
       api.factorDiagnostics(selected).catch(() => null),
       api.factorReference(selected).catch(() => null),
+      // The stored inputs do not depend on the basis — they are what the factor
+      // is built from, before any of it happens — but they do depend on `start`,
+      // so they ride along here rather than in their own effect.
+      api.factorInputs(selected, start ? { start } : undefined).catch(() => null),
     ])
-      .then(([s, st, r, h, q, a, d, rf]) => {
+      .then(([s, st, r, h, q, a, d, rf, inp]) => {
         setSeries(s); setStats(st); setRisk(r); setHist(h);
-        setQQ(q); setACF(a); setDiag(d); setRef(rf);
+        setQQ(q); setACF(a); setDiag(d); setRef(rf); setInputs(inp);
       })
       .catch((e) => setError(String(e.message ?? e)));
   }, [selected, start, basis]);
@@ -397,55 +403,7 @@ export default function FactorsPage() {
         </div>
 
         <div className="grid gap-4 xl:grid-cols-2">
-          <Panel
-            index={2}
-            title="Compounded return"
-            caption={
-              <>
-                What an investor actually ends up with: exp(Σ log r) − 1. The same
-                series as the panel on the right, expressed as a simple return, which
-                is why the two shapes differ so much at the extremes — a log path
-                ending at −1.0 is a −63% loss, not −100%.
-              </>
-            }
-          >
-            {!series && <ChartSkeleton height={280} />}
-            {series && (
-              <Chart
-                height={280}
-                episodes={bands}
-                data={[{
-                  x: series.dates, y: series.compounded, type: "scatter", mode: "lines",
-                  name: selected, line: { color: accent, width: 1.5 },
-                  hovertemplate: "%{x|%Y-%m-%d}<br>%{y:+.1%}<extra></extra>",
-                }]}
-                layout={{
-                  yaxis: { title: "compounded return", tickformat: ".0%" },
-                  showlegend: false,
-                }}
-              />
-            )}
-          </Panel>
-
-          <Panel
-            index={3}
-            title="Cumulative return"
-            caption="Sum of daily log excess returns. Log returns add, which is what makes the rolling statistics and the regression well behaved; the panel on the left turns the same path back into money."
-          >
-            {!series && <ChartSkeleton height={280} />}
-            {series && (
-              <Chart
-                height={280}
-                episodes={bands}
-                data={[{
-                  x: series.dates, y: series.cumulative, type: "scatter", mode: "lines",
-                  name: selected, line: { color: accent, width: 1.5 },
-                }]}
-                layout={{ yaxis: { title: "cumulative log return", tickformat: ".0%" },
-                          showlegend: false }}
-              />
-            )}
-          </Panel>
+          <InputsPanel inputs={inputs} bands={bands} />
 
           <Panel
             title="Rolling volatility"
@@ -756,6 +714,93 @@ function ComparisonPanel({
           </p>
         </div>
       </div>
+    </Panel>
+  );
+}
+
+/**
+ * The series the factor is built from, drawn as they are stored.
+ *
+ * This panel replaced the compounded and cumulative return paths. Both of those
+ * were constructions, and a construction cannot be the evidence when the
+ * construction is what is in doubt: one bad first observation moved the whole
+ * compounded path down by 78% and left a perfectly plausible shape behind it.
+ * A price is checkable against the outside world. A cumulated return is not.
+ *
+ * Scale is the one judgement here. Raw prices in a carry basket span two orders
+ * of magnitude — USDJPY near 110, EURUSD near 1.1 — so the axis goes logarithmic
+ * when the series are far enough apart that a linear one would draw the small
+ * ones as flat lines on the floor. Judged on medians, so a yield that touches
+ * zero does not by itself force the switch. Nothing is rescaled: a log axis is a
+ * way of reading the numbers, not a change to them.
+ */
+function InputsPanel({ inputs, bands }: { inputs: any; bands: any }) {
+  const drawn = (inputs?.series ?? []).filter((s: any) => s.values?.length);
+  const absent = (inputs?.series ?? []).filter((s: any) => !s.values?.length);
+
+  const median = (v: number[]) => {
+    const s = [...v].sort((a, b) => a - b);
+    return s[Math.floor(s.length / 2)];
+  };
+  const medians = drawn.map((s: any) => Math.abs(median(s.values))).filter(Boolean);
+  const spread = medians.length > 1
+    ? Math.max(...medians) / Math.min(...medians) : 1;
+  const allPositive = drawn.every((s: any) => s.values.every((v: number) => v > 0));
+  const useLog = allPositive && spread > 20;
+
+  const units = Array.from(new Set(drawn.map((s: any) => s.unit).filter(Boolean)));
+
+  return (
+    <Panel
+      index={2}
+      className="xl:col-span-2"
+      title="Underlying data"
+      caption={
+        <>
+          The stored series this factor is built from, as stored — an adjusted
+          close for an instrument, a level for a macro series, a rate for a
+          currency. Nothing here is derived, which is the point: a price can be
+          checked against the outside world, and a cumulated return path cannot.
+          {units.length > 0 && <> Units: {units.join(", ")}.</>}
+          {useLog && <> Drawn on a logarithmic axis because the series are {Math.round(spread)}× apart; the values are untouched.</>}
+        </>
+      }
+    >
+      {!inputs && <ChartSkeleton height={300} />}
+      {inputs && drawn.length === 0 && (
+        <div className="flex h-[300px] items-center justify-center px-8 text-center
+                        text-[11px] leading-relaxed text-muted">
+          Nothing is stored under the identifiers this factor&rsquo;s construction
+          names{absent.length > 0 && <> — {absent.map((s: any) => s.id).join(", ")}</>}.
+          That is a gap in the data rather than a factor without inputs.
+        </div>
+      )}
+      {inputs && drawn.length > 0 && (
+        <>
+          <Chart
+            height={300}
+            episodes={bands}
+            data={drawn.map((s: any, i: number) => ({
+              x: s.dates, y: s.values, type: "scatter", mode: "lines",
+              name: s.label, line: { color: PALETTE[i % PALETTE.length], width: 1.4 },
+              hovertemplate: `%{x|%Y-%m-%d}<br>%{y:,.4~f} ${s.unit ?? ""}<extra>${s.label}</extra>`,
+            }))}
+            layout={{
+              yaxis: { title: useLog ? "level (log scale)" : "level",
+                       type: useLog ? "log" : "linear" },
+              showlegend: drawn.length > 1,
+              legend: { orientation: "h", y: -0.18 },
+            }}
+          />
+          {absent.length > 0 && (
+            <p className="mt-2 text-[10.5px] leading-snug text-fail">
+              Named in the construction but not stored:{" "}
+              {absent.map((s: any) => s.id).join(", ")}. This factor is being built
+              from less than it claims.
+            </p>
+          )}
+        </>
+      )}
     </Panel>
   );
 }

@@ -124,7 +124,15 @@ def _rows_from_frame(df: pd.DataFrame, ticker: str, currency: str,
     """Build return rows. Returns come off Adj Close, so distributions are included.
 
     `prev_adj` is the last adjusted close already stored, which lets an incremental
-    run compute the return on its first new day instead of dropping it.
+    run compute the return on its first new day instead of dropping it. It is only
+    meaningful when this batch continues the stored series, so the caller passes it
+    only for a ticker that had a watermark to resume from.
+
+    Passed on a full refetch it does the opposite: the first day of the rehydrated
+    history gets the *latest* price as its predecessor. ACWI's first day, March 2008
+    at 35.44, was divided by 161.85 from September 2026 and booked as a 78% daily
+    loss. The first observation of a series has no predecessor, and a NULL return is
+    the honest way to say so.
     """
     close = df["Close"] if "Close" in df else pd.Series(dtype=float)
     adj = df["Adj Close"] if "Adj Close" in df else close
@@ -245,7 +253,14 @@ def fetch(full: bool = False, only: str | None = None, scope: str = "factors") -
                         mark_item_done(run_id, JOB, t, "skipped", rows_out=0,
                                        error="no data returned")
                         continue
-                    rows = _rows_from_frame(df, t, ccy.get(t, "USD"), last_adj.get(t))
+                    # Only hand over the stored close when this batch actually
+                    # continues the stored series. `marks` is empty on a full run
+                    # and has no entry for a ticker being fetched for the first
+                    # time; in both cases the batch starts at the beginning of
+                    # history and there is no predecessor to divide by.
+                    rows = _rows_from_frame(
+                        df, t, ccy.get(t, "USD"),
+                        last_adj.get(t) if t in marks else None)
                     with connect() as conn, conn.cursor() as cur:
                         n = bulk_insert(cur, UPSERT, rows)
                     total += n

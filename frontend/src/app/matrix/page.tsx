@@ -65,13 +65,47 @@ export default function MatrixPage() {
   const heatmap = useMemo(() => {
     if (!data) return null;
     // Plotly draws row 0 at the bottom; reverse so the matrix reads top-left down,
-    // which is how anyone expects to see a correlation matrix.
+    // which is how anyone expects to see a correlation matrix. Both axes carry the
+    // same factors in the same order — the reversal is which way the rows are
+    // drawn, not a different ordering — so the diagonal runs corner to corner and
+    // a block is a square on it.
     return {
       z: [...data.correlation].reverse(),
       x: data.names,
       y: [...data.names].reverse(),
     };
   }, [data]);
+
+  /**
+   * One box per block, drawn on the diagonal.
+   *
+   * The blocks arrive aligned with `names`, so a block is a contiguous run once
+   * the ordering is "by block" — and only then. Under cluster or registry
+   * ordering a block is scattered, and boxing a run that happens to be adjacent
+   * would draw a grouping that is not there, so the boxes are withheld instead.
+   *
+   * Coordinates are category indices. The y axis is reversed, so a run covering
+   * columns a..b covers rows N-1-b .. N-1-a.
+   */
+  const blockBoxes = useMemo(() => {
+    if (!data?.blocks || order !== "block") return [];
+    const n = data.names.length;
+    const runs: { block: string; a: number; b: number }[] = [];
+    data.blocks.forEach((b: string | null, i: number) => {
+      const last = runs[runs.length - 1];
+      if (last && last.block === b) last.b = i;
+      else runs.push({ block: b ?? "", a: i, b: i });
+    });
+    return runs.map((r) => ({
+      type: "rect" as const,
+      xref: "x" as const, yref: "y" as const,
+      x0: r.a - 0.5, x1: r.b + 0.5,
+      y0: n - 1 - r.b - 0.5, y1: n - 1 - r.a + 0.5,
+      line: { color: "#2A2F3A", width: 2 },
+      fillcolor: "rgba(0,0,0,0)",
+      layer: "above" as const,
+    }));
+  }, [data, order]);
 
   /**
    * PC1 sorted by loading, most positive to most negative.
@@ -210,8 +244,11 @@ export default function MatrixPage() {
       {d && data && (
         <MetricStrip>
           {([
-            ["Factors", data.names.length, "in the estimated matrix", "neutral",
-             undefined],
+            ["Factors",
+             data.n_available && data.n_available !== data.names.length
+               ? `${data.names.length} of ${data.n_available}`
+               : data.names.length,
+             "in the estimated matrix", "neutral", undefined],
             ["Observations", data.n_obs.toLocaleString(),
              "days with every factor present", "neutral", undefined],
             ["Span", `${data.start} → ${data.end}`, "sample estimated on",
@@ -242,14 +279,57 @@ export default function MatrixPage() {
         </MetricStrip>
       )}
 
+      {/* A factor missing from the matrix is not a detail. Everything downstream
+          treats this as the model's covariance, so which factors are in it has to
+          be on the screen, with the trade that would include them. */}
+      {data && (data.dropped?.length ?? 0) > 0 && (
+        <div className="rounded border border-line bg-panel px-3 py-2 text-[11px]
+                        leading-relaxed text-ink">
+          <b>{data.dropped!.length === 1 ? "One factor is" : `${data.dropped!.length} factors are`}</b>{" "}
+          not in this matrix. A factor needs data across 90% of the window, or it
+          would truncate the sample for every pair it appears in:
+          <ul className="mt-1 space-y-0.5">
+            {data.dropped!.map((f) => (
+              <li key={f.factor_id} className="font-mono text-[10.5px]">
+                {f.factor_id} — {(f.coverage * 100).toFixed(0)}% covered, starts{" "}
+                {f.first_date}
+              </li>
+            ))}
+          </ul>
+          {data.earliest_start_for_all && (
+            <div className="mt-1.5">
+              Every factor has data from{" "}
+              <b>{data.earliest_start_for_all}</b>, which buys completeness with a
+              shorter sample.{" "}
+              <button
+                onClick={() => setStart(data.earliest_start_for_all!)}
+                className="rounded border border-line bg-white px-2 py-0.5
+                           text-[10.5px] text-navy transition hover:border-navy2">
+                Estimate from {data.earliest_start_for_all}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-4 xl:grid-cols-[3fr_2fr]">
         <Panel
           title="Correlation matrix"
-          caption="Click a cell to plot that pair's rolling correlation below. Blue is positive, red negative, white zero."
+          caption={
+            <>
+              Click a cell to plot that pair&rsquo;s rolling correlation below. Blue
+              is positive, red negative, white zero. Both axes carry the same{" "}
+              {data?.names.length ?? 0} factors in the same order, so the cells are
+              square and the diagonal runs corner to corner.
+              {order === "block"
+                ? " Heavy outlines mark the blocks; everything inside one is a within-block correlation."
+                : " Block outlines are drawn only under block ordering — under this ordering a block is not a contiguous run, and boxing one would draw a grouping that is not there."}
+            </>
+          }
         >
           {heatmap && data && (
             <Chart
-              height={Math.max(460, data.names.length * 12)}
+              height={data.names.length * 17 + 160}
               data={[{
                 type: "heatmap", z: heatmap.z, x: heatmap.x, y: heatmap.y,
                 colorscale: DIVERGING, zmid: 0, zmin: -1, zmax: 1,
@@ -258,8 +338,19 @@ export default function MatrixPage() {
               }]}
               layout={{
                 margin: { l: 130, r: 10, t: 10, b: 130 },
-                xaxis: { tickfont: { size: 9 }, tickangle: -55, showgrid: false },
-                yaxis: { tickfont: { size: 9 }, showgrid: false },
+                // dtick 1 forces every factor to be labelled. Without it Plotly
+                // drops every other row label when the box is short, which reads
+                // as a matrix with more columns than rows.
+                xaxis: { tickfont: { size: 9 }, tickangle: -55, showgrid: false,
+                         dtick: 1 },
+                // scaleanchor holds one unit on y to one unit on x, so the cells
+                // stay square whatever width the panel ends up with. Without
+                // `constrain: domain`: that constrains the axis by shrinking its
+                // domain instead of widening its range, which collapses the plot
+                // into a strip.
+                yaxis: { tickfont: { size: 9 }, showgrid: false, dtick: 1,
+                         scaleanchor: "x", scaleratio: 1 },
+                shapes: blockBoxes,
                 hovermode: "closest", showlegend: false,
               }}
             />
