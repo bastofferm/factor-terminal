@@ -303,11 +303,33 @@ async def analyse(kind: str, series_id: str, start: date | None = None,
 
     diagnostics = st.analyse(x, dates=[d_.date() for d_ in s.index]).as_dict()
 
+    # The stored price, for the kinds that have one. A cumulated return path is
+    # a construction and a price is not, which matters when the construction is
+    # the thing in doubt: one bad observation moves a cumulated path for the
+    # whole of its remaining length and leaves a plausible shape behind it. A
+    # price can be checked against the outside world.
+    price: dict | None = None
+    if kind == "instrument":
+        rows = await db.fetch(
+            """
+            SELECT date, adj_close FROM fact_input_return
+            WHERE instrument_id = $1 AND adj_close IS NOT NULL
+              AND ($2::date IS NULL OR date >= $2)
+              AND ($3::date IS NULL OR date <= $3)
+            ORDER BY date
+            """,
+            series_id, start, end)
+        if rows:
+            price = {"dates": [r["date"].isoformat() for r in rows],
+                     "values": [round(float(r["adj_close"]), 6) for r in rows],
+                     "unit": meta.get("currency") or "price"}
+
     return {
         "kind": kind,
         "id": series_id,
         "meta": meta,
         "dates": dates,
+        "price": price,
         "returns": s.round(8).tolist(),
         "cumulative": log_path.round(8).tolist(),
         "compounded": np.expm1(log_path).round(8).tolist(),

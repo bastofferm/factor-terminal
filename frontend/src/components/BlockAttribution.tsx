@@ -75,6 +75,10 @@ export function BlockAttribution({ start, method, basis }: {
 
   return (
     <div className="space-y-4">
+      {/* The budget, and the security it is measured through. Side by side
+          because the bar chart is only as good as that series, and a reader who
+          cannot see the proxy has to take the decomposition on trust. */}
+      <div className="grid gap-4 xl:grid-cols-[3fr_2fr]">
       {/* ---------------------------------------------------------------- */}
       <Panel
         title="Risk budget by block"
@@ -212,6 +216,10 @@ export function BlockAttribution({ start, method, basis }: {
         )}
       </Panel>
 
+        <SecurityPanel id={security} label={chosen?.label} note={chosen?.note}
+                       start={start} />
+      </div>
+
       {/* ---------------------------------------------------------------- */}
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel
@@ -310,6 +318,209 @@ export function BlockAttribution({ start, method, basis }: {
         {block && data && <BlockDetail block={block} sigma={data.sigma} />}
       </Panel>
     </div>
+  );
+}
+
+/**
+ * The security the contributions are measured through, in four cells.
+ *
+ * The bar chart on the left is only as good as the series behind it, and that
+ * series is a choice: a different proxy would move every number. So the proxy
+ * is shown rather than named — what it did, how its returns are distributed,
+ * how far the tails run past a normal, and the statistics underneath.
+ *
+ * The line is the stored price, not a cumulated return path. A cumulated path
+ * is a construction, and when the construction is what is in doubt it cannot
+ * also be the evidence; a price can be checked against the outside world.
+ *
+ * Everything here comes from the Raw Explorer's own endpoint, so the two
+ * screens cannot disagree about the same security.
+ */
+function SecurityPanel({ id, label, note, start }: {
+  id: string | null; label?: string; note?: string; start: string;
+}) {
+  const [d, setD] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!id) { setD(null); setErr(null); return; }
+    setD(null); setErr(null);
+    api.rawSeries("instrument", id, start ? { start } : undefined)
+      .then(setD)
+      .catch((e) => setErr(String(e.message ?? e)));
+  }, [id, start]);
+
+  if (!id) {
+    return (
+      <Panel title="The security behind the numbers">
+        <div className="flex h-[440px] items-center justify-center px-8 text-center
+                        text-[11px] leading-relaxed text-muted">
+          The equal-exposure baseline holds nothing, so there is no security to
+          describe. It sets every exposure to one and asks which blocks are
+          intrinsically noisy — a different question from which drive a holding.
+        </div>
+      </Panel>
+    );
+  }
+
+  const s = d?.stats;
+  return (
+    <Panel
+      title="The security behind the numbers"
+      caption={
+        <>
+          The contributions opposite are measured through <b>{id}</b>
+          {label && <> — {label}</>}. A different proxy would move every number
+          on that chart, so the series is shown rather than asserted.
+          {note && <> {note}</>}
+        </>
+      }
+    >
+      {err && <div className="text-[12px] text-fail">{err}</div>}
+      {!d && !err && <ChartSkeleton height={440} />}
+
+      {d && (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {/* 1 — price, with the numbers that describe it */}
+          <div>
+            <MiniHead title="Price" note={d.price?.unit ?? ""} />
+            <div className="mb-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[10.5px]">
+              <Fig label="ann. return" value={pct(s?.mean_ann)} />
+              <Fig label="ann. vol" value={pct(s?.vol_ann)} />
+              <Fig label="Sharpe" value={num(s?.sharpe, 2)} />
+              <Fig label="max drawdown" value={pct(s?.max_drawdown)} />
+            </div>
+            {d.price ? (
+              <Chart
+                height={170}
+                data={[{
+                  x: d.price.dates, y: d.price.values, type: "scatter",
+                  mode: "lines", line: { color: PALETTE[0], width: 1.3 },
+                  hovertemplate: `%{x|%Y-%m-%d}<br>%{y:,.2f} ${d.price.unit}<extra></extra>`,
+                }]}
+                layout={{
+                  margin: { l: 46, r: 8, t: 4, b: 26 },
+                  xaxis: { tickfont: { size: 8 } },
+                  yaxis: { tickfont: { size: 8 } },
+                  showlegend: false,
+                }}
+              />
+            ) : (
+              <div className="flex h-[170px] items-center justify-center
+                              text-[10.5px] text-muted">
+                No stored price for this series.
+              </div>
+            )}
+          </div>
+
+          {/* 2 — distribution against a normal */}
+          <div>
+            <MiniHead title="Daily returns" note="against a normal" />
+            <Chart
+              height={196}
+              data={[
+                { x: d.distribution.bin_centres, y: d.distribution.density,
+                  type: "bar", name: "observed",
+                  marker: { color: PALETTE[0], opacity: 0.35, line: { width: 0 } },
+                  hovertemplate: "%{x:.2%}<extra></extra>" },
+                { x: d.distribution.grid, y: d.distribution.normal_pdf,
+                  type: "scatter", mode: "lines", name: "normal",
+                  line: { color: "#8C3A2E", width: 1.4 } },
+              ]}
+              layout={{
+                margin: { l: 40, r: 8, t: 4, b: 30 },
+                xaxis: { tickformat: ".0%", tickfont: { size: 8 } },
+                yaxis: { tickfont: { size: 8 }, showticklabels: false },
+                bargap: 0.02, showlegend: false,
+              }}
+            />
+            <p className="text-[10px] leading-snug text-muted">
+              Excess kurtosis {num(s?.excess_kurtosis, 1)}, skew{" "}
+              {num(s?.skew, 2)} — the gap between the bars and the red line is
+              what a normal would miss.
+            </p>
+          </div>
+
+          {/* 3 — how far the tails run */}
+          <div>
+            <MiniHead title="Quantile-quantile" note="sample against normal" />
+            <Chart
+              height={196}
+              data={[
+                { x: d.qq.normal, y: d.qq.sample, type: "scatter", mode: "markers",
+                  name: "observed",
+                  marker: { color: PALETTE[0], size: 3, opacity: 0.55 },
+                  hovertemplate: "normal %{x:.2%}<br>observed %{y:.2%}<extra></extra>" },
+                { x: d.qq.normal, y: d.qq.normal, type: "scatter", mode: "lines",
+                  name: "exact", line: { color: "#9AA0AE", width: 1, dash: "dash" } },
+              ]}
+              layout={{
+                margin: { l: 44, r: 8, t: 4, b: 30 },
+                xaxis: { tickformat: ".0%", tickfont: { size: 8 },
+                         title: { text: "normal", font: { size: 9 } } },
+                yaxis: { tickformat: ".0%", tickfont: { size: 8 } },
+                showlegend: false,
+              }}
+            />
+            <p className="text-[10px] leading-snug text-muted">
+              Points bending away from the dashed line at the ends are returns a
+              normal says should not happen.
+            </p>
+          </div>
+
+          {/* 4 — the numbers, including the ones the charts cannot show */}
+          <div>
+            <MiniHead title="Summary" note={`${s?.n_obs ?? 0} days`} />
+            <table className="w-full text-[10.5px]">
+              <tbody className="font-mono">
+                <Row k="Asset class" v={d.meta?.asset_class ?? "—"} mono={false} />
+                <Row k="Total return" v={d.meta?.is_total_return ? "yes" : "price only"} mono={false} />
+                <Row k="Worst day" v={pct(s?.worst_day)} tone="fail" />
+                <Row k="Best day" v={pct(s?.best_day)} />
+                <Row k="VaR 95% (1d)" v={pct(s?.var95_daily)} />
+                <Row k="Expected shortfall" v={pct(s?.es95_daily)} />
+                <Row k="Downside vol" v={pct(s?.downside_vol_ann)} />
+                <Row k="Hit rate" v={pct(s?.hit_rate)} />
+                <Row k="Stationarity"
+                     v={d.diagnostics?.verdict ?? "—"} mono={false}
+                     tone={d.diagnostics?.verdict === "fail" ? "fail" : undefined} />
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function MiniHead({ title, note }: { title: string; note?: string }) {
+  return (
+    <div className="mb-1 flex items-baseline justify-between gap-2">
+      <span className="text-2xs font-semibold uppercase tracking-label text-muted">
+        {title}
+      </span>
+      {note && <span className="text-[10px] text-muted">{note}</span>}
+    </div>
+  );
+}
+
+function Fig({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="text-muted">
+      {label} <b className="font-mono text-ink">{value}</b>
+    </span>
+  );
+}
+
+function Row({ k, v, mono = true, tone }: {
+  k: string; v: string; mono?: boolean; tone?: "fail";
+}) {
+  return (
+    <tr className="border-b border-lineSoft">
+      <td className="py-[3px] text-left font-sans text-muted">{k}</td>
+      <td className={`py-[3px] text-right ${mono ? "" : "font-sans"} ${
+        tone === "fail" ? "text-fail" : "text-ink"}`}>{v}</td>
+    </tr>
   );
 }
 
