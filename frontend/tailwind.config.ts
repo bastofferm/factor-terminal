@@ -7,6 +7,9 @@ export default {
     extend: {
       colors: {
         bg: "#F5F4F0",
+        // The same paper as the page, used as a recessed surface inside a
+        // panel: formula boxes and source listings sit on it.
+        canvas: "#F5F4F0",
         panel: "#FBFAF7",
         navy: "#2F4D73",
         navy2: "#476D99",
