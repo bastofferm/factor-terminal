@@ -33,7 +33,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 }
 
 function Chrome({ pathname, children }: { pathname: string; children: React.ReactNode }) {
-  const { open, setOpen, snapshot } = useChat();
+  const { open, setOpen, snapshot, snapshots } = useChat();
 
   return (
     <>
@@ -84,7 +84,8 @@ function Chrome({ pathname, children }: { pathname: string; children: React.Reac
         {children}
       </main>
 
-      <ChatPanel open={open} onClose={() => setOpen(false)} snapshot={snapshot} />
+      <ChatPanel open={open} onClose={() => setOpen(false)} snapshot={snapshot}
+                 snapshots={snapshots} />
     </>
   );
 }

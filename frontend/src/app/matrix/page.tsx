@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Chart, PALETTE, Panel } from "@/components/Chart";
+import { Chart, ChartSkeleton, PALETTE, Panel } from "@/components/Chart";
 import { api, Basis, MatrixResult, num, pct } from "@/lib/api";
 import { BlockAttribution } from "@/components/BlockAttribution";
 import { MetricCard, MetricStrip, alignFor } from "@/components/MetricCard";
@@ -284,6 +284,7 @@ export default function MatrixPage() {
         </div>
       )}
 
+      <div className="grid gap-4 xl:grid-cols-2">
         <Panel
           title="Correlation matrix"
           caption={
@@ -328,6 +329,24 @@ export default function MatrixPage() {
           )}
         </Panel>
 
+        <Panel
+          title="The blocks on their own"
+          caption={
+            <>
+              The same correlations, one panel per block, each on the identical
+              &minus;1 to +1 scale as the matrix beside it. The big matrix shows
+              where a block sits relative to everything else; these show what is
+              going on <i>inside</i> it, which the full grid compresses into a
+              square too small to read. A block that is uniformly blue moves as
+              one thing and a single factor can stand for it; a pale one is a
+              filing category whose members happen not to move together.
+            </>
+          }
+        >
+          {!data && <ChartSkeleton height={520} />}
+          {data && <BlockGrid data={data} />}
+        </Panel>
+      </div>
 
       <Panel
         title="Rolling pairwise correlation"
@@ -386,6 +405,84 @@ export default function MatrixPage() {
         </p>
         <BlockAttribution start={start} method={method} basis={basis} />
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * One small heatmap per block, on the same scale as the full matrix.
+ *
+ * The big grid answers where a block sits against everything else. It cannot
+ * answer what is happening inside one: nine factors squeezed into a seven-pixel
+ * square is a colour, not a reading. These are the diagonal sub-matrices pulled
+ * out and given room.
+ *
+ * Nothing is refetched. The sub-matrices are slices of the correlation already
+ * on screen, so the two panels cannot disagree — and a block drawn here is
+ * exactly the block outlined there.
+ */
+function BlockGrid({ data }: { data: MatrixResult }) {
+  const blocks = useMemo(() => {
+    const byBlock = new Map<string, number[]>();
+    data.blocks.forEach((b, i) => {
+      const key = b ?? "unassigned";
+      if (!byBlock.has(key)) byBlock.set(key, []);
+      byBlock.get(key)!.push(i);
+    });
+    return [...byBlock.entries()].map(([id, idx]) => {
+      // Mean off-diagonal correlation: how much the block moves as one thing.
+      // A single-factor block has no pair to average, and reporting 1.0 would
+      // claim a relationship with no second party to it.
+      let sum = 0, n = 0;
+      for (let a = 0; a < idx.length; a++)
+        for (let b2 = a + 1; b2 < idx.length; b2++) {
+          sum += data.correlation[idx[a]][idx[b2]];
+          n += 1;
+        }
+      return {
+        id,
+        names: idx.map((i) => data.names[i]),
+        z: idx.map((r) => idx.map((c) => data.correlation[r][c])),
+        mean: n ? sum / n : null,
+      };
+    }).sort((a, b) => b.names.length - a.names.length);
+  }, [data]);
+
+  return (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3">
+      {blocks.map((b) => (
+        <div key={b.id}>
+          <div className="flex items-baseline justify-between gap-1">
+            <span className="truncate text-[10.5px] font-semibold text-navy">
+              {b.id}
+            </span>
+            <span className="shrink-0 font-mono text-[9.5px] text-muted"
+                  title="Mean correlation between the distinct pairs in this block">
+              {b.names.length}f{b.mean === null ? "" : ` · ρ̄ ${b.mean.toFixed(2)}`}
+            </span>
+          </div>
+          <Chart
+            height={132}
+            data={[{
+              type: "heatmap",
+              z: [...b.z].reverse(),
+              x: b.names,
+              y: [...b.names].reverse(),
+              colorscale: DIVERGING, zmid: 0, zmin: -1, zmax: 1,
+              showscale: false,
+              hovertemplate: "%{y} × %{x}<br>ρ = %{z:.3f}<extra></extra>",
+            }]}
+            layout={{
+              margin: { l: 4, r: 4, t: 2, b: 4 },
+              xaxis: { showticklabels: false, showgrid: false, dtick: 1 },
+              yaxis: { showticklabels: false, showgrid: false, dtick: 1,
+                       scaleanchor: "x", scaleratio: 1 },
+              hovermode: "closest", showlegend: false,
+            }}
+          />
+        </div>
+      ))}
     </div>
   );
 }
