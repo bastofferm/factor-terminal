@@ -10,7 +10,9 @@
  * it is a loading on.
  */
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import { blockStyle } from "@/lib/blocks";
 import { num, pct } from "@/lib/api";
 
@@ -154,7 +156,10 @@ export function FactorProfile({
                         Rendered from the stored construction rule, so it cannot drift
                         from the series on the chart."
                 >
-                  <Equation body={p.formula.construction.plain} />
+                  <Equation
+                    latex={p.formula.construction.latex}
+                    plain={p.formula.construction.plain}
+                  />
                   <Steps steps={p.formula.construction.steps} />
                   <Where symbols={[...p.formula.preamble, ...p.formula.construction.where]} />
                 </Section>
@@ -164,12 +169,19 @@ export function FactorProfile({
                 <Section
                   title="How it is orthogonalised"
                   hint={
-                    p.formula.orthogonalised_against.length
-                      ? "f is the raw factor above; f~ is what the model consumes."
-                      : undefined
+                    p.formula.orthogonalised_against.length ? (
+                      <>
+                        <TeX latex="f_t" plain="f_t" /> is the raw factor above;{" "}
+                        <TeX latex="\tilde{f}_t" plain="f~_t" /> is what the model
+                        consumes.
+                      </>
+                    ) : undefined
                   }
                 >
-                  <Equation body={p.formula.orthogonalisation.plain} />
+                  <Equation
+                    latex={p.formula.orthogonalisation.latex}
+                    plain={p.formula.orthogonalisation.plain}
+                  />
                   <Steps steps={p.formula.orthogonalisation.steps} />
                   {p.formula.orthogonalisation.where.length > 0 && (
                     <Where symbols={p.formula.orthogonalisation.where} />
@@ -295,23 +307,85 @@ export function FactorProfile({
   );
 }
 
+/** KaTeX, with the options every call on this panel shares. */
+function render(latex: string, display: boolean): string {
+  return katex.renderToString(latex, {
+    displayMode: display,
+    throwOnError: true,
+    strict: "error",
+    // The input is our own registry rather than anything a reader supplies, but
+    // a link command has no business in a factor definition either.
+    trust: false,
+  });
+}
+
 /**
- * A formula, set as code rather than as typeset mathematics.
+ * A display equation, in its own boxed line or lines.
  *
- * No KaTeX. The alternative was a 280KB dependency and a font load to render a
- * dozen short expressions that are already unambiguous in monospace — and the same
- * ASCII string is what the assistant quotes and what the CLI prints, so what is on
- * screen is verifiably the same text everywhere. The LaTeX rendering exists too,
- * and is what the write-up under Documentation/ uses.
+ * `formula.py` renders every expression twice from one description: LaTeX and
+ * ASCII. The ASCII is what the CLI prints and what the assistant quotes, because
+ * it has to survive a cp1252 console; this panel has a browser and shows the
+ * LaTeX. Both come from the same call, so the two cannot disagree — and the ASCII
+ * is still on the element title, one hover away, for anyone who wants the string
+ * the rest of the system passes around.
+ *
+ * The parts are split on a blank line, which is how `formula.py` separates the
+ * lines of a multi-line expression; 44 of the registry's 80 expressions have at
+ * least one. LaTeX treats a blank line inside mathematics as ordinary space, so
+ * rendering the string whole runs the definition of a factor straight into the
+ * definition of the estimator below it.
+ *
+ * Every expression in the registry was checked against KaTeX in strict mode
+ * before this was wired up. The fallback is for what that check cannot cover: a
+ * formula added later that KaTeX refuses. Dropping back to monospace is a much
+ * smaller failure than rendering a red error where the mathematics should be.
  */
-function Equation({ body }: { body: string }) {
+function Equation({ latex, plain }: { latex?: string; plain: string }) {
+  const parts = useMemo(() => {
+    if (!latex) return null;
+    try {
+      return latex
+        .split(/\n\s*\n/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => render(s, true));
+    } catch {
+      return null;
+    }
+  }, [latex]);
+
+  const box = "overflow-x-auto rounded border border-lineSoft bg-canvas px-3 py-2";
+
+  if (!parts?.length) {
+    return (
+      <pre className={`${box} font-mono text-[11.5px] leading-relaxed text-navy`}>
+        {plain}
+      </pre>
+    );
+  }
   return (
-    <pre
-      className="overflow-x-auto rounded border border-lineSoft bg-canvas px-3 py-2
-                 font-mono text-[11.5px] leading-relaxed text-navy"
-    >
-      {body}
-    </pre>
+    <div className={`eqn space-y-1.5 ${box} text-navy`} title={plain}>
+      {parts.map((html, k) => (
+        <div key={k} dangerouslySetInnerHTML={{ __html: html }} />
+      ))}
+    </div>
+  );
+}
+
+/** One symbol, set inline in running text or as a term in the symbol table. */
+function TeX({ latex, plain }: { latex?: string; plain: string }) {
+  const html = useMemo(() => {
+    if (!latex) return null;
+    try {
+      return render(latex, false);
+    } catch {
+      return null;
+    }
+  }, [latex]);
+
+  if (!html) return <span className="font-mono">{plain}</span>;
+  return (
+    <span className="tex" title={plain} dangerouslySetInnerHTML={{ __html: html }} />
   );
 }
 
@@ -331,7 +405,15 @@ function Steps({ steps }: { steps: string[] }) {
   );
 }
 
-/** The symbol table. Every letter in the formula resolves to something concrete. */
+/**
+ * The symbol table. Every letter in the formula resolves to something concrete.
+ *
+ * The terms are a grid column rather than a fixed width because a typeset symbol
+ * is as wide as its name: the policy-rate legs of the carry factor carry a whole
+ * series id in their superscript and run to 111px, which overprinted the meaning
+ * beside it. max-content sizes the column to the widest term actually present, so
+ * the short symbols still line up and the long ones no longer collide.
+ */
 function Where({ symbols }: { symbols: FormulaSymbol[] }) {
   const seen = new Set<string>();
   const unique = symbols.filter((s) =>
@@ -339,14 +421,17 @@ function Where({ symbols }: { symbols: FormulaSymbol[] }) {
   if (!unique.length) return null;
 
   return (
-    <dl className="mt-2 space-y-0.5 border-t border-lineSoft pt-2">
+    <dl
+      className="mt-2 grid grid-cols-[minmax(88px,max-content)_1fr] gap-x-3
+                 gap-y-0.5 border-t border-lineSoft pt-2"
+    >
       {unique.map((s) => (
-        <div key={s.plain} className="flex gap-2">
-          <dt className="w-[88px] shrink-0 font-mono text-[11px] text-navy">
-            {s.plain}
+        <Fragment key={s.plain}>
+          <dt className="text-[11px] text-navy">
+            <TeX latex={s.latex} plain={s.plain} />
           </dt>
           <dd className="text-[11px] text-muted">{s.meaning}</dd>
-        </div>
+        </Fragment>
       ))}
     </dl>
   );
@@ -356,7 +441,7 @@ function Section({
   title, hint, children,
 }: {
   title: string;
-  hint?: string;
+  hint?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (

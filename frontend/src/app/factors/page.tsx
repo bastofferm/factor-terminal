@@ -6,10 +6,10 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { Chart, ChartSkeleton, PALETTE, Panel, Skeleton, Stat, VerdictBadge }
   from "@/components/Chart";
 import { Sparkline } from "@/components/Sparkline";
-import { FactorProfile } from "@/components/FactorProfile";
 import { api, Basis, FactorComparison, FactorMeta, num, pct, pval } from "@/lib/api";
 import { blockColour, blockStyle } from "@/lib/blocks";
 import { episodeLayout } from "@/lib/episodes";
@@ -17,6 +17,14 @@ import { StationarityBattery, useWindowPicker }
   from "@/components/StationarityBattery";
 import { bySign } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
+
+// KaTeX, its stylesheet and its fonts are a few hundred kilobytes that matter
+// only once someone opens a profile, so the dialog and everything it pulls in
+// arrive on that click rather than with the page.
+const FactorProfile = dynamic(
+  () => import("@/components/FactorProfile").then((m) => m.FactorProfile),
+  { ssr: false }
+);
 
 export default function FactorsPage() {
   const [factors, setFactors] = useState<FactorMeta[]>([]);
