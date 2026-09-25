@@ -18,7 +18,6 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Panel, Stat } from "@/components/Chart";
-import { Sparkline } from "@/components/Sparkline";
 import { Block, FactorMeta, Instrument, api, num } from "@/lib/api";
 import { BLOCK_ORDER, blockStyle } from "@/lib/blocks";
 import { EPISODES } from "@/lib/episodes";
@@ -35,26 +34,23 @@ export default function OverviewPage() {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [factors, setFactors] = useState<FactorMeta[]>([]);
   const [inputs, setInputs] = useState<Instrument[]>([]);
-  const [sparks, setSparks] = useState<Record<string, number[]>>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // One round of requests, all of them cheap reference reads. Failures are
-    // tolerated individually: a missing sparkline set should leave the page
+    // tolerated individually: a missing block list should leave the page
     // standing, because the prose on it is the point and is not data-dependent.
     Promise.all([
       api.health().catch(() => null),
       api.blocks().catch(() => []),
       api.factors().catch(() => []),
       api.instruments("factor_input").catch(() => []),
-      api.factorSparklines("orth").catch(() => ({ points: 0, series: {} })),
     ])
-      .then(([h, b, f, i, s]) => {
+      .then(([h, b, f, i]) => {
         setHealth(h as Health | null);
         setBlocks(b as Block[]);
         setFactors(f as FactorMeta[]);
         setInputs(i as Instrument[]);
-        setSparks((s as { series: Record<string, number[]> }).series ?? {});
       })
       .catch((e) => setError(String(e.message ?? e)));
   }, []);
@@ -80,26 +76,24 @@ export default function OverviewPage() {
 
   return (
     <div className="space-y-5">
-      <Masthead health={health} factors={factors} />
+      <Hero health={health} factors={factors} panel={panel} />
 
       {error && (
         <p className="rounded border border-fail/30 bg-fail/5 p-3 text-[12px] text-fail">
-          Could not reach the API: {error}. The description below still applies;
+          Could not reach the API: {error}. The description above still applies;
           the figures do not.
         </p>
       )}
 
       <Figures panel={panel} health={health} inputs={inputs.length} />
       <Coverage blocks={blocks} factors={factors} panel={panel} />
-      <Blocks blocks={blocks} factors={factors} sparks={sparks} />
       <Pipeline />
       <Directory />
-      <Limits />
     </div>
   );
 }
 
-// --- the model, in one line ----------------------------------------------
+// --- the hero -------------------------------------------------------------
 
 /**
  * One expression, typeset once KaTeX has arrived.
@@ -133,21 +127,71 @@ function TeX({ latex, plain }: { latex: string; plain: string }) {
   return <span className="tex" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function Masthead({ health, factors }: { health: Health | null; factors: FactorMeta[] }) {
+/**
+ * The masthead.
+ *
+ * Grey rather than paper so the front door reads as a cover and the working
+ * screens behind it read as working screens. The blue is the same navy the rest
+ * of the app uses for anything that matters — the card changes the ground, not
+ * the voice.
+ *
+ * It carries the model as an equation, the state it is in today, and just
+ * enough of the coverage panel below to make the span concrete. Everything it
+ * shows is repeated somewhere with more room, on purpose: a masthead that was
+ * the only place a figure appeared would be a masthead nobody could check.
+ */
+function Hero({
+  health, factors, panel,
+}: {
+  health: Health | null;
+  factors: FactorMeta[];
+  panel: PanelSummary;
+}) {
   const k = health?.active_factors ?? factors.length;
   const live = health?.status === "ok";
+  const years = spanYears(panel);
 
   return (
-    <section className="enter rounded border border-line bg-panel px-6 py-6
-                        shadow-[0_1px_2px_rgba(42,47,58,0.04)]">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="max-w-[760px]">
-          <div className="label">Multi-asset factor model</div>
-          <h1 className="mt-1.5 text-[26px] font-semibold leading-tight tracking-tight
-                         text-navy">
-            Return-based risk, built from series you can open and check
+    <section
+      className="enter relative overflow-hidden rounded border px-6 py-6
+                 shadow-[0_1px_3px_rgba(42,47,58,0.07)] sm:px-8 sm:py-7"
+      style={{
+        // A warm grey, so it sits with the paper palette rather than cutting a
+        // cold rectangle out of it.
+        background: "linear-gradient(152deg, #EDECE9 0%, #E4E2DE 58%, #DBD9D4 100%)",
+        borderColor: "#D2CFC8",
+      }}
+    >
+      {/* A hairline rule in the block colours: the nine hues that key every
+          chart in the app, introduced here before they mean anything. */}
+      <div className="absolute inset-x-0 top-0 flex h-[2px]">
+        {BLOCK_ORDER.map((id, i) => (
+          <div
+            key={id}
+            className="sweep flex-1"
+            style={{ background: blockStyle(id).colour, opacity: 0.55,
+                     animationDelay: `${120 + i * 55}ms` }}
+          />
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-3">
+        <div className="max-w-[720px]">
+          <div className="rise label" style={{ animationDelay: "40ms" }}>
+            Multi-asset factor model
+          </div>
+          <h1
+            className="rise mt-2 text-[28px] font-semibold leading-[1.15]
+                       tracking-tight text-navy sm:text-[32px]"
+            style={{ animationDelay: "90ms" }}
+          >
+            Return-based risk, built from series
+            <br className="hidden sm:inline" /> you can open and check
           </h1>
-          <p className="mt-2.5 text-[13px] leading-relaxed text-muted">
+          <p
+            className="rise mt-3 max-w-[640px] text-[13px] leading-relaxed"
+            style={{ animationDelay: "150ms", color: "#5A6275" }}
+          >
             {k ? <b className="text-navy">{k} daily factors</b> : "Daily factors"} across
             nine blocks, each one an excess return rather than a score;
             residualised down a hierarchy so their loadings mean something
@@ -156,13 +200,14 @@ function Masthead({ health, factors }: { health: Health | null; factors: FactorM
           </p>
         </div>
 
-        <div className="shrink-0 text-right">
+        <div className="rise shrink-0 text-right" style={{ animationDelay: "200ms" }}>
           <div className="flex items-center justify-end gap-1.5">
             <span
               className={`inline-block h-1.5 w-1.5 rounded-full
-                          ${live ? "bg-pass" : "bg-muted"}`}
+                          ${live ? "pulse bg-pass" : "bg-muted"}`}
             />
-            <span className="text-2xs uppercase tracking-label text-muted">
+            <span className="text-2xs uppercase tracking-label"
+                  style={{ color: "#5A6275" }}>
               {live ? "API live" : "API unreachable"}
             </span>
           </div>
@@ -174,25 +219,104 @@ function Masthead({ health, factors }: { health: Health | null; factors: FactorM
 
       {/* The model stated, rather than described. An institutional reader gets
           more from one line of notation than from a paragraph about it. */}
-      <div className="mt-5 overflow-x-auto rounded border border-lineSoft bg-canvas
-                      px-4 py-3">
+      <div
+        className="rise mt-5 overflow-x-auto rounded border px-4 py-3"
+        style={{ animationDelay: "260ms", background: "#F6F5F3CC",
+                 borderColor: "#D2CFC8" }}
+      >
         <div className="eqn text-navy">
           <TeX
             latex={`r_{i,t} = \\alpha_i + \\sum_{k=1}^{${k || "K"}} \\beta_{i,k}\\,` +
                    `\\tilde{f}_{k,t} + \\varepsilon_{i,t}`}
-            plain={`r_it = a_i + sum_k b_ik * f~_kt + e_it`}
+            plain="r_it = a_i + sum_k b_ik * f~_kt + e_it"
           />
         </div>
       </div>
-      <p className="mt-1.5 text-[11px] leading-snug text-muted">
+      <p className="rise mt-1.5 text-[11px] leading-snug"
+         style={{ animationDelay: "300ms", color: "#5A6275" }}>
         <TeX latex={String.raw`\tilde{f}_{k,t}`} plain="f~_kt" /> is the
         orthogonalised factor, not the raw one — which is why{" "}
         <TeX latex={String.raw`\beta_{i,k}`} plain="b_ik" /> reads as
-        &ldquo;over and above everything above it in the hierarchy&rdquo;. Both panels
-        are available throughout; the Factor Explorer shows a factor against its
-        own residual.
+        &ldquo;over and above everything above it in the hierarchy&rdquo;.
       </p>
+
+      <HeroSpan panel={panel} years={years} />
     </section>
+  );
+}
+
+/**
+ * The span, and the regimes inside it.
+ *
+ * The smallest useful piece of the coverage panel further down: how long the
+ * history is, and what it has been through. The bands are the same editorial
+ * episodes marked there, and the names cycle so the reader notices they are
+ * dates on a line rather than decoration.
+ */
+function HeroSpan({ panel, years }: { panel: PanelSummary; years: number | null }) {
+  const [lit, setLit] = useState(0);
+  const calm = useReducedMotion();
+
+  useEffect(() => {
+    if (calm || !panel.first) return;
+    const t = setInterval(() => setLit((i) => (i + 1) % EPISODES.length), 2600);
+    return () => clearInterval(t);
+  }, [calm, panel.first]);
+
+  if (!panel.first || !panel.last || years === null) return null;
+
+  const lo = new Date(panel.first).getTime();
+  const hi = new Date(panel.last).getTime();
+  const span = hi - lo || 1;
+  const at = (iso: string) => ((new Date(iso).getTime() - lo) / span) * 100;
+
+  return (
+    <div className="rise mt-5 border-t pt-4" style={{ animationDelay: "350ms",
+                                                      borderColor: "#D2CFC8" }}>
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="text-[12px] text-navy">
+          <b className="font-semibold">{num(years, 1)} years</b> of daily history
+        </div>
+        <div className="font-mono text-[10px]" style={{ color: "#5A6275" }}>
+          {panel.first} → {panel.last}
+        </div>
+      </div>
+
+      <div className="relative mt-2 h-[8px] overflow-hidden rounded-[2px]"
+           style={{ background: "#CFCCC5" }}>
+        <div className="sweep h-full w-full" style={{ animationDelay: "420ms" }}>
+          {EPISODES.map((ep, i) => {
+            const x0 = Math.max(at(ep.start), 0);
+            const x1 = Math.min(at(ep.end), 100);
+            if (x1 <= x0) return null;
+            return (
+              <div
+                key={ep.label}
+                className="absolute inset-y-0 transition-opacity duration-500"
+                style={{ left: `${x0}%`, width: `${Math.max(x1 - x0, 0.5)}%`,
+                         background: "#8C3A2E",
+                         opacity: !calm && i === lit ? 0.85 : 0.4 }}
+                title={`${ep.label} · ${ep.start} → ${ep.end}`}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px]">
+        <span style={{ color: "#5A6275" }}>Through</span>
+        {EPISODES.map((ep, i) => (
+          <span
+            key={ep.label}
+            className="transition-colors duration-500"
+            style={{ color: !calm && i === lit ? "#2F4D73" : "#7B8194",
+                     fontWeight: !calm && i === lit ? 600 : 400 }}
+          >
+            {ep.label}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -205,12 +329,6 @@ function Figures({
   health: Health | null;
   inputs: number;
 }) {
-  const years =
-    panel.first && panel.last
-      ? (new Date(panel.last).getTime() - new Date(panel.first).getTime()) /
-        (365.25 * 24 * 3600 * 1000)
-      : null;
-
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <Card index={0}>
@@ -226,7 +344,7 @@ function Figures({
         <Stat
           label="Years of history"
           size="hero"
-          animate={years}
+          animate={spanYears(panel)}
           format={(v) => num(v, 1)}
           hint={panel.first && panel.last ? `${panel.first} → ${panel.last}` : undefined}
         />
@@ -396,155 +514,87 @@ function Coverage({
   );
 }
 
-// --- the nine blocks ------------------------------------------------------
-
-function Blocks({
-  blocks, factors, sparks,
-}: {
-  blocks: Block[];
-  factors: FactorMeta[];
-  sparks: Record<string, number[]>;
-}) {
-  const grouped = useMemo(
-    () =>
-      ordered(blocks).map((b) => ({
-        block: b,
-        members: factors
-          .filter((f) => f.block_id === b.block_id)
-          .sort((a, c) => a.hierarchy_level - c.hierarchy_level),
-      })),
-    [blocks, factors]
-  );
-
-  if (!grouped.length) return null;
-
-  return (
-    <Panel
-      title="Nine blocks, forty factors"
-      caption="Each block groups factors that price the same kind of risk. The
-               sparklines are the cumulative orthogonalised return over each
-               factor's own history, so they show shape rather than level."
-      index={5}
-    >
-      <div className="mt-1 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {grouped.map(({ block, members }) => {
-          const bs = blockStyle(block.block_id);
-          const vols = members.map((m) => m.vol_pct).filter((v): v is number => v != null);
-          const shown = members.slice(0, 4);
-          return (
-            <Link
-              key={block.block_id}
-              href="/factors"
-              className="group rounded border border-line bg-canvas px-3 py-2.5
-                         transition hover:border-navy2"
-            >
-              <div className="flex items-baseline justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="inline-block h-2.5 w-2.5 rounded-[2px]"
-                        style={{ background: bs.colour }} />
-                  <span className="text-[12px] font-semibold text-navy">
-                    {block.name}
-                  </span>
-                </div>
-                <span className="font-mono text-[10px] text-muted">
-                  {block.n_factors}f
-                  {vols.length > 1 &&
-                    ` · ${num(Math.min(...vols), 0)}–${num(Math.max(...vols), 0)}% vol`}
-                </span>
-              </div>
-
-              <p className="mt-1 text-[11px] leading-snug text-muted">
-                {block.description}
-              </p>
-
-              <div className="mt-2 space-y-[3px] border-t border-lineSoft pt-1.5">
-                {shown.map((m) => (
-                  <div key={m.factor_id} className="flex items-center gap-2">
-                    <span className="flex-1 truncate font-mono text-[10px] text-muted">
-                      {m.factor_id}
-                    </span>
-                    <Sparkline values={sparks[m.factor_id]} colour={bs.colour}
-                               width={46} height={12} />
-                  </div>
-                ))}
-                {members.length > shown.length && (
-                  <div className="text-[10px] text-muted">
-                    + {members.length - shown.length} more
-                  </div>
-                )}
-              </div>
-            </Link>
-          );
-        })}
-      </div>
-    </Panel>
-  );
-}
-
 // --- how a number gets here ----------------------------------------------
 
-const PIPELINE: Array<{ step: string; body: React.ReactNode }> = [
-  {
-    step: "Ingest",
-    body: <>Prices and quoted levels land in the warehouse from Yahoo, FRED and
-           the central-bank SDMX feeds. Each series resumes from its own
-           watermark, so a lagging one can catch up.</>,
-  },
-  {
-    step: "Make stationary",
-    body: <>Prices become log total returns; yields become duration-scaled bond
-           returns; levels are differenced or standardised. Every input is put on
-           a return footing before the model sees it.</>,
-  },
-  {
-    step: "Build factors",
-    body: <>Forty construction rules — single, spread, basket, curve shape, carry,
-           trend — evaluated over named instruments. The rule is stored, so the
-           formula on screen cannot drift from the series beside it.</>,
-  },
-  {
-    step: "Orthogonalise",
-    body: <>Each factor is regressed on the ones above it in the hierarchy over a
-           trailing window and refitted periodically. The window ends the day
-           before, so no factor value contains its own future.</>,
-  },
-  {
-    step: "Covariance",
-    body: <>The panel is shrunk toward a structured target and reported with its
-           condition number and shrinkage intensity, because a matrix you cannot
-           invert is a risk number you cannot trust.</>,
-  },
-  {
-    step: "Loadings and risk",
-    body: <>A security is regressed on the factors to get its betas; the betas and
-           the matrix give a predicted volatility, which is then checked against
-           the realised one.</>,
-  },
+const PIPELINE: Array<{ step: string; body: string }> = [
+  { step: "Ingest",
+    body: "Prices and quoted levels from Yahoo, FRED and the central-bank feeds, each series resuming from its own watermark." },
+  { step: "Make stationary",
+    body: "Prices to log total returns, yields to duration-scaled bond returns, levels differenced or standardised." },
+  { step: "Build factors",
+    body: "Forty stored construction rules evaluated over named instruments, so the formula cannot drift from the series." },
+  { step: "Orthogonalise",
+    body: "Each factor residualised on the ones above it, over a trailing window that ends the day before." },
+  { step: "Covariance",
+    body: "Shrunk toward a structured target, reported with its condition number and shrinkage intensity." },
+  { step: "Loadings and risk",
+    body: "Betas for one security, a predicted volatility from them, then a check against the realised one." },
 ];
 
+/**
+ * The pipeline as one card rather than six.
+ *
+ * A rail with six stops reads as a sequence at a glance, which six separate
+ * boxes did not — and the sequence is the content here. The Operations tab has
+ * the same six stages with what each reads and writes; this is the summary that
+ * sends you there.
+ */
 function Pipeline() {
   return (
-    <Panel
-      title="How a number gets here"
-      caption="Six stages, each one runnable and inspectable on its own. The
-               Operations tab shows what each reads and writes."
-      index={6}
+    <section
+      className="enter relative overflow-hidden rounded border px-5 py-5
+                 shadow-[0_1px_2px_rgba(42,47,58,0.05)] sm:px-6"
+      style={{
+        background: "linear-gradient(160deg, #F2F1EE 0%, #EAE8E4 100%)",
+        borderColor: "#D8D5CE",
+        animationDelay: "180ms",
+      }}
     >
-      <ol className="mt-1 grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+      <div className="flex items-baseline justify-between gap-4">
+        <h2 className="label">How a number gets here</h2>
+        <Link href="/ops" className="text-[11px] text-navy2 hover:text-navy">
+          Run it →
+        </Link>
+      </div>
+      <p className="mt-1 text-[11px]" style={{ color: "#5A6275" }}>
+        Six stages, each runnable and inspectable on its own.
+      </p>
+
+      <ol className="relative mt-5 grid gap-y-6 sm:grid-cols-3 xl:grid-cols-6">
+        {/* The rail the stops sit on. Only drawn at six columns, where the
+            stages really are one row: at three they wrap onto two, and a single
+            horizontal line would run through the first row and abandon the
+            second. It stops at the sixth circle rather than at the edge of the
+            grid, because a rail that continues past the last stop suggests a
+            seventh stage that does not exist. */}
+        <div
+          className="sweep pointer-events-none absolute left-[11px] top-[11px]
+                     hidden h-px xl:block"
+          style={{ background: "#C9C5BC", right: "calc(100% / 6 - 11px)",
+                   animationDelay: "260ms" }}
+        />
+
         {PIPELINE.map((s, i) => (
-          <li key={s.step} className="rounded border border-lineSoft bg-canvas
-                                      px-3 py-2">
-            <div className="flex items-baseline gap-2">
-              <span className="font-mono text-2xs text-navy3">
-                {String(i + 1).padStart(2, "0")}
-              </span>
-              <span className="text-[12px] font-semibold text-navy">{s.step}</span>
+          <li key={s.step} className="rise relative pr-4"
+              style={{ animationDelay: `${300 + i * 70}ms` }}>
+            <div
+              className="relative z-10 flex h-[22px] w-[22px] items-center
+                         justify-center rounded-full border font-mono text-[10px]
+                         font-semibold text-navy"
+              style={{ background: "#FBFAF7", borderColor: "#C9C5BC" }}
+            >
+              {i + 1}
             </div>
-            <p className="mt-1 text-[11px] leading-snug text-muted">{s.body}</p>
+            <div className="mt-2 text-[12px] font-semibold leading-tight text-navy">
+              {s.step}
+            </div>
+            <p className="mt-1 text-[11px] leading-snug" style={{ color: "#5A6275" }}>
+              {s.body}
+            </p>
           </li>
         ))}
       </ol>
-    </Panel>
+    </section>
   );
 }
 
@@ -572,7 +622,7 @@ function Directory() {
     <Panel
       title="Where to look"
       caption="Seven screens, each answering one kind of question."
-      index={7}
+      index={6}
     >
       <div className="mt-1 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
         {PAGES.map((p) => (
@@ -593,52 +643,6 @@ function Directory() {
           </Link>
         ))}
       </div>
-    </Panel>
-  );
-}
-
-// --- what it does not do --------------------------------------------------
-
-function Limits() {
-  return (
-    <Panel
-      title="What this model does not do"
-      caption="Stated here rather than discovered later. Each is recorded in the
-               methodology the assistant reads, and it will raise them unprompted
-               when they bear on a question."
-      index={8}
-    >
-      <ul className="mt-1 space-y-1.5 text-[11px] leading-snug text-muted">
-        <li>
-          <b className="text-navy">It forecasts risk, not return.</b> There is no
-          alpha model here, and no view on direction. A loading is a description
-          of exposure, not a recommendation.
-        </li>
-        <li>
-          <b className="text-navy">FX carry is approximated</b> from policy-rate
-          differentials, because the warehouse holds no forward points. Covered
-          interest parity makes that a stand-in, not the thing itself.
-        </li>
-        <li>
-          <b className="text-navy">The style block is long-only proxies.</b> ETF
-          returns are not the academic long-short factors, and a loading on them
-          should not be read as one.
-        </li>
-        <li>
-          <b className="text-navy">Daily data, linear betas.</b> A convex payoff —
-          the variance premium is one — is only first-order captured, and nothing
-          here models a term structure of risk.
-        </li>
-      </ul>
-      <p className="mt-2.5 border-t border-lineSoft pt-2 text-[11px] text-muted">
-        The full write-up, including every construction formula, is in{" "}
-        <span className="font-mono text-navy">Documentation/factor-model-paper.pdf</span>;
-        the formulas alone are in{" "}
-        <span className="font-mono text-navy">factor-formulas.md</span>. Each
-        factor&rsquo;s own formula is on its profile, behind the{" "}
-        <span className="font-mono text-navy">i</span> beside it in the Factor
-        Explorer.
-      </p>
     </Panel>
   );
 }
@@ -673,6 +677,14 @@ function summarise(factors: FactorMeta[]): PanelSummary {
   };
 }
 
+function spanYears(panel: PanelSummary): number | null {
+  if (!panel.first || !panel.last) return null;
+  return (
+    (new Date(panel.last).getTime() - new Date(panel.first).getTime()) /
+    (365.25 * 24 * 3600 * 1000)
+  );
+}
+
 /** Blocks in the model's own order, with anything unrecognised after them. */
 function ordered(blocks: Block[]): Block[] {
   return [...blocks].sort((a, b) => {
@@ -680,4 +692,22 @@ function ordered(blocks: Block[]): Block[] {
     const ib = BLOCK_ORDER.indexOf(b.block_id);
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
+}
+
+/**
+ * Whether the reader has asked for less motion.
+ *
+ * The CSS animations are handled by a media query in globals.css, but the
+ * episode cycle is a timer in JavaScript and no stylesheet can switch that off.
+ */
+function useReducedMotion(): boolean {
+  const [calm, setCalm] = useState(false);
+  useEffect(() => {
+    const q = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setCalm(q.matches);
+    const on = () => setCalm(q.matches);
+    q.addEventListener("change", on);
+    return () => q.removeEventListener("change", on);
+  }, []);
+  return calm;
 }

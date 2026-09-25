@@ -101,10 +101,43 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; background: #EEECE5; }
   .enter    { animation: none; }
+  /* Named rather than left to the blanket rule below: an infinite animation at
+     0.01ms is a loop that never rests, and `both` fill on a zero-length run is
+     a race with the paint. Switched off outright, each lands on its end state. */
+  .rise, .sweep, .pulse { animation: none; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* --- the overview hero --------------------------------------------------- */
+/* The front door is the one screen in the app allowed any theatre, because it
+   is the only one a reader lands on without a question already in mind.
+   Everywhere else a chart draws and stops. All of this is decoration: it
+   carries no information that is not also in the text beside it, which is why
+   it can be switched off above without anything being lost. */
+.rise { animation: rise 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* A span that draws itself across its own history. */
+.sweep {
+  animation: sweep 1s cubic-bezier(0.33, 1, 0.68, 1) both;
+  transform-origin: left center;
+}
+@keyframes sweep {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* The live indicator, which ought to look it. */
+.pulse { animation: pulse 2.6s ease-in-out infinite; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
 }
 
 /* --- numbers ------------------------------------------------------------- */
