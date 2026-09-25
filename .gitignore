@@ -31,6 +31,18 @@ Return_Based_Multi_Asset_Faktormodell.pdf
 Thumbs.db
 desktop.ini
 
+# LaTeX build intermediates. The .tex sources and the built .pdf are tracked —
+# these are what pdflatex drops beside them on the way, and they change on every
+# run whether or not the document did.
+*.aux
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
 # R session leftovers. No R source is tracked here — these are dropped into
 # whatever directory an ad hoc console happens to start in, Documentation so
 # far, and there is no reason for any of them to reach the repository.
