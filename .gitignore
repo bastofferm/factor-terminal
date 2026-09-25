@@ -43,6 +43,10 @@ desktop.ini
 *.fdb_latexmk
 *.synctex.gz
 
+# Film intermediates. `make_film --keep-work` leaves the narration, the bed and
+# the silent picture here; only the finished mp4 is tracked.
+screenshots/_film/
+
 # R session leftovers. No R source is tracked here — these are dropped into
 # whatever directory an ad hoc console happens to start in, Documentation so
 # far, and there is no reason for any of them to reach the repository.

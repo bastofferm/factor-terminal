@@ -14,10 +14,17 @@ that is tested rather than assumed.
 Lens, Operations, Data Health. Regenerate with
 `python -m scripts.capture_screenshots` while the app is running.*
 
-**[Watch the guided tour](screenshots/factor-terminal-tour.webm)** — 1m 42s
-through all eight tabs, saying what each one is for and why it is built that way.
-Recorded from the running app rather than mocked up, so what it shows is what the
-repository does; rebuild it with `python -m scripts.record_tour`.
+**[Watch the film](screenshots/factor-terminal-film.mp4)** — 2m 24s, narrated,
+through all eight tabs. Recorded from the running app rather than mocked up, so
+what it shows is what the repository does.
+
+Rebuild it with `python -m scripts.make_film`. The narration is synthesised
+first and the recording is then timed to it, so the picture holds each page for
+exactly as long as its line takes to say; the voice is Microsoft's neural TTS,
+which means the script text leaves the machine on the way to their endpoint. The
+music is four chords generated in `scripts/make_film.py` rather than licensed —
+`--music` takes a wav or mp3 if you hold rights to something better.
+`python -m scripts.record_tour` produces the same tour silently.
 
 **[Documentation/return-based-multi-asset-factor-model.md](Documentation/return-based-multi-asset-factor-model.md)**
 is the model write-up: what each block needs, what the data actually supported, the
@@ -148,8 +155,8 @@ backend/
   app/          FastAPI: thin routers over raw SQL, plus the DeepSeek assistant
   tests/        381 tests, mostly against simulated data with known parameters
 frontend/       Next.js 14 + Plotly, eight pages
-scripts/        model probe, backfills, screenshots, the guided tour, and the two
-                document builds
+scripts/        model probe, backfills, screenshots, the narrated film, and the
+                two document builds
 HowToSetupTerminalLocally/
                 install manual, schema reference, and a guided bootstrap
 ```
