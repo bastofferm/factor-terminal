@@ -33,24 +33,48 @@ import math
 import subprocess
 import sys
 import wave
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
 
 OUT = Path("screenshots")
 WORK = OUT / "_film"
-DEST = OUT / "factor-terminal-film.mp4"
-
-VOICE = "en-US-AvaNeural"
-# A measured read. The default pace is brisk for something a viewer is also
-# reading charts under.
-RATE = "-8%"
 
 SAMPLE_RATE = 44_100
 
+
+@dataclass(frozen=True)
+class Cut:
+    """One version of the film: a voice, a script, a bed, and a name.
+
+    Two exist. The house cut is what the README links: measured, factual, the
+    register the rest of the project is written in. The floor cut is the same
+    product sold the way a thirty-year sales desk would sell it — louder, faster,
+    and with a pulse under it instead of a pad.
+
+    What does not change between them is what the software is claimed to do. The
+    swagger is in the delivery, not in the capability: the floor cut never says
+    the model predicts a return, because the model's own landing page says it
+    forecasts risk and not return, and a promo that contradicted the product
+    would be the one thing in this repository that was not checkable.
+    """
+
+    name: str
+    voice: str
+    rate: str
+    pitch: str
+    dest: Path
+    title: str
+    title_line: str
+    end_title: str
+    end_line: str
+    narration: list[tuple[str | None, str, str]]
+
+
 # path, label, and what is said over it. Written for the ear rather than the
 # eye: shorter sentences than the on-screen captions, and one idea each.
-NARRATION: list[tuple[str | None, str, str]] = [
+HOUSE: list[tuple[str | None, str, str]] = [
     (None, "open",
      "This is Factor Terminal. A daily multi-asset factor model you can actually "
      "audit. Forty factors, nine blocks, and twenty-two years of history."),
@@ -88,6 +112,84 @@ NARRATION: list[tuple[str | None, str, str]] = [
      "on your own machine."),
 ]
 
+# The same eight pages, pitched. Short sentences, hard stops, and the features
+# named as if they were weapons — which is how the register works. Every claim
+# about what the software does is still one the software does: forty factors,
+# the stored formula, the raw panel, the block budget, the backtest, the refresh
+# chain. What is oversold is the telling.
+FLOOR: list[tuple[str | None, str, str]] = [
+    (None, "open",
+     "Alright, listen up. Thirty years I have been doing this. Thirty. And this "
+     "one is different. Factor Terminal. Forty factors, nine blocks, twenty-two "
+     "years. Every number traceable."),
+    ("/", "Overview",
+     "You open it up, and boom. The whole model, one screen. How far back it "
+     "goes. What it has lived through. Six stages, raw price to risk number. No "
+     "black box."),
+    ("/factors", "Factor Explorer",
+     "Forty factors, every one opens up. Series. Rolling risk. Distribution. Full "
+     "stationarity battery. And the formula, rendered from the rule the pipeline "
+     "actually runs. How many shops show you that?"),
+    ("/raw", "Raw Explorer",
+     "Before the model touches anything, you get the raw series underneath. That "
+     "is how you tell a bad print from a real crash."),
+    ("/matrix", "Covariance & PCA",
+     "How every factor moves with every other one, block by block. Plus a risk "
+     "budget, measured through a security the factors never saw. No circular "
+     "logic."),
+    ("/loadings", "Loadings Lab",
+     "Rolling betas, any security. Change the window, the estimator, the panel. "
+     "If those loadings will not hold still, you find out here. Not later."),
+    ("/risk", "Risk Lens",
+     "And here is where the other guys go quiet. Predicted risk against what "
+     "actually happened. Bias statistic. Mincer-Zarnowitz. Value at risk "
+     "coverage. Kupiec. Christoffersen. This model tells you when it is wrong."),
+    ("/ops", "Operations",
+     "One button, the whole chain refreshes. Every stage says what it reads, what "
+     "it writes, and what happens if it fails."),
+    ("/health", "Data Health",
+     "And every input is watched. Because your numbers are only as good as what "
+     "sits underneath them."),
+    (None, "close",
+     "Factor Terminal. Forty factors. Twenty-two years. Zero black boxes. Clone "
+     "it, run it, and check every number yourself."),
+]
+
+CUTS: dict[str, Cut] = {
+    "house": Cut(
+        name="house",
+        voice="en-US-AvaNeural",
+        # A measured read. The default pace is brisk for something a viewer is
+        # also reading charts under.
+        rate="-8%", pitch="+0Hz",
+        dest=OUT / "factor-terminal-film.mp4",
+        title="Factor Terminal",
+        title_line="A daily multi-asset factor model, built so that every number "
+                   "on screen can be traced back to a series you can open.",
+        end_title="Run it yourself",
+        end_line="The model write-up, every factor as a formula, and a case study "
+                 "working one security end to end are all in the repository.",
+        narration=HOUSE,
+    ),
+    "floor": Cut(
+        name="floor",
+        # The most authoritative male voice in the set, dropped and pushed.
+        # Measured on one line: the flat voice reads at 147 Hz and 137 words a
+        # minute, these settings at 130 Hz and 164 — deep enough to carry and
+        # fast enough to sound like someone who has said it a thousand times.
+        voice="en-US-ChristopherNeural",
+        rate="+20%", pitch="-18Hz",
+        dest=OUT / "factor-terminal-film-floor.mp4",
+        title="Forty factors. Zero black boxes.",
+        title_line="Twenty-two years of daily history, and every number on the "
+                   "screen traceable to a series you can open yourself.",
+        end_title="Check it yourself",
+        end_line="That is the whole pitch. Clone it, run it, and audit every "
+                 "number in it.",
+        narration=FLOOR,
+    ),
+}
+
 
 def ffmpeg() -> str:
     import imageio_ffmpeg
@@ -103,12 +205,13 @@ def run(args: list[str]) -> None:
 
 # --- 1. the voice ---------------------------------------------------------
 
-async def _say(text: str, dest: Path, voice: str) -> None:
+async def _say(text: str, dest: Path, cut: Cut) -> None:
     import edge_tts
-    await edge_tts.Communicate(text, voice, rate=RATE).save(str(dest))
+    await edge_tts.Communicate(text, cut.voice, rate=cut.rate,
+                               pitch=cut.pitch).save(str(dest))
 
 
-def synthesise(voice: str) -> list[tuple[Path, float]]:
+def synthesise(cut: Cut) -> list[tuple[Path, float]]:
     """One wav per line, with its exact duration.
 
     Measured by decoding rather than by asking for metadata: the duration is
@@ -118,11 +221,11 @@ def synthesise(voice: str) -> list[tuple[Path, float]]:
     WORK.mkdir(parents=True, exist_ok=True)
     out: list[tuple[Path, float]] = []
 
-    for i, (_, label, text) in enumerate(NARRATION):
+    for i, (_, label, text) in enumerate(cut.narration):
         mp3 = WORK / f"vo-{i:02d}.mp3"
         wav = WORK / f"vo-{i:02d}.wav"
         print(f"  voicing {i:02d} {label} ...", flush=True)
-        asyncio.run(_say(text, mp3, voice))
+        asyncio.run(_say(text, mp3, cut))
         run([ffmpeg(), "-y", "-loglevel", "error", "-i", str(mp3),
              "-ar", str(SAMPLE_RATE), "-ac", "1", str(wav)])
         with wave.open(str(wav)) as w:
@@ -134,7 +237,7 @@ def synthesise(voice: str) -> list[tuple[Path, float]]:
 
 # --- 2. the picture -------------------------------------------------------
 
-def record(clips: list[tuple[Path, float]]) -> tuple[Path, list[float]]:
+def record(clips: list[tuple[Path, float]], cut: Cut) -> tuple[Path, list[float]]:
     """Record the tour, and report when each line should start.
 
     The offsets are *measured* rather than predicted. Working them out from the
@@ -176,20 +279,17 @@ def record(clips: list[tuple[Path, float]]) -> tuple[Path, list[float]]:
         def now() -> float:
             return time.monotonic() - t0
 
-        stops = [n for n in NARRATION if n[0] is not None]
+        stops = [n for n in cut.narration if n[0] is not None]
         stop_i = 0
 
-        for (path, label, _), (_, seconds) in zip(NARRATION, clips):
+        for (path, label, _), (_, seconds) in zip(cut.narration, clips):
             if path is None and label == "open":
                 print(f"  title card ({seconds:.1f}s) ...", flush=True)
                 page.goto(f"{rt.BASE}/", wait_until="networkidle", timeout=60_000)
                 page.wait_for_timeout(900)
                 facts = rt.read_facts(page)
                 page.evaluate(rt.card_js(
-                    "<h1>Factor Terminal</h1>"
-                    "<p>A daily multi-asset factor model, built so that every "
-                    "number on screen can be traced back to a series you can "
-                    "open.</p>"
+                    f"<h1>{cut.title}</h1><p>{cut.title_line}</p>"
                     f"<div class='stats'>{facts}</div>"))
                 page.wait_for_timeout(500)      # let the card fade up first
                 offsets.append(now())
@@ -202,10 +302,7 @@ def record(clips: list[tuple[Path, float]]) -> tuple[Path, list[float]]:
                 page.goto(f"{rt.BASE}/", wait_until="networkidle", timeout=60_000)
                 page.wait_for_timeout(800)
                 page.evaluate(rt.card_js(
-                    "<h1>Run it yourself</h1>"
-                    "<p>The model write-up, every factor as a formula, and a case "
-                    "study working one security end to end are all in the "
-                    "repository.</p>"
+                    f"<h1>{cut.end_title}</h1><p>{cut.end_line}</p>"
                     "<p style='margin-top:26px'><code>start.bat</code></p>"))
                 page.wait_for_timeout(500)
                 offsets.append(now())
@@ -246,7 +343,7 @@ def record(clips: list[tuple[Path, float]]) -> tuple[Path, list[float]]:
 
 # --- 3. the bed -----------------------------------------------------------
 
-def compose(seconds: float) -> Path:
+def compose_calm(seconds: float) -> Path:
     """A four-chord bed, synthesised.
 
     Deliberately simple: a pad, a plucked arpeggio an octave up, and a sub. The
@@ -366,6 +463,118 @@ def compose(seconds: float) -> Path:
     return dest
 
 
+def compose_pulse(seconds: float) -> Path:
+    """A faster bed with a pulse in it, for the floor cut.
+
+    Same rules as the calm one — nothing percussive enough to fight a consonant,
+    no melody up where the words are — but at 126 rather than 72, and driven by
+    a repeating eighth-note figure instead of a pad that hangs. The point is
+    forward motion under a voice that is already pushing.
+
+    A minor, i - VI - III - VII. It vamps rather than resolves, which is what a
+    ticker sounds like: something continuously happening and never finishing.
+    """
+    sr = SAMPLE_RATE
+    bpm = 126.0
+    beat = 60.0 / bpm
+    bar = beat * 4
+    n = int(seconds * sr)
+    bed = np.zeros(n)
+
+    def hz(semitones_from_a4: float) -> float:
+        return 440.0 * 2 ** (semitones_from_a4 / 12)
+
+    #        A minor      F major      C major      G major
+    roots = [-24, -28, -21, -26]
+    triads = [[0, 3, 7], [0, 4, 7], [0, 4, 7], [0, 4, 7]]
+
+    def place(sig: np.ndarray, start: float) -> None:
+        i0 = int(start * sr)
+        if i0 >= n:
+            return
+        ln = min(len(sig), n - i0)
+        if ln > 0:
+            bed[i0:i0 + ln] += sig[:ln]
+
+    def tone(f: float, length: float, gain: float, attack: float, decay: float,
+             harmonics: tuple[float, ...] = (1.0, 0.3, 0.1)) -> np.ndarray:
+        ln = int(length * sr)
+        tt = np.arange(ln) / sr
+        sig = np.zeros(ln)
+        for k, amp in enumerate(harmonics, start=1):
+            sig += amp * np.sin(2 * np.pi * f * k * tt)
+        env = np.ones(ln)
+        a = min(int(attack * sr), ln)
+        if a:
+            env[:a] = np.linspace(0, 1, a)
+        env[a:] = np.exp(-np.arange(ln - a) / (decay * sr))
+        return sig * env * gain
+
+    bars = int(math.ceil(seconds / bar)) + 1
+    for b in range(bars):
+        t0 = b * bar
+        root = roots[b % 4]
+        triad = triads[b % 4]
+
+        # Bass on every eighth, accented on the beat. This is the engine.
+        for j in range(8):
+            gain = 0.115 if j % 2 == 0 else 0.070
+            place(tone(hz(root), beat * 0.46, gain, 0.004, 0.09,
+                       (1.0, 0.16, 0.04)), t0 + j * beat / 2)
+
+        # A low thump on one and three — a heartbeat, not a kick.
+        for j in (0, 2):
+            place(tone(hz(root - 12), 0.22, 0.10, 0.006, 0.055, (1.0,)),
+                  t0 + j * beat)
+
+        # Chord stabs, short, so they punctuate instead of sustaining.
+        for j in (0, 2.5):
+            for st in triad:
+                place(tone(hz(root + 24 + st), 0.30, 0.030, 0.008, 0.10),
+                      t0 + j * beat)
+
+        # The ticker: a high blip every sixteenth, alternating, quiet. Reads as
+        # movement without ever being a melody.
+        for j in range(16):
+            if j % 4 == 2:
+                continue
+            f = hz(root + 36 + triad[j % len(triad)])
+            place(tone(f, 0.055, 0.012 if j % 2 else 0.019, 0.002, 0.018,
+                       (1.0, 0.5)), t0 + j * beat / 4)
+
+    bed = bed[:n]
+
+    # Short slap, to give it a room without smearing the pulse.
+    for delay_ms, fb in ((23, 0.20), (41, 0.14)):
+        d = int(delay_ms / 1000 * sr)
+        tail = np.zeros(n)
+        tail[d:] = bed[:-d] * fb
+        bed = bed + tail
+
+    # Keep it out of the voice's way: the same low-pass, a little gentler.
+    k = 14
+    bed = np.convolve(bed, np.hanning(k) / np.hanning(k).sum(), mode="same")
+
+    fi, fo = int(1.4 * sr), int(2.6 * sr)
+    bed[:fi] *= np.linspace(0, 1, fi)
+    bed[-fo:] *= np.linspace(1, 0, fo)
+
+    peak = np.max(np.abs(bed)) or 1.0
+    bed = bed / peak * 0.72
+
+    dest = WORK / "music.wav"
+    with wave.open(str(dest), "w") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes((bed * 32767).astype("<i2").tobytes())
+    print(f"  composed {seconds:.0f}s of pulse -> {dest.name}")
+    return dest
+
+
+BEDS = {"house": compose_calm, "floor": compose_pulse}
+
+
 # --- 4. the mix -----------------------------------------------------------
 
 def build_voice_track(clips: list[tuple[Path, float]], offsets: list[float],
@@ -400,7 +609,7 @@ def build_voice_track(clips: list[tuple[Path, float]], offsets: list[float],
     return dest
 
 
-def mix_and_mux(picture: Path, voice: Path, music: Path) -> Path:
+def mix_and_mux(picture: Path, voice: Path, music: Path, dest: Path) -> Path:
     """Duck the bed under the voice and burn it onto the picture.
 
     Sidechain compression rather than a fixed level: a bed set quiet enough to
@@ -418,7 +627,7 @@ def mix_and_mux(picture: Path, voice: Path, music: Path) -> Path:
         "[ducked][vox]amix=inputs=2:normalize=0:duration=first,"
         "alimiter=limit=0.95[a]"
     )
-    DEST.unlink(missing_ok=True)
+    dest.unlink(missing_ok=True)
     run([ffmpeg(), "-y", "-loglevel", "error",
          "-i", str(picture), "-i", str(voice), "-i", str(music),
          "-filter_complex", filt,
@@ -429,8 +638,8 @@ def mix_and_mux(picture: Path, voice: Path, music: Path) -> Path:
          "-c:v", "libx264", "-preset", "medium", "-crf", "21",
          "-pix_fmt", "yuv420p", "-movflags", "+faststart",
          "-c:a", "aac", "-b:a", "192k",
-         "-shortest", str(DEST)])
-    return DEST
+         "-shortest", str(dest)])
+    return dest
 
 
 def duration_of(media: Path) -> float:
@@ -448,12 +657,19 @@ def duration_of(media: Path) -> float:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Narrated film of the app")
-    ap.add_argument("--voice", default=VOICE, help="edge-tts voice short name")
+    ap.add_argument("--cut", choices=sorted(CUTS), default="house",
+                    help="house: the measured read. floor: the sales pitch.")
+    ap.add_argument("--voice", default=None,
+                    help="override the cut's edge-tts voice")
     ap.add_argument("--music", type=Path, default=None,
                     help="a wav or mp3 to use instead of the synthesised bed")
     ap.add_argument("--keep-work", action="store_true",
                     help="leave the intermediate audio in screenshots/_film")
     args = ap.parse_args()
+
+    cut = CUTS[args.cut]
+    if args.voice:
+        cut = replace(cut, voice=args.voice)
 
     import urllib.request
     try:
@@ -463,20 +679,22 @@ def main() -> int:
               "Start it with start.bat first.", file=sys.stderr)
         return 1
 
+    print(f"\ncut: {cut.name}  ({cut.voice}, rate {cut.rate}, pitch {cut.pitch})")
+
     print("\nnarration")
-    clips = synthesise(args.voice)
+    clips = synthesise(cut)
 
     print("\npicture")
-    picture, offsets = record(clips)
+    picture, offsets = record(clips, cut)
     total = duration_of(picture)
     print(f"  {total:.1f}s recorded")
 
     print("\naudio")
     voice = build_voice_track(clips, offsets, total)
-    music = args.music if args.music else compose(total + 0.5)
+    music = args.music if args.music else BEDS[cut.name](total + 0.5)
 
     print("\nmix")
-    dest = mix_and_mux(picture, voice, music)
+    dest = mix_and_mux(picture, voice, music, cut.dest)
 
     if not args.keep_work:
         import shutil

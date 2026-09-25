@@ -16,15 +16,22 @@ Lens, Operations, Data Health. Regenerate with
 
 **[Watch the film](screenshots/factor-terminal-film.mp4)** — 2m 24s, narrated,
 through all eight tabs. Recorded from the running app rather than mocked up, so
-what it shows is what the repository does.
+what it shows is what the repository does. There is also a
+**[sales-desk cut](screenshots/factor-terminal-film-floor.mp4)** of the same
+tour, 2m 38s: deeper voice, faster read, a pulse under it instead of a pad.
 
-Rebuild it with `python -m scripts.make_film`. The narration is synthesised
-first and the recording is then timed to it, so the picture holds each page for
-exactly as long as its line takes to say; the voice is Microsoft's neural TTS,
-which means the script text leaves the machine on the way to their endpoint. The
-music is four chords generated in `scripts/make_film.py` rather than licensed —
-`--music` takes a wav or mp3 if you hold rights to something better.
-`python -m scripts.record_tour` produces the same tour silently.
+Rebuild either with `python -m scripts.make_film --cut house|floor`. The
+narration is synthesised first and the recording is then timed to it, so the
+picture holds each page for exactly as long as its line takes to say; the voice
+is Microsoft's neural TTS, which means the script text leaves the machine on the
+way to their endpoint. The music is generated in `scripts/make_film.py` rather
+than licensed — `--music` takes a wav or mp3 if you hold rights to something
+better. `python -m scripts.record_tour` produces the same tour silently.
+
+The two cuts differ in register, not in claims. The floor cut sells hard, but it
+never says the model predicts a return, because it does not: it forecasts risk,
+and a promo that contradicted the product would be the one thing here that was
+not checkable.
 
 **[Documentation/return-based-multi-asset-factor-model.md](Documentation/return-based-multi-asset-factor-model.md)**
 is the model write-up: what each block needs, what the data actually supported, the
