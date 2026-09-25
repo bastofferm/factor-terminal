@@ -22,6 +22,19 @@ Two renderings of the same thing:
 Plain is deliberately ASCII-only. These strings reach a Windows console through the
 pipeline CLIs, where a minus sign or a sigma raises UnicodeEncodeError under the
 cp1252 default, and a formula is not worth crashing a build job for.
+
+The prose carries mathematics too. A step reads "Subtract the overnight rate:
+x_t = r_t - c_(t-1)", and a symbol's meaning can hold a whole convexity formula,
+so the split above would otherwise leave half the notation on the page set as
+ASCII next to a typeset equation. Wherever prose contains an expression it gets a
+second rendering -- `Symbol.meaning_tex`, `Step.tex` -- which is the same sentence
+with its mathematics in `$...$` spans: inline math in Markdown, in LaTeX and in
+KaTeX alike, so one convention serves all three consumers.
+
+Only prose that actually contains an expression gets one. A bare `t` stays prose;
+`t-1` and anything larger is mathematics. `test_formula.py` checks that the text
+outside the spans still matches the ASCII word for word, which is what keeps the
+two from drifting apart.
 """
 
 from __future__ import annotations
@@ -52,6 +65,28 @@ class Symbol:
     meaning: str
     kind: str                 # instrument | level | curve | factor | constant
     ref: str | None = None    # instrument_id or series_id, where one exists
+    # The same meaning with its mathematics in `$...$`, where there is any.
+    meaning_tex: str | None = None
+
+
+@dataclass(frozen=True)
+class Step:
+    """One construction step in both renderings.
+
+    A pair rather than two parallel lists on `Formula`, because the steps are
+    assembled conditionally -- appended, inserted at the front -- and two lists
+    kept in step by hand would come apart at the first branch that forgets one.
+    Here the two renderings cannot separate: they are one object.
+
+    `__str__` returns the ASCII, so a caller that only wants the plain form can
+    keep treating a step as the string it used to be.
+    """
+
+    plain: str
+    tex: str
+
+    def __str__(self) -> str:
+        return self.plain
 
 
 @dataclass(frozen=True)
@@ -59,44 +94,25 @@ class Formula:
     plain: str
     latex: str
     where: list[Symbol] = field(default_factory=list)
-    steps: list[str] = field(default_factory=list)
+    # Plain prose stays an ordinary str; only a step with notation needs a Step.
+    steps: list[str | Step] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
             "plain": self.plain,
             "latex": self.latex,
             "where": [s.__dict__ for s in self.where],
-            "steps": list(self.steps),
+            # Both lists come out of the same comprehension over the same list,
+            # so they are aligned by construction rather than by discipline.
+            "steps": [str(s) for s in self.steps],
+            "steps_tex": [s.tex if isinstance(s, Step) else None
+                          for s in self.steps],
         }
 
 
 # ---------------------------------------------------------------------------
 # shared building blocks
 # ---------------------------------------------------------------------------
-
-# Every instrument return in the model is a log total return, and every excess
-# return subtracts *yesterday's* overnight rate, because the rate earned over day t
-# was set at t-1 (core/transforms.py::to_excess_return).
-PREAMBLE: list[Symbol] = [
-    Symbol("r_t^X", r"r^X_t",
-           "log total return of instrument X: ln(P_t / P_{t-1}) on a price series "
-           "already adjusted for dividends and splits", "constant"),
-    Symbol("c_t", r"c_t",
-           f"daily cash rate: {CASH_RATE_SERIES} at t, quoted as an annualised "
-           f"percent, divided by 100 and by {TRADING_DAYS}", "level",
-           CASH_RATE_SERIES),
-    Symbol("x_t^X", r"x^X_t",
-           "excess return of X over cash: x_t^X = r_t^X - c_{t-1}", "constant"),
-    Symbol("f_t", r"f_t", "the raw factor, before any orthogonalisation", "constant"),
-    Symbol("f~_t", r"\tilde{f}_t",
-           "the orthogonalised factor, which is what the model consumes", "constant"),
-]
-
-_CASH = Symbol("c_t", r"c_t",
-               f"daily cash rate: {CASH_RATE_SERIES}_t / 100 / {TRADING_DAYS}, lagged "
-               f"one day because the overnight rate earned on day t is set at t-1",
-               "level", CASH_RATE_SERIES)
-
 
 def _tex(name: str) -> str:
     r"""Escape an identifier for \text{}.
@@ -109,14 +125,44 @@ def _tex(name: str) -> str:
     return name.replace("\\", r"\textbackslash{}").replace("_", r"\_")
 
 
+# Every instrument return in the model is a log total return, and every excess
+# return subtracts *yesterday's* overnight rate, because the rate earned over day t
+# was set at t-1 (core/transforms.py::to_excess_return).
+PREAMBLE: list[Symbol] = [
+    Symbol("r_t^X", r"r^X_t",
+           "log total return of instrument X: ln(P_t / P_{t-1}) on a price series "
+           "already adjusted for dividends and splits", "constant",
+           meaning_tex=r"log total return of instrument X: $\ln(P_t / P_{t-1})$ on "
+                       r"a price series already adjusted for dividends and splits"),
+    Symbol("c_t", r"c_t",
+           f"daily cash rate: {CASH_RATE_SERIES} at t, quoted as an annualised "
+           f"percent, divided by 100 and by {TRADING_DAYS}", "level",
+           CASH_RATE_SERIES),
+    Symbol("x_t^X", r"x^X_t",
+           "excess return of X over cash: x_t^X = r_t^X - c_{t-1}", "constant",
+           meaning_tex=r"excess return of X over cash: $x^X_t = r^X_t - c_{t-1}$"),
+    Symbol("f_t", r"f_t", "the raw factor, before any orthogonalisation", "constant"),
+    Symbol("f~_t", r"\tilde{f}_t",
+           "the orthogonalised factor, which is what the model consumes", "constant"),
+]
+
+_CASH = Symbol("c_t", r"c_t",
+               f"daily cash rate: {CASH_RATE_SERIES}_t / 100 / {TRADING_DAYS}, lagged "
+               f"one day because the overnight rate earned on day t is set at t-1",
+               "level", CASH_RATE_SERIES,
+               meaning_tex=(rf"daily cash rate: $\text{{{_tex(CASH_RATE_SERIES)}}}_t "
+                            rf"/ 100 / {TRADING_DAYS}$, lagged one day because the "
+                            rf"overnight rate earned on day t is set at $t-1$"))
+
+
 def _instrument(ticker: str, role: str = "instrument return") -> Symbol:
     return Symbol(f"r_t^{ticker}", rf"r^{{\text{{{_tex(ticker)}}}}}_t",
                   f"{role}: log total return of {ticker}", "instrument", ticker)
 
 
-def _level(series_id: str, meaning: str) -> Symbol:
+def _level(series_id: str, meaning: str, meaning_tex: str | None = None) -> Symbol:
     return Symbol(series_id, rf"\text{{{_tex(series_id)}}}", meaning, "level",
-                  series_id)
+                  series_id, meaning_tex)
 
 
 def _duration_symbols(curve_label: str) -> list[Symbol]:
@@ -127,10 +173,17 @@ def _duration_symbols(curve_label: str) -> list[Symbol]:
         Symbol("D_t^(T)", r"D^{(T)}_t",
                "modified duration of a par bond: (1 - (1 + y/2)^(-2T)) / y, "
                "evaluated at yesterday's yield so the return at t uses only "
-               "information available at t-1", "constant"),
+               "information available at t-1", "constant",
+               meaning_tex=r"modified duration of a par bond: "
+                           r"$\frac{1 - (1 + y/2)^{-2T}}{y}$, evaluated at "
+                           r"yesterday's yield so the return at t uses only "
+                           r"information available at $t-1$"),
         Symbol("C_t^(T)", r"C^{(T)}_t",
                "convexity of the same par bond: (2/y^2)(1 - (1+y/2)^(-2T)) "
-               "- 2T(1+y/2)^(-2T) / (y(1+y/2))", "constant"),
+               "- 2T(1+y/2)^(-2T) / (y(1+y/2))", "constant",
+               meaning_tex=r"convexity of the same par bond: "
+                           r"$\frac{2}{y^2}\bigl(1 - (1+y/2)^{-2T}\bigr) "
+                           r"- \frac{2T(1+y/2)^{-2T}}{y(1+y/2)}$"),
     ]
 
 
@@ -179,13 +232,15 @@ def _f_single(inputs: dict) -> Formula:
                   else rf"r^{{\text{{{_tex(inst)}}}}}_t")
 
     where = [_instrument(inst)]
-    steps: list[str] = []
+    steps: list[str | Step] = []
 
     if excess:
         where.append(_CASH)
-        steps.append(f"Subtract the overnight rate: x_t = r_t - c_(t-1). {inst} is a "
-                     f"funded long position, so its return has to be measured over "
-                     f"cash.")
+        steps.append(Step(
+            f"Subtract the overnight rate: x_t = r_t - c_(t-1). {inst} is a "
+            f"funded long position, so its return has to be measured over cash.",
+            rf"Subtract the overnight rate: $x_t = r_t - c_{{t-1}}$. {inst} is a "
+            rf"funded long position, so its return has to be measured over cash."))
     else:
         steps.append("No cash leg: this is not a funded position, so there is nothing "
                      "to fund.")
@@ -234,8 +289,11 @@ def _f_basket(inputs: dict) -> Formula:
     latex = rf"f_t = \frac{{{ll}}}{{{len(longs)}}}"
 
     where = [_instrument(i, "long leg") for i in longs]
-    steps = [f"Equally weighted long basket of {len(longs)}: each leg carries "
-             f"1/{len(longs)} of the notional."]
+    steps: list[str | Step] = [
+        Step(f"Equally weighted long basket of {len(longs)}: each leg carries "
+             f"1/{len(longs)} of the notional.",
+             rf"Equally weighted long basket of {len(longs)}: each leg carries "
+             rf"$1/{len(longs)}$ of the notional.")]
 
     if shorts:
         sp = " + ".join(f"r_t^{i}" for i in shorts)
@@ -327,8 +385,9 @@ def _f_synthetic_bond(inputs: dict) -> Formula:
         latex = (r"f_t = -D_{t-1}\,\Delta y_t "
                  r"+ \tfrac{1}{2} C_{t-1}\,(\Delta y_t)^2 "
                  r"+ \frac{y_{t-1} - c_{t-1}}{252}")
-        steps = [f"Carry is the {tenor:g}y yield earned for a day, less cash, so the "
-                 f"factor is an excess return."]
+        steps: list[str | Step] = [
+            f"Carry is the {tenor:g}y yield earned for a day, less cash, so the "
+            f"factor is an excess return."]
         where_extra = [_CASH]
     else:
         plain = "f_t = -D_{t-1} * dy_t + 0.5 * C_{t-1} * (dy_t)^2"
@@ -341,17 +400,25 @@ def _f_synthetic_bond(inputs: dict) -> Formula:
         where_extra = []
 
     where = [
-        _level(series, "quoted yield series, in percent; y_t is that divided by 100"),
+        _level(series, "quoted yield series, in percent; y_t is that divided by 100",
+               r"quoted yield series, in percent; $y_t$ is that divided by 100"),
         Symbol("D_{t-1}", r"D_{t-1}",
                f"modified duration of a {tenor:g}y par bond at yesterday's yield: "
-               f"(1 - (1 + y/2)^(-2*{tenor:g})) / y", "constant"),
+               f"(1 - (1 + y/2)^(-2*{tenor:g})) / y", "constant",
+               meaning_tex=rf"modified duration of a {tenor:g}y par bond at "
+                           rf"yesterday's yield: "
+                           rf"$\frac{{1 - (1 + y/2)^{{-2\cdot{tenor:g}}}}}{{y}}$"),
         Symbol("C_{t-1}", r"C_{t-1}",
                f"convexity of the same {tenor:g}y par bond", "constant"),
     ] + where_extra
 
-    steps.insert(0, f"Treat the series as the yield of a {tenor:g}y par bond and price "
-                    f"a day's move on it, with duration and convexity taken at t-1 so "
-                    f"nothing about today's move leaks into its own pricing.")
+    steps.insert(0, Step(
+        f"Treat the series as the yield of a {tenor:g}y par bond and price a day's "
+        f"move on it, with duration and convexity taken at t-1 so nothing about "
+        f"today's move leaks into its own pricing.",
+        rf"Treat the series as the yield of a {tenor:g}y par bond and price a day's "
+        rf"move on it, with duration and convexity taken at $t-1$ so nothing about "
+        rf"today's move leaks into its own pricing."))
     return Formula(plain, latex, where, steps)
 
 
@@ -436,8 +503,11 @@ def _f_variance_premium(inputs: dict) -> Formula:
         [_level("FRED:VIXCLS", "VIX close in index points; divided by 100 it is an "
                                "annualised volatility in decimal"),
          _instrument(under, "underlying whose realised variance is delivered")],
-        ["Yesterday's implied variance is what a variance swap struck at t-1 pays "
-         "against, so the lag is the contract and not a modelling choice.",
+        [Step("Yesterday's implied variance is what a variance swap struck at t-1 "
+              "pays against, so the lag is the contract and not a modelling choice.",
+              r"Yesterday's implied variance is what a variance swap struck at $t-1$ "
+              r"pays against, so the lag is the contract and not a modelling "
+              r"choice."),
          f"Today's realised variance is the squared {under} return, which is what the "
          f"daily leg of such a swap settles on.",
          "The difference is the daily payoff of a short variance position, positive on "
@@ -583,7 +653,9 @@ def _f_fx_carry(inputs: dict) -> Formula:
                                  "foreign currency against the dollar" if flipped
                                  else "")))
         if sid:
-            where.append(_level(sid, f"{ccy} policy rate i_{ccy}, annualised percent"))
+            where.append(_level(
+                sid, f"{ccy} policy rate i_{ccy}, annualised percent",
+                rf"{ccy} policy rate $i_{{\text{{{_tex(ccy)}}}}}$, annualised percent"))
     where.append(_level(usd_rate, "USD policy rate, the funding leg"))
     where.append(Symbol("s_j", "s_j",
                         "+1 or -1, whichever orients the quoted pair as long the "
@@ -595,8 +667,10 @@ def _f_fx_carry(inputs: dict) -> Formula:
          f"because the warehouse holds no forward points. Covered interest parity says "
          f"the forward discount equals the rate differential, so this stands in for "
          f"it.",
-         "The differential is lagged one day: the carry earned over day t is fixed by "
-         "the rates set at t-1.",
+         Step("The differential is lagged one day: the carry earned over day t is "
+              "fixed by the rates set at t-1.",
+              r"The differential is lagged one day: the carry earned over day t is "
+              r"fixed by the rates set at $t-1$."),
          "Each leg is held long when it yields more than the dollar and short when it "
          "yields less, and the basket is the equally weighted average of the legs.",
          "APPROXIMATION. Three non-USD legs is narrower and noisier than a real G10 "
@@ -729,15 +803,22 @@ def orthogonalisation(targets: list[str] | None, mode: str = "rolling") -> Formu
                f"{ORTH_REFIT_EVERY}", "constant"),
     ]
 
-    steps = [
+    steps: list[str | Step] = [
         f"Residualise against {names}, in that order of the block hierarchy.",
         window_step,
-        "The fitting window ends at tau-1, so day t is never part of the regression "
-        "that residualises it. That is the whole reason for the rolling refit: a "
-        "full-sample residual would put future information into historical factor "
-        "values, and this project's headline output is a predicted-versus-realised "
-        "risk comparison, which such a leak would flatter exactly where the model is "
-        "being judged.",
+        Step(
+            "The fitting window ends at tau-1, so day t is never part of the "
+            "regression that residualises it. That is the whole reason for the "
+            "rolling refit: a full-sample residual would put future information "
+            "into historical factor values, and this project's headline output is "
+            "a predicted-versus-realised risk comparison, which such a leak would "
+            "flatter exactly where the model is being judged.",
+            r"The fitting window ends at $\tau-1$, so day t is never part of the "
+            r"regression that residualises it. That is the whole reason for the "
+            r"rolling refit: a full-sample residual would put future information "
+            r"into historical factor values, and this project's headline output is "
+            r"a predicted-versus-realised risk comparison, which such a leak would "
+            r"flatter exactly where the model is being judged."),
         "The regressors are the targets' own orthogonalised series, so the hierarchy "
         "compounds: by the time a level-3 factor is residualised, the level-0 factors "
         "it sees have already had everything above them removed.",

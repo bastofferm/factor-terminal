@@ -20,6 +20,8 @@ interface FormulaSymbol {
   plain: string;
   latex: string;
   meaning: string;
+  /** The meaning with its mathematics in `$...$`, where the prose has any. */
+  meaning_tex: string | null;
   kind: string;
   ref: string | null;
 }
@@ -29,6 +31,8 @@ interface FormulaBlock {
   latex: string;
   where: FormulaSymbol[];
   steps: string[];
+  /** Aligned with `steps`; null where a step is prose and nothing more. */
+  steps_tex: (string | null)[];
 }
 
 interface FactorFormula {
@@ -160,7 +164,10 @@ export function FactorProfile({
                     latex={p.formula.construction.latex}
                     plain={p.formula.construction.plain}
                   />
-                  <Steps steps={p.formula.construction.steps} />
+                  <Steps
+                    steps={p.formula.construction.steps}
+                    tex={p.formula.construction.steps_tex}
+                  />
                   <Where symbols={[...p.formula.preamble, ...p.formula.construction.where]} />
                 </Section>
               )}
@@ -182,7 +189,10 @@ export function FactorProfile({
                     latex={p.formula.orthogonalisation.latex}
                     plain={p.formula.orthogonalisation.plain}
                   />
-                  <Steps steps={p.formula.orthogonalisation.steps} />
+                  <Steps
+                    steps={p.formula.orthogonalisation.steps}
+                    tex={p.formula.orthogonalisation.steps_tex}
+                  />
                   {p.formula.orthogonalisation.where.length > 0 && (
                     <Where symbols={p.formula.orthogonalisation.where} />
                   )}
@@ -389,7 +399,82 @@ function TeX({ latex, plain }: { latex?: string; plain: string }) {
   );
 }
 
-function Steps({ steps }: { steps: string[] }) {
+type Token =
+  | { html: string }   // typeset mathematics
+  | { em: string }
+  | { text: string };
+
+const MATH_SPAN = /\$([^$]*)\$/g;
+const EMPHASIS = /\*([^*]+)\*/g;
+
+function tokenise(source: string, hasMath: boolean): Token[] {
+  const out: Token[] = [];
+
+  // `*emphasis*` is the only markup the registry's prose uses, and it is there
+  // for the Markdown appendix — printed raw, it reads as stray asterisks.
+  const pushText = (s: string) => {
+    let last = 0;
+    for (const m of s.matchAll(EMPHASIS)) {
+      if (m.index > last) out.push({ text: s.slice(last, m.index) });
+      out.push({ em: m[1] });
+      last = m.index + m[0].length;
+    }
+    if (last < s.length) out.push({ text: s.slice(last) });
+  };
+
+  if (!hasMath) {
+    pushText(source);
+    return out;
+  }
+
+  let last = 0;
+  for (const m of source.matchAll(MATH_SPAN)) {
+    if (m.index > last) pushText(source.slice(last, m.index));
+    out.push({ html: render(m[1], false) });
+    last = m.index + m[0].length;
+  }
+  if (last < source.length) pushText(source.slice(last));
+  return out;
+}
+
+/**
+ * A sentence that may carry mathematics.
+ *
+ * Half the notation in this panel lives in prose rather than in the equations —
+ * a step that says "subtract the overnight rate" and then writes it out, a
+ * symbol whose meaning is a convexity formula. `formula.py` gives those a second
+ * rendering with the mathematics in `$...$` spans; this splits on them and
+ * typesets what is inside.
+ *
+ * A span that KaTeX refuses drops the whole sentence back to the ASCII, rather
+ * than leaving one run of raw LaTeX in the middle of an otherwise typeset line.
+ */
+function Prose({ text, tex }: { text: string; tex?: string | null }) {
+  const tokens = useMemo(() => {
+    if (!tex) return tokenise(text, false);
+    try {
+      return tokenise(tex, true);
+    } catch {
+      return tokenise(text, false);
+    }
+  }, [text, tex]);
+
+  return (
+    <>
+      {tokens.map((t, i) =>
+        "html" in t ? (
+          <span key={i} className="tex" dangerouslySetInnerHTML={{ __html: t.html }} />
+        ) : "em" in t ? (
+          <em key={i}>{t.em}</em>
+        ) : (
+          <span key={i}>{t.text}</span>
+        )
+      )}
+    </>
+  );
+}
+
+function Steps({ steps, tex }: { steps: string[]; tex?: (string | null)[] }) {
   if (!steps.length) return null;
   return (
     <ol className="mt-2 space-y-1">
@@ -398,7 +483,9 @@ function Steps({ steps }: { steps: string[] }) {
           <span className="mt-[1px] shrink-0 font-mono text-2xs text-muted">
             {String(i + 1).padStart(2, "0")}
           </span>
-          <span className="text-muted">{s}</span>
+          <span className="text-muted">
+            <Prose text={s} tex={tex?.[i]} />
+          </span>
         </li>
       ))}
     </ol>
@@ -415,9 +502,17 @@ function Steps({ steps }: { steps: string[] }) {
  * the short symbols still line up and the long ones no longer collide.
  */
 function Where({ symbols }: { symbols: FormulaSymbol[] }) {
-  const seen = new Set<string>();
-  const unique = symbols.filter((s) =>
-    seen.has(s.plain) ? false : (seen.add(s.plain), true));
+  // A symbol can be defined twice: the preamble gives `c_t` in general terms,
+  // and the cash leg gives the same `c_t` with its arithmetic written out. Of
+  // two definitions of one symbol the one that writes it out is the useful one,
+  // so it wins the slot — keeping the first position, which is where a reader
+  // of the equation above looks for it.
+  const byPlain = new Map<string, FormulaSymbol>();
+  for (const s of symbols) {
+    const held = byPlain.get(s.plain);
+    if (!held || (!held.meaning_tex && s.meaning_tex)) byPlain.set(s.plain, s);
+  }
+  const unique = [...byPlain.values()];
   if (!unique.length) return null;
 
   return (
@@ -430,7 +525,9 @@ function Where({ symbols }: { symbols: FormulaSymbol[] }) {
           <dt className="text-[11px] text-navy">
             <TeX latex={s.latex} plain={s.plain} />
           </dt>
-          <dd className="text-[11px] text-muted">{s.meaning}</dd>
+          <dd className="text-[11px] text-muted">
+            <Prose text={s.meaning} tex={s.meaning_tex} />
+          </dd>
         </Fragment>
       ))}
     </dl>

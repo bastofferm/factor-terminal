@@ -59,12 +59,12 @@ $$
 f_t = x^{\text{ACWI}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). ACWI is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. ACWI is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^ACWI` | `ACWI` | instrument return: log total return of ACWI |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -86,12 +86,12 @@ $$
 f_t = x^{\text{IVV}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). IVV is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. IVV is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^IVV` | `IVV` | instrument return: log total return of IVV |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -117,12 +117,12 @@ $$
 f_t = x^{\text{VGK}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). VGK is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. VGK is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^VGK` | `VGK` | instrument return: log total return of VGK |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -148,12 +148,12 @@ $$
 f_t = x^{\text{EWJ}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). EWJ is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. EWJ is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^EWJ` | `EWJ` | instrument return: log total return of EWJ |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -179,12 +179,12 @@ $$
 f_t = x^{\text{EEM}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). EEM is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. EEM is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^EEM` | `EEM` | instrument return: log total return of EEM |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -245,7 +245,7 @@ $$
 f_t = \frac{r^{\text{XLI}}_t + r^{\text{XLB}}_t + r^{\text{XLE}}_t + r^{\text{XLF}}_t + r^{\text{XLY}}_t}{5} - \frac{r^{\text{XLP}}_t + r^{\text{XLU}}_t + r^{\text{XLV}}_t}{3}
 $$
 
-1. Equally weighted long basket of 5: each leg carries 1/5 of the notional.
+1. Equally weighted long basket of 5: each leg carries $1/5$ of the notional.
 2. Minus an equally weighted short basket of 3. Both sides carry the market direction, so it cancels and what survives is the spread between them.
 3. Self-financing, so no cash leg.
 
@@ -288,12 +288,12 @@ $$
 f_t = x^{\text{VLUE}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). VLUE is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. VLUE is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^VLUE` | `VLUE` | instrument return: log total return of VLUE |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -319,12 +319,12 @@ $$
 f_t = x^{\text{MTUM}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). MTUM is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. MTUM is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^MTUM` | `MTUM` | instrument return: log total return of MTUM |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -350,12 +350,12 @@ $$
 f_t = x^{\text{QUAL}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). QUAL is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. QUAL is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^QUAL` | `QUAL` | instrument return: log total return of QUAL |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -381,12 +381,12 @@ $$
 f_t = x^{\text{USMV}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). USMV is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. USMV is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^USMV` | `USMV` | instrument return: log total return of USMV |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -427,7 +427,7 @@ $$
 
 | Symbol | Source | Meaning |
 |---|---|---|
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 | `FRED:DGS2` | `FRED:DGS2` | US_TSY par yield at 2y |
 | `FRED:DGS5` | `FRED:DGS5` | US_TSY par yield at 5y |
 | `FRED:DGS10` | `FRED:DGS10` | US_TSY par yield at 10y |
@@ -466,7 +466,7 @@ $$
 
 | Symbol | Source | Meaning |
 |---|---|---|
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 | `FRED:DGS2` | `FRED:DGS2` | US_TSY par yield at 2y |
 | `FRED:DGS10` | `FRED:DGS10` | US_TSY par yield at 10y |
 
@@ -503,7 +503,7 @@ $$
 
 | Symbol | Source | Meaning |
 |---|---|---|
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 | `FRED:DGS2` | `FRED:DGS2` | US_TSY par yield at 2y |
 | `FRED:DGS5` | `FRED:DGS5` | US_TSY par yield at 5y |
 | `FRED:DGS30` | `FRED:DGS30` | US_TSY par yield at 30y |
@@ -541,7 +541,7 @@ $$
 
 | Symbol | Source | Meaning |
 |---|---|---|
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 | `ECB:BUND_2Y` | `ECB:BUND_2Y` | EA_AAA par yield at 2y |
 | `ECB:BUND_5Y` | `ECB:BUND_5Y` | EA_AAA par yield at 5y |
 | `ECB:BUND_10Y` | `ECB:BUND_10Y` | EA_AAA par yield at 10y |
@@ -584,7 +584,7 @@ $$
 
 | Symbol | Source | Meaning |
 |---|---|---|
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 | `MOF_JP:JGB_2Y` | `MOF_JP:JGB_2Y` | JP_JGB par yield at 2y |
 | `MOF_JP:JGB_5Y` | `MOF_JP:JGB_5Y` | JP_JGB par yield at 5y |
 | `MOF_JP:JGB_10Y` | `MOF_JP:JGB_10Y` | JP_JGB par yield at 10y |
@@ -616,13 +616,13 @@ $$
 f_t = \bigl(x^{\text{IGLT.L}}_t + \Delta \ln e^{\text{GBP}}_t\bigr)
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). IGLT.L is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. IGLT.L is a funded long position, so its return has to be measured over cash.
 2. Convert to the base currency by adding the log change in GBP/USD. In logs the conversion is a sum, with no cross term.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^IGLT.L` | `IGLT.L` | instrument return: log total return of IGLT.L |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 | `e_t^GBP` | `GBP` | USD per unit of GBP; its log change converts the local return into the base currency, which is exact in logs |
 
 **Orthogonalisation**
@@ -651,12 +651,12 @@ $$
 f_t = -D_{t-1}\,\Delta y_t + \tfrac{1}{2} C_{t-1}\,(\Delta y_t)^2
 $$
 
-1. Treat the series as the yield of a 10y par bond and price a day's move on it, with duration and convexity taken at t-1 so nothing about today's move leaks into its own pricing.
+1. Treat the series as the yield of a 10y par bond and price a day's move on it, with duration and convexity taken at $t-1$ so nothing about today's move leaks into its own pricing.
 2. No carry leg. A breakeven is the difference between two yields and earns no coupon of its own, so the builder adds the carry term and subtracts it again; the two cancel exactly and the factor is a pure duration-scaled change.
 
 | Symbol | Source | Meaning |
 |---|---|---|
-| `FRED:T10YIE` | `FRED:T10YIE` | quoted yield series, in percent; y_t is that divided by 100 |
+| `FRED:T10YIE` | `FRED:T10YIE` | quoted yield series, in percent; $y_t$ is that divided by 100 |
 
 **Orthogonalisation**
 
@@ -686,12 +686,12 @@ $$
 f_t = x^{\text{LQD}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). LQD is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. LQD is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^LQD` | `LQD` | instrument return: log total return of LQD |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -719,12 +719,12 @@ $$
 f_t = x^{\text{HYG}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). HYG is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. HYG is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^HYG` | `HYG` | instrument return: log total return of HYG |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -752,12 +752,12 @@ $$
 f_t = x^{\text{BKLN}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). BKLN is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. BKLN is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^BKLN` | `BKLN` | instrument return: log total return of BKLN |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -785,12 +785,12 @@ $$
 f_t = x^{\text{EMB}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). EMB is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. EMB is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^EMB` | `EMB` | instrument return: log total return of EMB |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -818,12 +818,12 @@ $$
 f_t = x^{\text{EMLC}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). EMLC is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. EMLC is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^EMLC` | `EMLC` | instrument return: log total return of EMLC |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -912,12 +912,12 @@ $$
 f_t = x^{\text{CEW}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). CEW is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. CEW is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^CEW` | `CEW` | instrument return: log total return of CEW |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -950,18 +950,18 @@ f_t = \frac{1}{3}\sum_j p_{j,t}\bigl(s_j\,r^{X_j}_t + \kappa_{j,t}\bigr)
 $$
 
 1. Carry is approximated from policy-rate differentials (CHF, EUR, JPY against USD) because the warehouse holds no forward points. Covered interest parity says the forward discount equals the rate differential, so this stands in for it.
-2. The differential is lagged one day: the carry earned over day t is fixed by the rates set at t-1.
+2. The differential is lagged one day: the carry earned over day t is fixed by the rates set at $t-1$.
 3. Each leg is held long when it yields more than the dollar and short when it yields less, and the basket is the equally weighted average of the legs.
 4. APPROXIMATION. Three non-USD legs is narrower and noisier than a real G10 carry basket; treat its loading with corresponding scepticism.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^USDCHF=X` | `USDCHF=X` | CHF spot leg, sign flipped so the quoted pair reads as long the foreign currency against the dollar: log total return of USDCHF=X |
-| `SNB:POLICY_RATE` | `SNB:POLICY_RATE` | CHF policy rate i_CHF, annualised percent |
+| `SNB:POLICY_RATE` | `SNB:POLICY_RATE` | CHF policy rate $i_{\text{CHF}}$, annualised percent |
 | `r_t^EURUSD=X` | `EURUSD=X` | EUR spot leg: log total return of EURUSD=X |
-| `ECB:DFR` | `ECB:DFR` | EUR policy rate i_EUR, annualised percent |
+| `ECB:DFR` | `ECB:DFR` | EUR policy rate $i_{\text{EUR}}$, annualised percent |
 | `r_t^USDJPY=X` | `USDJPY=X` | JPY spot leg, sign flipped so the quoted pair reads as long the foreign currency against the dollar: log total return of USDJPY=X |
-| `BOJ:IR01_OCRT` | `BOJ:IR01_OCRT` | JPY policy rate i_JPY, annualised percent |
+| `BOJ:IR01_OCRT` | `BOJ:IR01_OCRT` | JPY policy rate $i_{\text{JPY}}$, annualised percent |
 | `FRED:DFF` | `FRED:DFF` | USD policy rate, the funding leg |
 
 **Orthogonalisation**
@@ -992,12 +992,12 @@ $$
 f_t = x^{\text{DBC}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). DBC is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. DBC is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^DBC` | `DBC` | instrument return: log total return of DBC |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -1019,12 +1019,12 @@ $$
 f_t = x^{\text{USO}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). USO is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. USO is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^USO` | `USO` | instrument return: log total return of USO |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -1050,12 +1050,12 @@ $$
 f_t = x^{\text{GLD}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). GLD is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. GLD is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^GLD` | `GLD` | instrument return: log total return of GLD |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -1081,12 +1081,12 @@ $$
 f_t = x^{\text{CPER}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). CPER is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. CPER is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^CPER` | `CPER` | instrument return: log total return of CPER |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -1112,12 +1112,12 @@ $$
 f_t = x^{\text{DBA}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). DBA is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. DBA is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^DBA` | `DBA` | instrument return: log total return of DBA |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -1147,12 +1147,12 @@ $$
 f_t = x^{\text{VIXY}}_t
 $$
 
-1. Subtract the overnight rate: x_t = r_t - c_(t-1). VIXY is a funded long position, so its return has to be measured over cash.
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. VIXY is a funded long position, so its return has to be measured over cash.
 
 | Symbol | Source | Meaning |
 |---|---|---|
 | `r_t^VIXY` | `VIXY` | instrument return: log total return of VIXY |
-| `c_t` | `FRED:DFF` | daily cash rate: FRED:DFF_t / 100 / 252, lagged one day because the overnight rate earned on day t is set at t-1 |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
 
 **Orthogonalisation**
 
@@ -1184,7 +1184,7 @@ $$
 f_t \leftarrow k\,f_t, \qquad k = \frac{0.1 / \sqrt{252}}{\operatorname{sd}(f)}
 $$
 
-1. Yesterday's implied variance is what a variance swap struck at t-1 pays against, so the lag is the contract and not a modelling choice.
+1. Yesterday's implied variance is what a variance swap struck at $t-1$ pays against, so the lag is the contract and not a modelling choice.
 2. Today's realised variance is the squared SPY return, which is what the daily leg of such a swap settles on.
 3. The difference is the daily payoff of a short variance position, positive on average because implied sits above realised.
 4. The payoff is convex in the underlying, so a linear beta on it is a first approximation and nothing more.
@@ -1342,7 +1342,7 @@ $$
 f_t = \frac{r^{\text{TLT}}_t + r^{\text{UUP}}_t + r^{\text{GLD}}_t}{3} - \frac{r^{\text{HYG}}_t + r^{\text{EEM}}_t}{2}
 $$
 
-1. Equally weighted long basket of 3: each leg carries 1/3 of the notional.
+1. Equally weighted long basket of 3: each leg carries $1/3$ of the notional.
 2. Minus an equally weighted short basket of 2. Both sides carry the market direction, so it cancels and what survives is the spread between them.
 3. Self-financing, so no cash leg.
 
@@ -1484,7 +1484,7 @@ $$
 $$
 
 1. Coefficients come from ordinary least squares on the trailing 504 observations (2 years), refitted every 21 observations and applied forward until the next refit.
-2. The fitting window ends at tau-1, so day t is never part of the regression that residualises it. That is the whole reason for the rolling refit: a full-sample residual would put future information into historical factor values, and this project's headline output is a predicted-versus-realised risk comparison, which such a leak would flatter exactly where the model is being judged.
+2. The fitting window ends at $\tau-1$, so day t is never part of the regression that residualises it. That is the whole reason for the rolling refit: a full-sample residual would put future information into historical factor values, and this project's headline output is a predicted-versus-realised risk comparison, which such a leak would flatter exactly where the model is being judged.
 3. The regressors are the targets' own orthogonalised series, so the hierarchy compounds: by the time a level-3 factor is residualised, the level-0 factors it sees have already had everything above them removed.
 4. Before the first refit, with fewer than 252 usable observations or a missing regressor on the day, the orthogonalised value is NULL rather than a silent fallback to the raw value. A factor that quietly stops being orthogonal on some dates is worse than one with a documented gap.
 

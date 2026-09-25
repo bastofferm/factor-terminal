@@ -9,14 +9,17 @@ month. Re-run it after any change to `factor_defs` or to a builder:
 The file is committed, so a reader of the repository sees the formulas without
 running anything, and a diff shows when a construction rule changed.
 
-GitHub renders $$...$$ in Markdown, so the LaTeX form is used for the equations and
-the plain form for the symbol tables, where a monospace identifier reads better than
-typeset text.
+GitHub renders $$...$$ in Markdown, so the LaTeX form is used for the equations.
+The symbol tables key on the plain identifier, where monospace reads better than
+typeset text, but their meanings -- and the steps -- come through in whichever
+rendering `formula` has: the one with $...$ spans where the prose contains an
+expression, the ASCII where it is only prose.
 """
 
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 
 from backend.pipeline import factor_defs, formula
@@ -124,6 +127,33 @@ def tex(text: str) -> str:
     return "".join(_TEX_ESCAPES.get(ch, ch) for ch in str(text))
 
 
+def prose(plain: str, tex_form: str | None) -> str:
+    """A prose string in its richest available form.
+
+    `formula` gives a step or a meaning a second rendering only when it contains
+    an expression, so most of these come back as the ASCII unchanged.
+    """
+    return tex_form or plain
+
+
+def prose_tex(text: str) -> str:
+    r"""Prose that may carry `$...$` spans, escaped everywhere except inside them.
+
+    The mathematics passes through untouched -- it is already TeX -- while the
+    words around it go through `tex`, because a step's prose holds tickers like
+    IGLT.L and ids like eq_global whose underscores would otherwise be
+    subscripts. A string with no spans is simply escaped, so this is safe to
+    apply to every step whether or not it has a tex rendering.
+    """
+    parts = re.split(r"\$([^$]*)\$", text)
+    return "".join(f"${p}$" if i % 2 else tex(p) for i, p in enumerate(parts))
+
+
+def step_md(step: object) -> str:
+    """One step from a `Formula` object, preferring its tex rendering."""
+    return step.tex if isinstance(step, formula.Step) else str(step)
+
+
 def code(text: str) -> str:
     return f"\\code{{{tex(text)}}}"
 
@@ -228,7 +258,9 @@ def render_tex() -> str:
             steps = r["construction"]["steps"]
             if steps:
                 out.append("\\begin{enumerate}[leftmargin=*,itemsep=2pt]")
-                out.extend(f"  \\item {tex(s)}" for s in steps)
+                out.extend(f"  \\item {prose_tex(prose(s, tx))}"
+                           for s, tx in zip(steps,
+                                            r["construction"]["steps_tex"]))
                 out.append("\\end{enumerate}\n")
 
             where = [s for s in r["construction"]["where"] if s["ref"]]
@@ -238,8 +270,9 @@ def render_tex() -> str:
                 if s["plain"] in seen:
                     continue
                 seen.add(s["plain"])
-                rows.append(f"${s['latex']}$ & {code(s['ref'])} & "
-                            f"{tex(s['meaning'])} \\\\")
+                rows.append(
+                    f"${s['latex']}$ & {code(s['ref'])} & "
+                    f"{prose_tex(prose(s['meaning'], s.get('meaning_tex')))} \\\\")
             if rows:
                 out.append("\\begin{center}\\small\n"
                            "\\begin{tabularx}{\\linewidth}{@{}llX@{}}\n\\toprule\n"
@@ -271,7 +304,7 @@ def render_tex() -> str:
         "\\hat{b}_{j,\\tau}\\,\\tilde{f}^{g_j}_t}\n\n"
         + tex_math(generic.latex.split("\n\n")[1]) + "\n\n"
         "\\begin{enumerate}[leftmargin=*,itemsep=2pt]\n"
-        + "\n".join(f"  \\item {tex(s)}" for s in generic.steps[1:])
+        + "\n".join(f"  \\item {prose_tex(step_md(s))}" for s in generic.steps[1:])
         + "\n\\end{enumerate}\n\n"
         "Two alternative modes exist and are not used. \\code{expanding} fits on "
         "all history to date: causal, but it never forgets, so a loading that "
@@ -315,8 +348,11 @@ def render() -> str:
 
             out.append("**Construction**\n")
             out.append(math(r["construction"]["latex"]) + "\n")
-            out.append("\n".join(f"{i}. {s}" for i, s
-                                 in enumerate(r["construction"]["steps"], 1)) + "\n")
+            out.append("\n".join(
+                f"{i}. {prose(s, tx)}"
+                for i, (s, tx) in enumerate(zip(r["construction"]["steps"],
+                                                r["construction"]["steps_tex"]),
+                                            1)) + "\n")
 
             where = [s for s in r["construction"]["where"] if s["ref"]]
             if where:
@@ -326,7 +362,8 @@ def render() -> str:
                     if s["plain"] in seen:
                         continue
                     seen.add(s["plain"])
-                    out.append(f"| `{s['plain']}` | `{s['ref']}` | {s['meaning']} |")
+                    out.append(f"| `{s['plain']}` | `{s['ref']}` | "
+                               f"{prose(s['meaning'], s.get('meaning_tex'))} |")
                 out.append("")
 
             out.append("**Orthogonalisation**\n")
@@ -354,7 +391,8 @@ def render() -> str:
         "\\hat{b}_{j,\\tau}\\,\\tilde{f}^{g_j}_t\n$$\n\n"
         + math(generic.latex.split("\n\n")[1])
         + "\n\n"
-        + "\n".join(f"{i}. {s}" for i, s in enumerate(generic.steps[1:], 1))
+        + "\n".join(f"{i}. {step_md(s)}"
+                    for i, s in enumerate(generic.steps[1:], 1))
         + "\n\n"
         "Two alternative modes exist and are not used. `expanding` fits on all "
         "history to date: causal, but it never forgets, so a loading that was high "

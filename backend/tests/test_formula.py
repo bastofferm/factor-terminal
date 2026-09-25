@@ -542,6 +542,75 @@ def test_latex_braces_balance():
             assert depth == 0, f"{fid} ({block}): {depth} unclosed brace(s)"
 
 
+def _tex_prose_pairs():
+    """Every (ascii, tex) prose pair in the registry, once each."""
+    import re
+
+    seen, out = set(), []
+    for fid, r in formula.all_factors().items():
+        for block in ("construction", "orthogonalisation"):
+            b = r[block]
+            for plain, tex in zip(b["steps"], b["steps_tex"]):
+                if tex is not None and (plain, tex) not in seen:
+                    seen.add((plain, tex))
+                    out.append((f"{fid}.{block}.step", plain, tex))
+            for s in b["where"]:
+                tex = s.get("meaning_tex")
+                if tex is not None and (s["meaning"], tex) not in seen:
+                    seen.add((s["meaning"], tex))
+                    out.append((f"{fid}.{block}.{s['plain']}", s["meaning"], tex))
+    for s in formula.PREAMBLE:
+        if s.meaning_tex and (s.meaning, s.meaning_tex) not in seen:
+            seen.add((s.meaning, s.meaning_tex))
+            out.append((f"PREAMBLE.{s.plain}", s.meaning, s.meaning_tex))
+    assert out, "no prose carries a tex rendering, which cannot be right"
+    return out
+
+
+def test_prose_and_its_tex_rendering_do_not_drift_apart():
+    """The words outside the math spans must still be the words in the ASCII.
+
+    The two renderings are written by hand, one beside the other, and the failure
+    mode is editing one and forgetting the other -- a step whose typeset version
+    still describes what the builder did last month. Stripping the `$...$` spans
+    out of the tex rendering has to leave text that appears verbatim, and in
+    order, inside the ASCII; anything else means one of them has moved.
+    """
+    import re
+
+    span = re.compile(r"\$([^$]*)\$")
+    for where, plain, tex in _tex_prose_pairs():
+        assert tex.count("$") % 2 == 0, f"{where}: unbalanced $"
+        spans = span.findall(tex)
+        assert spans, f"{where}: a tex rendering with no mathematics in it"
+        assert all(s.strip() for s in spans), f"{where}: empty math span"
+
+        pos = 0
+        for chunk in span.split(tex)[::2]:
+            if not chunk:
+                continue
+            i = plain.find(chunk, pos)
+            assert i >= 0, f"{where}: prose drifted -- {chunk[:60]!r} is not in the ASCII"
+            pos = i + len(chunk)
+
+
+def test_steps_and_their_tex_renderings_stay_index_aligned():
+    """They are consumed pairwise, so a shorter list would silently mislabel."""
+    for fid, r in formula.all_factors().items():
+        for block in ("construction", "orthogonalisation"):
+            b = r[block]
+            assert len(b["steps"]) == len(b["steps_tex"]), f"{fid} ({block})"
+            assert all(isinstance(s, str) for s in b["steps"]), fid
+
+
+def test_a_step_without_notation_carries_no_tex_rendering():
+    """Prose that is only prose stays one string, not two copies to keep in step."""
+    generic = formula.orthogonalisation(["g_1"], "rolling").as_dict()
+    named = generic["steps"][0]
+    assert named.startswith("Residualise against")
+    assert generic["steps_tex"][0] is None
+
+
 def test_an_unknown_method_is_refused_rather_than_guessed():
     with pytest.raises(ValueError, match="no formula renderer"):
         formula.construction("teleology", {})
