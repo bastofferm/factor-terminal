@@ -69,7 +69,7 @@ export function RunTable({
                 <td className={"cell " + tone}>{r.status}</td>
                 <td className="cell text-muted">{stamp(r.started_at)}</td>
                 <td className="cell tabular-nums">
-                  {(r.rows_out ?? 0).toLocaleString()}
+                  {(r.rows_out ?? 0).toLocaleString("en-US")}
                 </td>
                 <td className={"cell tabular-nums " + (r.n_failed ? "text-fail" : "")}>
                   {r.n_failed ?? 0}
@@ -160,7 +160,7 @@ export function RunDetail({
       <div className="mt-3 grid grid-cols-2 gap-3 border-t border-lineSoft pt-3 sm:grid-cols-4">
         <Stat label="Started" value={stamp(run.started_at)} />
         <Stat label="Duration" value={duration(run.duration_seconds)} />
-        <Stat label="Rows written" value={(run.rows_out ?? 0).toLocaleString()} />
+        <Stat label="Rows written" value={(run.rows_out ?? 0).toLocaleString("en-US")} />
         <Stat
           label="Items"
           value={
@@ -224,7 +224,7 @@ export function RunDetail({
                     </td>
                     <td className={"cell " + statusTone(i.status)}>{i.status}</td>
                     <td className="cell tabular-nums">
-                      {(i.rows_out ?? 0).toLocaleString()}
+                      {(i.rows_out ?? 0).toLocaleString("en-US")}
                     </td>
                     <td className="cell text-muted">
                       {i.min_date ? i.min_date + " to " + i.max_date : "—"}

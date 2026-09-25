@@ -186,7 +186,7 @@ export default function RiskPage() {
       {bt && (
         <MetricStrip>
           {([
-            ["Forecasts scored", bt.n_forecasts?.toLocaleString(),
+            ["Forecasts scored", bt.n_forecasts?.toLocaleString("en-US"),
              result!.n_unreliable ? `${result!.n_unreliable} excluded` : undefined,
              "neutral", METRICS.forecastsScored],
             ["Bias ratio", num(bt.mean_bias, 3),

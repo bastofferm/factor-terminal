@@ -164,7 +164,7 @@ export function SourceSeries({
             </span>
             <span>
               {data.first_date} to {data.last_date} ·{" "}
-              {data.n_obs.toLocaleString()} observations
+              {data.n_obs.toLocaleString("en-US")} observations
             </span>
             {data.transform && (
               <span>

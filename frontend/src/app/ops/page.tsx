@@ -372,10 +372,10 @@ export default function OpsPage() {
                       {l.layer}
                     </td>
                     <td className="py-1.5 text-right tabular-nums text-muted">
-                      {l.n_series.toLocaleString()}
+                      {l.n_series.toLocaleString("en-US")}
                     </td>
                     <td className="py-1.5 text-right tabular-nums text-muted">
-                      {l.n_rows.toLocaleString()}
+                      {l.n_rows.toLocaleString("en-US")}
                     </td>
                     <td className="py-1.5 text-right tabular-nums">
                       {fmtDate(l.last_date)}
