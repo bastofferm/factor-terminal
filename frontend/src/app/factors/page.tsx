@@ -400,7 +400,7 @@ export default function FactorsPage() {
                         hint="share of up days" />
                   <Stat label="VaR 95% (1d)" value={pct(stats.var95_daily)} />
                   <Stat label="ES 95% (1d)" value={pct(stats.es95_daily)} />
-                  <Stat label="Observations" value={stats.n_obs?.toLocaleString()} />
+                  <Stat label="Observations" value={stats.n_obs?.toLocaleString("en-US")} />
                   <Stat label="From" value={stats.first_date} />
                   <Stat label="To" value={stats.last_date} />
                 </div>
@@ -499,7 +499,7 @@ export default function FactorsPage() {
                       <tr key={i} className="border-t border-lineSoft">
                         <td className="cell max-w-[220px] truncate" title={c.dataset}>{c.dataset}</td>
                         <td className="cell">{c.factor}</td>
-                        <td className="cell">{c.n_overlap?.toLocaleString()}</td>
+                        <td className="cell">{c.n_overlap?.toLocaleString("en-US")}</td>
                         <td className={`cell font-semibold ${
                           Math.abs(c.correlation) > 0.4 ? "text-pass" : "text-muted"}`}>
                           {num(c.correlation, 3)}
@@ -588,7 +588,7 @@ function ComparisonPanel({
           </span>{" "}
           have been regressed out; <b>removed</b> is the difference, which the model
           books against those factors instead. All three on the{" "}
-          {a.n_obs.toLocaleString()} days where both series exist.
+          {a.n_obs.toLocaleString("en-US")} days where both series exist.
         </>
       }
     >
@@ -639,7 +639,7 @@ function ComparisonPanel({
         />
         <Stat
           label="Common sample"
-          value={a.n_obs.toLocaleString()}
+          value={a.n_obs.toLocaleString("en-US")}
           hint={`${a.first_date} to ${a.last_date}`}
         />
       </div>
@@ -824,7 +824,7 @@ function DistributionPanel({
 
   const outsideNote =
     hist.n_outside > 0
-      ? ` ${hist.n_outside} of ${hist.n.toLocaleString()} observations lie outside the drawn range and are not shown.`
+      ? ` ${hist.n_outside} of ${hist.n.toLocaleString("en-US")} observations lie outside the drawn range and are not shown.`
       : "";
 
   return (

@@ -145,7 +145,7 @@ export function SecuritySearch({
                   {s.name ?? s.ticker}
                 </span>
                 <span className="shrink-0 font-mono text-[10px] text-muted">
-                  {s.n_obs ? `${s.n_obs.toLocaleString()}d` : ""}
+                  {s.n_obs ? `${s.n_obs.toLocaleString("en-US")}d` : ""}
                 </span>
               </div>
               {s.sector && (
@@ -158,7 +158,7 @@ export function SecuritySearch({
 
       <p className="mt-1 text-[10px] leading-tight text-muted">
         {total !== null
-          ? `${total.toLocaleString()} searchable. `
+          ? `${total.toLocaleString("en-US")} searchable. `
           : ""}
         Anything the warehouse prices; its history is pulled on first use.
       </p>

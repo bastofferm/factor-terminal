@@ -13,14 +13,20 @@ import { usePathname } from "next/navigation";
 import { ChatPanel } from "@/components/ChatPanel";
 import { ChatProvider, useChat } from "@/lib/chat-context";
 
+// Roughly the order the work happens in: what the model is, then the factors,
+// then what they imply for a security, then the machinery underneath. Data
+// Health sits at the end with Operations because it is the same question asked
+// of the inputs rather than of the model — you go there when something looks
+// wrong, not on the way in.
 const NAV = [
-  { href: "/", label: "Data Health" },
+  { href: "/", label: "Overview" },
   { href: "/factors", label: "Factor Explorer" },
   { href: "/raw", label: "Raw Explorer" },
   { href: "/matrix", label: "Covariance & PCA" },
   { href: "/loadings", label: "Loadings Lab" },
   { href: "/risk", label: "Risk Lens" },
   { href: "/ops", label: "Operations" },
+  { href: "/health", label: "Data Health" },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {

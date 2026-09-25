@@ -92,6 +92,11 @@ def canonical_header() -> str:
 # useful opening question depends entirely on what is on screen.
 STARTERS: dict[str, list[str]] = {
     "/": [
+        "What does this model do that a covariance matrix of securities does not?",
+        "Why forty factors rather than ten, or four hundred?",
+        "Where should I start if I want to check whether it works?",
+    ],
+    "/health": [
         "Which inputs are lagging, and does it matter?",
         "Why are some instruments marked as not live?",
         "What does a 'warn' verdict actually block?",

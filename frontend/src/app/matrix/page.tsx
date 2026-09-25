@@ -221,7 +221,7 @@ export default function MatrixPage() {
                ? `${data.names.length} of ${data.n_available}`
                : data.names.length,
              "in the estimated matrix", "neutral", undefined],
-            ["Observations", data.n_obs.toLocaleString(),
+            ["Observations", data.n_obs.toLocaleString("en-US"),
              "days with every factor present", "neutral", undefined],
             ["Span", `${data.start} → ${data.end}`, "sample estimated on",
              "neutral", undefined],

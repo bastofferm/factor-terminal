@@ -112,7 +112,7 @@ export function StationarityBattery({
           <Stat key={label} label={label} value={value} tone={a.tone}
                 hint={`${what} — ${a.reason}`} />
         ))}
-        <Stat label="Observations" value={row.n_obs?.toLocaleString()} />
+        <Stat label="Observations" value={row.n_obs?.toLocaleString("en-US")} />
       </div>
 
       {row.za_break_date && (

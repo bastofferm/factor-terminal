@@ -313,7 +313,7 @@ export default function RawPage() {
                       hint="share of up days" />
                 <Stat label="VaR 95% (1d)" value={pct(s.var95_daily)} />
                 <Stat label="ES 95% (1d)" value={pct(s.es95_daily)} />
-                <Stat label="Observations" value={s.n_obs?.toLocaleString()} />
+                <Stat label="Observations" value={s.n_obs?.toLocaleString("en-US")} />
               </div>
             </Panel>
 
@@ -335,7 +335,7 @@ export default function RawPage() {
                   <Fact label="History held"
                         value={span(data.dates)} />
                   <Fact label="Observations"
-                        value={data.stats?.n_obs?.toLocaleString()} />
+                        value={data.stats?.n_obs?.toLocaleString("en-US")} />
                   <Fact label="Asset class" value={data.meta?.asset_class} />
                   <Fact label="Currency" value={data.meta?.currency} />
                 </div>
@@ -346,7 +346,7 @@ export default function RawPage() {
                           value={data.meta?.construction?.method} mono />
                     <Fact label="History held" value={span(data.dates)} />
                     <Fact label="Observations"
-                          value={data.stats?.n_obs?.toLocaleString()} />
+                          value={data.stats?.n_obs?.toLocaleString("en-US")} />
                   </div>
                   {(data.meta?.sources ?? []).length > 0 ? (
                     <div className="overflow-auto" style={{ maxHeight: 260 }}>
@@ -374,7 +374,7 @@ export default function RawPage() {
                                   ? src.first_date + " to " + src.last_date
                                   : "no data"}
                                 {src.n_obs
-                                  ? " \u00b7 " + Number(src.n_obs).toLocaleString()
+                                  ? " \u00b7 " + Number(src.n_obs).toLocaleString("en-US")
                                   : ""}
                               </td>
                             </tr>

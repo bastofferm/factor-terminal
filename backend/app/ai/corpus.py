@@ -84,10 +84,11 @@ blocks overlap by construction. Estimating on the orthogonalised panel gives a
 clean decomposition and a better-conditioned design, at the cost of loadings that
 are incremental: the coefficient on eq_us means "over and above global equity".
 
-THE SIX PAGES
+THE PAGES
 
-- Data Health: staleness per input, dead instruments, pipeline runs, diagnostic
-  verdict counts.
+- Overview: the landing page. What the model is, the state it is in today, the
+  nine blocks, the pipeline end to end, and where each question is answered.
+  Carries no figures the other pages do not.
 - Factor Explorer: one factor at a time on the ORTHOGONALISED panel — series,
   cumulative return, rolling volatility, return distribution, QQ plot,
   autocorrelation, the full stationarity battery, and a raw-against-orthogonalised
@@ -100,6 +101,10 @@ THE SIX PAGES
   window, roll-forward step, estimator and panel.
 - Risk Lens: predicted versus realised risk for one security, with the full
   backtest — bias statistic, Mincer-Zarnowitz, and VaR coverage.
+- Operations: the refresh chain stage by stage, what each stage reads and
+  writes, and the layer-by-layer state of the warehouse.
+- Data Health: staleness per input, dead instruments, pipeline runs, diagnostic
+  verdict counts.
 
 DECISIONS THAT ARE EASY TO GET WRONG, AND HOW THEY WERE MADE
 

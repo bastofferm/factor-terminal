@@ -273,7 +273,7 @@ function describeSnapshot(s: ChatSnapshot): string {
   }
   const stats = s.stats as Record<string, unknown> | undefined;
   if (stats && typeof stats.n_obs === "number") {
-    bits.push(`${stats.n_obs.toLocaleString()} obs`);
+    bits.push(`${stats.n_obs.toLocaleString("en-US")} obs`);
   }
   return bits.join(" · ");
 }

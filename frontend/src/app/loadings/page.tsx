@@ -324,7 +324,7 @@ export default function LoadingsPage() {
                `t = ${num(latestMeta.t_alpha)}`, "neutral", METRICS.alpha],
               ["Residual vol", pct(latestMeta.resid_vol_ann), undefined, "neutral",
                METRICS.residualVol],
-              ["Observations", latestMeta.n_obs?.toLocaleString(), undefined,
+              ["Observations", latestMeta.n_obs?.toLocaleString("en-US"), undefined,
                "neutral", METRICS.observations],
               ["Durbin-Watson", num(latestMeta.durbin_watson),
                design.durbinWatson(latestMeta.durbin_watson).reason,
