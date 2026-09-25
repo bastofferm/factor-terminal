@@ -318,6 +318,19 @@ def settle(page, path: str) -> None:
     page.wait_for_timeout(1800)
 
 
+def timed_beat(page, path: str) -> float:
+    """`beat`, reporting the seconds it took.
+
+    The narrated cut needs this: it holds each page for whichever is longer,
+    the line being spoken or the thing happening on screen, and it cannot know
+    which without being told.
+    """
+    import time
+    t0 = time.monotonic()
+    beat(page, path)
+    return time.monotonic() - t0
+
+
 def beat(page, path: str) -> None:
     """One small piece of theatre per page, so the film is not eight stills.
 
