@@ -33,13 +33,14 @@ WIDTH, HEIGHT = 1600, 1000
 # decides what "finished rendering" means: waiting for a chart node on a page that
 # has none costs the timeout and reports a failure that is not one.
 PAGES: list[tuple[str, str, str, bool]] = [
-    ("/",          "01-data-health",     "Data Health",      False),
+    ("/",          "01-overview",        "Overview",         False),
     ("/factors",   "02-factor-explorer", "Factor Explorer",  True),
     ("/raw",       "03-raw-explorer",    "Raw Explorer",     True),
     ("/matrix",    "04-covariance-pca",  "Covariance & PCA", True),
     ("/loadings",  "05-loadings-lab",    "Loadings Lab",     True),
     ("/risk",      "06-risk-lens",       "Risk Lens",        True),
     ("/ops",       "07-operations",      "Operations",       False),
+    ("/health",    "08-data-health",     "Data Health",      False),
 ]
 
 # Seconds each frame is held in the GIF. Long enough to read the panel headings.
