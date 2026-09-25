@@ -575,7 +575,7 @@ results:
 | Factor definitions | `backend/pipeline/factor_defs.py` |
 | Schema | `sql/` (15 migrations) |
 | API | `backend/app/` |
-| Interface | `frontend/` (seven pages) |
+| Interface | `frontend/` (eight pages) |
 
 `backend/core` holds pure functions over arrays with no database access. That
 boundary is what makes the accuracy claims checkable, and it is the main

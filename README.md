@@ -10,9 +10,14 @@ that is tested rather than assumed.
 
 ![The pages of the terminal](screenshots/factor-terminal.gif)
 
-*Data Health, Factor Explorer, Raw Explorer, Covariance & PCA, Loadings Lab, Risk
-Lens, Operations. Regenerate with `python -m scripts.capture_screenshots` while the
-app is running.*
+*Overview, Factor Explorer, Raw Explorer, Covariance & PCA, Loadings Lab, Risk
+Lens, Operations, Data Health. Regenerate with
+`python -m scripts.capture_screenshots` while the app is running.*
+
+**[Watch the guided tour](screenshots/factor-terminal-tour.webm)** — 1m 42s
+through all eight tabs, saying what each one is for and why it is built that way.
+Recorded from the running app rather than mocked up, so what it shows is what the
+repository does; rebuild it with `python -m scripts.record_tour`.
 
 **[Documentation/return-based-multi-asset-factor-model.md](Documentation/return-based-multi-asset-factor-model.md)**
 is the model write-up: what each block needs, what the data actually supported, the
@@ -141,9 +146,10 @@ backend/
                 covariance · risk · distribution
   pipeline/     ingestion, construction and estimation jobs
   app/          FastAPI: thin routers over raw SQL, plus the DeepSeek assistant
-  tests/        352 tests, mostly against simulated data with known parameters
-frontend/       Next.js 14 + Plotly, seven pages
-scripts/        model probe, backfills, screenshots, and the two document builds
+  tests/        381 tests, mostly against simulated data with known parameters
+frontend/       Next.js 14 + Plotly, eight pages
+scripts/        model probe, backfills, screenshots, the guided tour, and the two
+                document builds
 HowToSetupTerminalLocally/
                 install manual, schema reference, and a guided bootstrap
 ```
