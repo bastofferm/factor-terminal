@@ -5,19 +5,22 @@
  *
  * Every other page answers a question you already have. This one is for the
  * reader who does not have one yet — a colleague sent them a link, or they are
- * deciding whether the model is worth their afternoon. So it states what the
- * model is, shows the state it is actually in today, and says which tab answers
- * which question.
+ * deciding whether the model is worth their afternoon. So it says what the model
+ * is, shows the state it is in today, and points at the screen that answers each
+ * kind of question.
  *
- * Nothing here is computed that is not on another page. The figures are counts,
- * spans and ranges over what `/api/meta/*` returns, and each says which. A
- * landing page that quietly derived its own numbers would be the easiest place
- * in the app for a figure to disagree with the model behind it.
+ * It is the one screen in the app that moves. Everywhere else a chart draws and
+ * stops, because an analyst reading a volatility series does not want it
+ * animating under them. Here the motion is the argument: a pipeline that runs
+ * through its stages explains itself faster than six paragraphs about it.
+ *
+ * Nothing shown is computed that is not on another page. The figures are counts
+ * and spans over what `/api/meta/*` returns, and each says which.
  */
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Panel, Stat } from "@/components/Chart";
+import { Stat } from "@/components/Chart";
 import { Block, FactorMeta, Instrument, api, num } from "@/lib/api";
 import { BLOCK_ORDER, blockStyle } from "@/lib/blocks";
 import { EPISODES } from "@/lib/episodes";
@@ -37,9 +40,8 @@ export default function OverviewPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // One round of requests, all of them cheap reference reads. Failures are
-    // tolerated individually: a missing block list should leave the page
-    // standing, because the prose on it is the point and is not data-dependent.
+    // One round of cheap reference reads. Failures are tolerated individually:
+    // the prose is the point of this page and does not depend on any of them.
     Promise.all([
       api.health().catch(() => null),
       api.blocks().catch(() => []),
@@ -75,7 +77,7 @@ export default function OverviewPage() {
   );
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <Hero health={health} factors={factors} panel={panel} />
 
       {error && (
@@ -86,46 +88,13 @@ export default function OverviewPage() {
       )}
 
       <Figures panel={panel} health={health} inputs={inputs.length} />
-      <Coverage blocks={blocks} factors={factors} panel={panel} />
       <Pipeline />
-      <Directory />
+      <Tiles />
     </div>
   );
 }
 
 // --- the hero -------------------------------------------------------------
-
-/**
- * One expression, typeset once KaTeX has arrived.
- *
- * The front door should not wait on a few hundred kilobytes of layout engine and
- * fonts to say what the model is, and this page uses three short expressions
- * where the factor profile uses hundreds. So the ASCII renders immediately — it
- * is the same string the CLI prints — and is replaced in place when the chunk
- * lands. Both come from `formula.py`'s vocabulary, so the swap changes the
- * typography and nothing else.
- */
-function TeX({ latex, plain }: { latex: string; plain: string }) {
-  const [html, setHtml] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    import("@/components/Math")
-      .then((m) => {
-        if (live) setHtml(m.render(latex, false));
-      })
-      .catch(() => {
-        /* Leave the ASCII standing. It is not a degraded rendering, just a
-           plainer one, and it says exactly the same thing. */
-      });
-    return () => {
-      live = false;
-    };
-  }, [latex]);
-
-  if (!html) return <span className="font-mono">{plain}</span>;
-  return <span className="tex" dangerouslySetInnerHTML={{ __html: html }} />;
-}
 
 /**
  * The masthead.
@@ -134,11 +103,6 @@ function TeX({ latex, plain }: { latex: string; plain: string }) {
  * screens behind it read as working screens. The blue is the same navy the rest
  * of the app uses for anything that matters — the card changes the ground, not
  * the voice.
- *
- * It carries the model as an equation, the state it is in today, and just
- * enough of the coverage panel below to make the span concrete. Everything it
- * shows is repeated somewhere with more room, on purpose: a masthead that was
- * the only place a figure appeared would be a masthead nobody could check.
  */
 function Hero({
   health, factors, panel,
@@ -149,12 +113,11 @@ function Hero({
 }) {
   const k = health?.active_factors ?? factors.length;
   const live = health?.status === "ok";
-  const years = spanYears(panel);
 
   return (
     <section
-      className="enter relative overflow-hidden rounded border px-6 py-6
-                 shadow-[0_1px_3px_rgba(42,47,58,0.07)] sm:px-8 sm:py-7"
+      className="enter relative overflow-hidden rounded border px-6 py-7
+                 shadow-[0_1px_3px_rgba(42,47,58,0.07)] sm:px-9 sm:py-9"
       style={{
         // A warm grey, so it sits with the paper palette rather than cutting a
         // cold rectangle out of it.
@@ -162,34 +125,34 @@ function Hero({
         borderColor: "#D2CFC8",
       }}
     >
-      {/* A hairline rule in the block colours: the nine hues that key every
-          chart in the app, introduced here before they mean anything. */}
-      <div className="absolute inset-x-0 top-0 flex h-[2px]">
+      {/* A hairline in the nine block colours: the hues that key every chart in
+          the app, introduced here before they mean anything. */}
+      <div className="absolute inset-x-0 top-0 flex h-[3px]">
         {BLOCK_ORDER.map((id, i) => (
           <div
             key={id}
             className="sweep flex-1"
-            style={{ background: blockStyle(id).colour, opacity: 0.55,
+            style={{ background: blockStyle(id).colour, opacity: 0.6,
                      animationDelay: `${120 + i * 55}ms` }}
           />
         ))}
       </div>
 
       <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-3">
-        <div className="max-w-[720px]">
+        <div className="max-w-[760px]">
           <div className="rise label" style={{ animationDelay: "40ms" }}>
             Multi-asset factor model
           </div>
           <h1
-            className="rise mt-2 text-[28px] font-semibold leading-[1.15]
-                       tracking-tight text-navy sm:text-[32px]"
+            className="rise mt-2 text-[30px] font-semibold leading-[1.12]
+                       tracking-tight text-navy sm:text-[38px]"
             style={{ animationDelay: "90ms" }}
           >
             Return-based risk, built from series
             <br className="hidden sm:inline" /> you can open and check
           </h1>
           <p
-            className="rise mt-3 max-w-[640px] text-[13px] leading-relaxed"
+            className="rise mt-3.5 max-w-[660px] text-[13.5px] leading-relaxed"
             style={{ animationDelay: "150ms", color: "#5A6275" }}
           >
             {k ? <b className="text-navy">{k} daily factors</b> : "Daily factors"} across
@@ -217,30 +180,7 @@ function Hero({
         </div>
       </div>
 
-      {/* The model stated, rather than described. An institutional reader gets
-          more from one line of notation than from a paragraph about it. */}
-      <div
-        className="rise mt-5 overflow-x-auto rounded border px-4 py-3"
-        style={{ animationDelay: "260ms", background: "#F6F5F3CC",
-                 borderColor: "#D2CFC8" }}
-      >
-        <div className="eqn text-navy">
-          <TeX
-            latex={`r_{i,t} = \\alpha_i + \\sum_{k=1}^{${k || "K"}} \\beta_{i,k}\\,` +
-                   `\\tilde{f}_{k,t} + \\varepsilon_{i,t}`}
-            plain="r_it = a_i + sum_k b_ik * f~_kt + e_it"
-          />
-        </div>
-      </div>
-      <p className="rise mt-1.5 text-[11px] leading-snug"
-         style={{ animationDelay: "300ms", color: "#5A6275" }}>
-        <TeX latex={String.raw`\tilde{f}_{k,t}`} plain="f~_kt" /> is the
-        orthogonalised factor, not the raw one — which is why{" "}
-        <TeX latex={String.raw`\beta_{i,k}`} plain="b_ik" /> reads as
-        &ldquo;over and above everything above it in the hierarchy&rdquo;.
-      </p>
-
-      <HeroSpan panel={panel} years={years} />
+      <HeroSpan panel={panel} />
     </section>
   );
 }
@@ -248,14 +188,15 @@ function Hero({
 /**
  * The span, and the regimes inside it.
  *
- * The smallest useful piece of the coverage panel further down: how long the
- * history is, and what it has been through. The bands are the same editorial
- * episodes marked there, and the names cycle so the reader notices they are
- * dates on a line rather than decoration.
+ * How long the history is and what it has been through, as one bar. The bands
+ * are the conventional episode dates — editorial context, not something the
+ * model detected, and nothing in the pipeline reads them. The names cycle so a
+ * reader notices they are dates on a line rather than decoration.
  */
-function HeroSpan({ panel, years }: { panel: PanelSummary; years: number | null }) {
+function HeroSpan({ panel }: { panel: PanelSummary }) {
   const [lit, setLit] = useState(0);
   const calm = useReducedMotion();
+  const years = spanYears(panel);
 
   useEffect(() => {
     if (calm || !panel.first) return;
@@ -271,10 +212,10 @@ function HeroSpan({ panel, years }: { panel: PanelSummary; years: number | null 
   const at = (iso: string) => ((new Date(iso).getTime() - lo) / span) * 100;
 
   return (
-    <div className="rise mt-5 border-t pt-4" style={{ animationDelay: "350ms",
+    <div className="rise mt-6 border-t pt-4" style={{ animationDelay: "280ms",
                                                       borderColor: "#D2CFC8" }}>
       <div className="flex items-baseline justify-between gap-3">
-        <div className="text-[12px] text-navy">
+        <div className="text-[12.5px] text-navy">
           <b className="font-semibold">{num(years, 1)} years</b> of daily history
         </div>
         <div className="font-mono text-[10px]" style={{ color: "#5A6275" }}>
@@ -282,9 +223,9 @@ function HeroSpan({ panel, years }: { panel: PanelSummary; years: number | null 
         </div>
       </div>
 
-      <div className="relative mt-2 h-[8px] overflow-hidden rounded-[2px]"
+      <div className="relative mt-2 h-[9px] overflow-hidden rounded-[2px]"
            style={{ background: "#CFCCC5" }}>
-        <div className="sweep h-full w-full" style={{ animationDelay: "420ms" }}>
+        <div className="sweep h-full w-full" style={{ animationDelay: "360ms" }}>
           {EPISODES.map((ep, i) => {
             const x0 = Math.max(at(ep.start), 0);
             const x1 = Math.min(at(ep.end), 100);
@@ -295,7 +236,7 @@ function HeroSpan({ panel, years }: { panel: PanelSummary; years: number | null 
                 className="absolute inset-y-0 transition-opacity duration-500"
                 style={{ left: `${x0}%`, width: `${Math.max(x1 - x0, 0.5)}%`,
                          background: "#8C3A2E",
-                         opacity: !calm && i === lit ? 0.85 : 0.4 }}
+                         opacity: !calm && i === lit ? 0.9 : 0.38 }}
                 title={`${ep.label} · ${ep.start} → ${ep.end}`}
               />
             );
@@ -383,137 +324,6 @@ function Card({ children, index }: { children: React.ReactNode; index: number })
   );
 }
 
-// --- coverage -------------------------------------------------------------
-
-/**
- * When each block's history starts, against the episodes it has lived through.
- *
- * This answers a question that comes up before any other: how far back can I
- * estimate? The blocks do not all start together — the ETFs behind the style
- * block were not listed in 2003 — and a window that looks generous on one block
- * silently drops another.
- */
-function Coverage({
-  blocks, factors, panel,
-}: {
-  blocks: Block[];
-  factors: FactorMeta[];
-  panel: PanelSummary;
-}) {
-  const rows = useMemo(() => {
-    if (!panel.first || !panel.last) return [];
-    return ordered(blocks).map((b) => {
-      const mine = factors.filter((f) => f.block_id === b.block_id && f.first_date);
-      const first = mine.length
-        ? mine.reduce((a, f) => (f.first_date! < a ? f.first_date! : a), mine[0].first_date!)
-        : null;
-      return { block: b, first, n: mine.length };
-    }).filter((r) => r.first);
-  }, [blocks, factors, panel]);
-
-  if (!rows.length || !panel.first || !panel.last) return null;
-
-  const lo = new Date(panel.first).getTime();
-  const hi = new Date(panel.last).getTime();
-  const span = hi - lo || 1;
-  const at = (iso: string) => ((new Date(iso).getTime() - lo) / span) * 100;
-
-  const years: number[] = [];
-  for (let y = new Date(panel.first).getFullYear() + 1;
-       y <= new Date(panel.last).getFullYear(); y += 4) {
-    years.push(y);
-  }
-
-  return (
-    <Panel
-      title="Coverage, and the regimes it spans"
-      caption={
-        <>
-          Each bar starts at the first observation of the earliest factor in that
-          block. The shaded columns are well-known market episodes, marked as
-          editorial context — they are not something the model detected, and
-          nothing in the pipeline reads them.
-        </>
-      }
-      index={4}
-    >
-      <div className="relative mt-1">
-        {/* Episode bands run the full height, behind everything. */}
-        <div className="pointer-events-none absolute inset-0">
-          {EPISODES.map((ep) => {
-            const x0 = Math.max(at(ep.start), 0);
-            const x1 = Math.min(at(ep.end), 100);
-            if (x1 <= x0) return null;
-            return (
-              <div
-                key={ep.label}
-                className="absolute top-0 bottom-[18px]"
-                style={{ left: `${x0}%`, width: `${Math.max(x1 - x0, 0.35)}%`,
-                         background: "#8C3A2E", opacity: 0.1 }}
-                title={`${ep.label} · ${ep.start} → ${ep.end}`}
-              />
-            );
-          })}
-        </div>
-
-        <div className="relative space-y-[3px]">
-          {rows.map((r) => {
-            const bs = blockStyle(r.block.block_id);
-            const x = at(r.first!);
-            return (
-              <div key={r.block.block_id} className="flex items-center gap-2">
-                <div className="w-[104px] shrink-0 text-right text-[10px] text-muted">
-                  {bs.label}
-                </div>
-                <div className="relative h-[14px] flex-1">
-                  {/* The start year rides the left edge of the bar rather than
-                      sitting in a column of its own: parked at a fixed x it
-                      annotates nothing, and on a bar that starts in 2012 it
-                      reads as the year the bar ends. */}
-                  <div
-                    className="absolute inset-y-0 flex items-center rounded-[2px] px-1"
-                    style={{ left: `${x}%`, right: 0, background: bs.colour,
-                             opacity: 0.88 }}
-                    title={`${r.block.name}: ${r.n} factor${r.n === 1 ? "" : "s"}, from ${r.first}`}
-                  >
-                    <span className="font-mono text-[9px] leading-none text-white/85">
-                      {r.first!.slice(0, 4)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Year ticks, on the same scale as the bars above them. */}
-        <div className="relative ml-[112px] mt-1.5 h-[14px] border-t
-                        border-lineSoft">
-          {years.map((y) => (
-            <span
-              key={y}
-              className="absolute top-0.5 -translate-x-1/2 font-mono text-[9px] text-muted"
-              style={{ left: `${at(`${y}-01-01`)}%` }}
-            >
-              {y}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted">
-        {EPISODES.map((ep) => (
-          <span key={ep.label}>
-            <span className="mr-1 inline-block h-2 w-2 -mb-px rounded-[1px]"
-                  style={{ background: "#8C3A2E", opacity: 0.25 }} />
-            {ep.label}
-          </span>
-        ))}
-      </div>
-    </Panel>
-  );
-}
-
 // --- how a number gets here ----------------------------------------------
 
 const PIPELINE: Array<{ step: string; body: string }> = [
@@ -531,19 +341,41 @@ const PIPELINE: Array<{ step: string; body: string }> = [
     body: "Betas for one security, a predicted volatility from them, then a check against the realised one." },
 ];
 
+const STEP_MS = 1900;
+
 /**
- * The pipeline as one card rather than six.
+ * The pipeline, running.
  *
- * A rail with six stops reads as a sequence at a glance, which six separate
- * boxes did not — and the sequence is the content here. The Operations tab has
- * the same six stages with what each reads and writes; this is the summary that
- * sends you there.
+ * A rail with six stops, walked one at a time on a loop. The animation is the
+ * explanation: data moving through stages in order is the whole shape of the
+ * thing, and a reader gets it from watching once without reading any of the six
+ * captions.
+ *
+ * Hovering takes the wheel — pointing at a stage holds it, because someone who
+ * has reached for a stage wants to read it, not to watch it hand over. The loop
+ * resumes on leaving. Under prefers-reduced-motion nothing cycles and every
+ * stage renders at full strength, which is also how it prints.
  */
 function Pipeline() {
+  const calm = useReducedMotion();
+  const [active, setActive] = useState(0);
+  const [held, setHeld] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (calm || held !== null) return;
+    const t = setInterval(() => setActive((i) => (i + 1) % PIPELINE.length), STEP_MS);
+    return () => clearInterval(t);
+  }, [calm, held]);
+
+  const current = held ?? active;
+  // With motion off there is no "current" stage, so none is dimmed.
+  const isOn = (i: number) => calm || i <= current;
+  const filled = calm ? 100 : (current / (PIPELINE.length - 1)) * 100;
+
   return (
     <section
       className="enter relative overflow-hidden rounded border px-5 py-5
-                 shadow-[0_1px_2px_rgba(42,47,58,0.05)] sm:px-6"
+                 shadow-[0_1px_2px_rgba(42,47,58,0.05)] sm:px-7 sm:py-6"
       style={{
         background: "linear-gradient(160deg, #F2F1EE 0%, #EAE8E4 100%)",
         borderColor: "#D8D5CE",
@@ -552,42 +384,71 @@ function Pipeline() {
     >
       <div className="flex items-baseline justify-between gap-4">
         <h2 className="label">How a number gets here</h2>
-        <Link href="/ops" className="text-[11px] text-navy2 hover:text-navy">
+        <Link href="/ops" className="text-[11px] text-navy2 transition
+                                     hover:text-navy">
           Run it →
         </Link>
       </div>
       <p className="mt-1 text-[11px]" style={{ color: "#5A6275" }}>
         Six stages, each runnable and inspectable on its own.
+        {!calm && " Hover a stage to hold it."}
       </p>
 
-      <ol className="relative mt-5 grid gap-y-6 sm:grid-cols-3 xl:grid-cols-6">
-        {/* The rail the stops sit on. Only drawn at six columns, where the
-            stages really are one row: at three they wrap onto two, and a single
-            horizontal line would run through the first row and abandon the
+      <ol
+        className="relative mt-6 grid gap-y-7 sm:grid-cols-3 xl:grid-cols-6"
+        onMouseLeave={() => setHeld(null)}
+      >
+        {/* The rail, and the progress along it. Drawn only at six columns,
+            where the stages really are one row: at three they wrap onto two and
+            a single horizontal line would run through the first and abandon the
             second. It stops at the sixth circle rather than at the edge of the
-            grid, because a rail that continues past the last stop suggests a
+            grid, because a rail continuing past the last stop suggests a
             seventh stage that does not exist. */}
         <div
-          className="sweep pointer-events-none absolute left-[11px] top-[11px]
-                     hidden h-px xl:block"
-          style={{ background: "#C9C5BC", right: "calc(100% / 6 - 11px)",
-                   animationDelay: "260ms" }}
-        />
+          className="pointer-events-none absolute left-[13px] top-[13px] hidden
+                     h-px xl:block"
+          style={{ background: "#CFCBC2", right: "calc(100% / 6 - 13px)" }}
+        >
+          <div
+            className="h-full transition-[width] ease-out"
+            style={{ width: `${filled}%`, background: "#2F4D73",
+                     transitionDuration: `${STEP_MS * 0.55}ms` }}
+          />
+        </div>
 
         {PIPELINE.map((s, i) => (
-          <li key={s.step} className="rise relative pr-4"
-              style={{ animationDelay: `${300 + i * 70}ms` }}>
+          <li
+            key={s.step}
+            className="rise relative pr-4"
+            style={{ animationDelay: `${300 + i * 70}ms` }}
+            onMouseEnter={() => setHeld(i)}
+          >
             <div
-              className="relative z-10 flex h-[22px] w-[22px] items-center
-                         justify-center rounded-full border font-mono text-[10px]
-                         font-semibold text-navy"
-              style={{ background: "#FBFAF7", borderColor: "#C9C5BC" }}
+              className="relative z-10 flex h-[26px] w-[26px] items-center
+                         justify-center rounded-full border font-mono text-[11px]
+                         font-semibold transition-all duration-300"
+              style={{
+                background: isOn(i) ? "#2F4D73" : "#FBFAF7",
+                borderColor: isOn(i) ? "#2F4D73" : "#CFCBC2",
+                color: isOn(i) ? "#FFFFFF" : "#8A8FA0",
+                transform: !calm && i === current ? "scale(1.14)" : "scale(1)",
+                boxShadow: !calm && i === current
+                  ? "0 0 0 4px rgba(47,77,115,0.13)" : "none",
+              }}
             >
               {i + 1}
             </div>
-            <div className="mt-2 text-[12px] font-semibold leading-tight text-navy">
+            <div
+              className="mt-2.5 text-[12.5px] font-semibold leading-tight
+                         transition-colors duration-300"
+              style={{ color: isOn(i) ? "#2F4D73" : "#8A8FA0" }}
+            >
               {s.step}
             </div>
+            {/* The body does not dim with the walk. The circle, the title and
+                the rail already carry where it has got to, and a reader who
+                arrives mid-cycle should not find five of the six stages greyed
+                out — the captions are the content, not the chrome. */}
             <p className="mt-1 text-[11px] leading-snug" style={{ color: "#5A6275" }}>
               {s.body}
             </p>
@@ -601,49 +462,118 @@ function Pipeline() {
 // --- where to look --------------------------------------------------------
 
 const PAGES = [
-  { href: "/factors", label: "Factor Explorer",
-    when: "You want to know what a factor is, how it is built, and whether its series behaves." },
-  { href: "/raw", label: "Raw Explorer",
-    when: "You suspect the input rather than the model, and want the series before it was touched." },
-  { href: "/matrix", label: "Covariance & PCA",
-    when: "You need the correlation structure, the block risk budget, or the conditioning of the matrix." },
-  { href: "/loadings", label: "Loadings Lab",
-    when: "You want one security's betas, and whether they hold still under a different window." },
-  { href: "/risk", label: "Risk Lens",
-    when: "You want the forecast tested: bias, Mincer-Zarnowitz, VaR coverage." },
-  { href: "/ops", label: "Operations",
-    when: "You want to refresh the data, or see what the last run actually did." },
-  { href: "/health", label: "Data Health",
-    when: "Something looks wrong and you want to know whether an input went stale or died." },
+  { href: "/factors", label: "Factor Explorer", glyph: "line",
+    when: "What a factor is, how it is built, and whether its series behaves." },
+  { href: "/raw", label: "Raw Explorer", glyph: "bars",
+    when: "The input series before the model touched it." },
+  { href: "/matrix", label: "Covariance", glyph: "grid",
+    when: "Correlation structure, block risk budget, conditioning." },
+  { href: "/loadings", label: "Loadings Lab", glyph: "beta",
+    when: "One security's betas, and whether they hold still." },
+  { href: "/risk", label: "Risk Lens", glyph: "bell",
+    when: "The forecast tested: bias, Mincer-Zarnowitz, VaR coverage." },
+  { href: "/ops", label: "Operations", glyph: "refresh",
+    when: "Refresh the data, or see what the last run did." },
+  { href: "/health", label: "Data Health", glyph: "pulse",
+    when: "Whether an input went stale or died." },
 ];
 
-function Directory() {
+/** Seven tiles on one line, each a way in. */
+function Tiles() {
   return (
-    <Panel
-      title="Where to look"
-      caption="Seven screens, each answering one kind of question."
-      index={6}
-    >
-      <div className="mt-1 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-        {PAGES.map((p) => (
+    <div>
+      <h2 className="label mb-2 px-0.5">Where to look</h2>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+        {PAGES.map((p, i) => (
           <Link
             key={p.href}
             href={p.href}
-            className="group rounded border border-lineSoft bg-canvas px-3 py-2
-                       transition hover:border-navy2"
+            title={p.when}
+            className="enter group relative overflow-hidden rounded border
+                       border-line bg-panel px-3 pb-3 pt-3.5 transition-all
+                       duration-200 hover:-translate-y-0.5 hover:border-navy2
+                       hover:shadow-[0_3px_10px_rgba(42,47,58,0.09)]"
+            style={{ animationDelay: `${240 + i * 45}ms` }}
           >
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[12px] font-semibold text-navy">{p.label}</span>
-              <span className="text-[12px] text-navy3 transition
-                               group-hover:translate-x-0.5">
+            {/* An accent that draws itself across the top on hover. */}
+            <span
+              className="absolute inset-x-0 top-0 h-[2px] origin-left scale-x-0
+                         bg-navy transition-transform duration-300
+                         group-hover:scale-x-100"
+            />
+            <div className="flex items-start justify-between">
+              <Glyph name={p.glyph} />
+              <span
+                className="text-[12px] leading-none text-navy3 transition-transform
+                           duration-200 group-hover:translate-x-1 group-hover:text-navy2"
+              >
                 →
               </span>
             </div>
-            <p className="mt-0.5 text-[11px] leading-snug text-muted">{p.when}</p>
+            <div className="mt-2 text-[12px] font-semibold leading-tight text-navy">
+              {p.label}
+            </div>
+            <p className="mt-1 text-[10.5px] leading-snug text-muted">{p.when}</p>
           </Link>
         ))}
       </div>
-    </Panel>
+    </div>
+  );
+}
+
+/**
+ * A mark per tile.
+ *
+ * Abstract on purpose. Each one echoes the shape of what the page draws — a
+ * series, a matrix, a distribution — without standing for any particular
+ * figure, because a glyph that looked like data would be data nobody computed.
+ */
+function Glyph({ name }: { name: string }) {
+  const common = {
+    width: 20, height: 20, viewBox: "0 0 20 20", fill: "none",
+    stroke: "currentColor", strokeWidth: 1.4,
+    strokeLinecap: "round" as const, strokeLinejoin: "round" as const,
+  };
+  return (
+    <span className="block text-navy3 transition-colors duration-200
+                     group-hover:text-navy">
+      <svg {...common} aria-hidden="true">
+        {name === "line" && <path d="M2 14 L6 8 L9 11 L13 4 L18 9" />}
+        {name === "bars" && (
+          <>
+            <path d="M3 17 V11" /><path d="M7.5 17 V6" />
+            <path d="M12 17 V13" /><path d="M16.5 17 V8" />
+          </>
+        )}
+        {name === "grid" && (
+          <>
+            <rect x="2.5" y="2.5" width="15" height="15" rx="1.5" />
+            <path d="M7.5 2.5 V17.5" /><path d="M12.5 2.5 V17.5" />
+            <path d="M2.5 7.5 H17.5" /><path d="M2.5 12.5 H17.5" />
+          </>
+        )}
+        {name === "beta" && (
+          <>
+            <path d="M3 5 H15" /><path d="M3 10 H10" /><path d="M3 15 H17" />
+          </>
+        )}
+        {name === "bell" && (
+          <>
+            <path d="M2 16 C6 16 6 5 10 5 C14 5 14 16 18 16" />
+            <path d="M2 16 H18" />
+          </>
+        )}
+        {name === "refresh" && (
+          <>
+            <path d="M16.5 10 A6.5 6.5 0 1 1 14 5" />
+            <path d="M14 1.5 V5.5 H10" />
+          </>
+        )}
+        {name === "pulse" && (
+          <path d="M2 10 H6 L8 5 L11 15 L13 10 H18" />
+        )}
+      </svg>
+    </span>
   );
 }
 
@@ -685,20 +615,12 @@ function spanYears(panel: PanelSummary): number | null {
   );
 }
 
-/** Blocks in the model's own order, with anything unrecognised after them. */
-function ordered(blocks: Block[]): Block[] {
-  return [...blocks].sort((a, b) => {
-    const ia = BLOCK_ORDER.indexOf(a.block_id);
-    const ib = BLOCK_ORDER.indexOf(b.block_id);
-    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-  });
-}
-
 /**
  * Whether the reader has asked for less motion.
  *
  * The CSS animations are handled by a media query in globals.css, but the
- * episode cycle is a timer in JavaScript and no stylesheet can switch that off.
+ * pipeline walk and the episode cycle are timers in JavaScript, and no
+ * stylesheet can switch those off.
  */
 function useReducedMotion(): boolean {
   const [calm, setCalm] = useState(false);
