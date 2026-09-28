@@ -305,6 +305,28 @@ class BlockRequest(BaseModel):
     stress_quantile: float = Field(default=0.8, ge=0.5, le=0.95)
 
 
+async def _named_proxies() -> list[dict[str, str]]:
+    """The proxy list with each security's catalogue name attached.
+
+    `ref_security` is the catalogue the estimator can price from, and it is
+    where a security's actual name lives; `ref_instrument` — which is what the
+    proxies are — has a ticker and an asset class and no name at all. So the
+    name is looked up by ticker and the hand-written label kept as the fallback.
+
+    One of the six needs that fallback. VT was added by this project and is in
+    `ref_instrument` only, so the catalogue has no row to name it; it keeps the
+    description written here. The other five report what the warehouse calls
+    them, which is the point of asking the database rather than asserting it.
+    """
+    rows = await db.fetch(
+        "SELECT ticker, name FROM ref_security WHERE ticker = ANY($1::text[])",
+        [p["instrument_id"] for p in DEFAULT_PROXIES])
+    names = {r["ticker"]: r["name"] for r in rows if r["name"]}
+    return [{**p, "name": names.get(p["instrument_id"], p["label"]),
+             "named_from": "catalogue" if p["instrument_id"] in names else "label"}
+            for p in DEFAULT_PROXIES]
+
+
 async def _betas(spec_id: str | None, instrument_id: str
                  ) -> tuple[dict[str, float], dict]:
     """Latest-window betas for one security, with the fit they came from.
@@ -380,6 +402,86 @@ def _blocks_payload(res: at.BlockAttribution, beta: np.ndarray,
         })
     out.sort(key=lambda d: -abs(d["share"]))
     return out
+
+
+# How far the implied factor share may sit from the regression's own R-squared
+# before the two are treated as describing different panels.
+#
+# The gap is never zero on a legitimate window: the residual comes from the
+# regression's own sample and sigma from the requested one, and those overlap
+# rather than coincide. Measured across the proxies: VT 0.01 points, UDN 0.8,
+# IYR 3.9 — the last being the security the factor set fits worst, which is
+# where the two samples disagree most. A mismatched window showed 76. Ten sits
+# clear of the honest cases and nowhere near the broken one.
+_R2_TOLERANCE = 0.10
+
+
+def _decomposition(res: at.BlockAttribution, fit: dict | None,
+                   block_names: dict[str, str]) -> dict:
+    """Factor variance by block, plus specific, adding to the total.
+
+    The page states three volatilities and they do not add up, because
+    volatilities never do. Variances do, so the arithmetic is done here in
+    variance and the volatilities are reported beside it rather than summed:
+
+        total variance = sum over blocks of their factor variance + specific
+
+    The per-block figure is the block's row of the variance matrix summed,
+    which includes its cross terms with every other block and is therefore
+    exactly `ctr_block * sigma` — the same Euler split the bar chart draws, in
+    variance units. Nothing new is estimated here; it is the same numbers in
+    the currency that is additive.
+
+    With no fit there is no residual — the equal-exposure baseline holds no
+    security — so specific is null and the total is the factor part alone.
+    Reporting a zero there would claim a security with no specific risk.
+
+    The two halves of the sum come from different places, and that is the one
+    way this can go wrong. Sigma is computed from the betas against the
+    covariance of the requested window; the residual is whatever the stored
+    regression recorded. Ask for a window the loadings were not fitted on and
+    they describe different panels, so their sum is not anybody's variance. The
+    factor share implied here is therefore checked against the regression's own
+    R-squared, which is the same quantity by a different route: they agree to a
+    hundredth of a point on a matched window, and by seventy-six points on a
+    mismatched one. `coherent` is false when they part company, and the page
+    stops claiming a total.
+    """
+    factor_var = float(res.sigma) ** 2
+    r2 = (fit or {}).get("r2")
+    spec_vol = (fit or {}).get("resid_vol_ann")
+    spec_var = float(spec_vol) ** 2 if spec_vol is not None else None
+    total_var = factor_var + (spec_var or 0.0)
+    denom = total_var or 1.0
+
+    blocks = []
+    for i, b in enumerate(res.blocks):
+        var = float(res.variance_block[i].sum())
+        blocks.append({
+            "block_id": b,
+            "name": block_names.get(b, b),
+            "vol_ctr": round(float(res.ctr_block[i]), 8),
+            "variance": round(var, 10),
+            "share_of_total": round(var / denom, 6),
+        })
+    blocks.sort(key=lambda d: -abs(d["variance"]))
+
+    return {
+        "blocks": blocks,
+        "factor_variance": round(factor_var, 10),
+        "factor_vol": round(float(res.sigma), 8),
+        "factor_share": round(factor_var / denom, 6),
+        "specific_variance": round(spec_var, 10) if spec_var is not None else None,
+        "specific_vol": round(float(spec_vol), 8) if spec_vol is not None else None,
+        "specific_share": (round(spec_var / denom, 6)
+                           if spec_var is not None else None),
+        "total_variance": round(total_var, 10),
+        "total_vol": round(total_var ** 0.5, 8),
+        "implied_r2": round(factor_var / denom, 6),
+        "fit_r2": r2,
+        "coherent": bool(r2 is None or spec_var is None
+                         or abs(factor_var / denom - r2) <= _R2_TOLERANCE),
+    }
 
 
 def _regimes(panel: pd.DataFrame, beta: np.ndarray, keep: list[str],
@@ -483,7 +585,8 @@ async def blocks(req: BlockRequest) -> dict:
         "block_correlation": np.round(result.block_correlation, 5).tolist(),
         "variance_share": np.round(
             result.variance_block / (result.sigma**2 or 1.0), 6).tolist(),
-        "proxies": DEFAULT_PROXIES,
+        "decomposition": _decomposition(result, fit, block_names),
+        "proxies": await _named_proxies(),
     }
     if req.regimes:
         payload["regimes"] = _regimes(panel, beta, keep, blocks_for,

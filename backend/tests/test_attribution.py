@@ -255,3 +255,81 @@ def test_stress_mask_ignores_scale_differences_between_factors():
 
 def test_stress_mask_on_too_short_a_sample_flags_nothing(cov):
     assert not at.stress_mask(np.zeros((10, 5))).any()
+
+
+# ---------------------------------------------------------------------------
+# The panel's own arithmetic: the same split carried into variance, where the
+# specific part can join it and the column can be made to total.
+# ---------------------------------------------------------------------------
+
+NAMES = {"equity": "Equity Market", "rates": "Rates", "commodity": "Commodities"}
+
+
+def _decomp(cov, beta, fit):
+    from backend.app.routers.matrix import _decomposition
+    return _decomposition(at.attribute(beta, cov, FACTORS, BLOCKS), fit, NAMES)
+
+
+def test_block_variances_sum_to_the_factor_variance(cov, beta):
+    """The column the page totals has to total, or the panel is decoration."""
+    d = _decomp(cov, beta, {"r2": None, "resid_vol_ann": None})
+    assert sum(b["variance"] for b in d["blocks"]) == pytest.approx(
+        d["factor_variance"], rel=1e-9)
+
+
+def test_block_volatility_contributions_still_sum_to_the_factor_volatility(cov, beta):
+    """Carrying the split into variance must not disturb the Euler split."""
+    d = _decomp(cov, beta, {"r2": None, "resid_vol_ann": None})
+    assert sum(b["vol_ctr"] for b in d["blocks"]) == pytest.approx(
+        d["factor_vol"], rel=1e-9)
+
+
+def test_factor_and_specific_variance_make_the_total(cov, beta):
+    d = _decomp(cov, beta, {"r2": 0.9, "resid_vol_ann": 0.04})
+    assert d["specific_variance"] == pytest.approx(0.04**2, rel=1e-12)
+    assert d["factor_variance"] + d["specific_variance"] == pytest.approx(
+        d["total_variance"], rel=1e-12)
+
+
+def test_shares_add_to_one_across_blocks_and_specific(cov, beta):
+    """What the reader is invited to add up, added up."""
+    d = _decomp(cov, beta, {"r2": 0.9, "resid_vol_ann": 0.04})
+    total = sum(b["share_of_total"] for b in d["blocks"]) + d["specific_share"]
+    assert total == pytest.approx(1.0, abs=5e-6)
+
+
+def test_total_volatility_is_the_quadrature_sum_not_the_arithmetic_one(cov, beta):
+    """The distinction the caption makes, asserted rather than asserted at."""
+    d = _decomp(cov, beta, {"r2": 0.9, "resid_vol_ann": 0.04})
+    # To the precision the payload is rounded to, which is where the page
+    # reads it from; asking for more would be testing `round`.
+    assert d["total_vol"] == pytest.approx(
+        (d["factor_vol"] ** 2 + d["specific_vol"] ** 2) ** 0.5, abs=1e-8)
+    assert d["total_vol"] < d["factor_vol"] + d["specific_vol"]
+
+
+def test_no_fit_means_no_specific_risk_rather_than_none_of_it(cov, beta):
+    """Equal exposure holds no security. A zero would claim one with no
+    specific risk, which is a different and much stronger statement."""
+    d = _decomp(cov, beta, None)
+    assert d["specific_variance"] is None
+    assert d["specific_vol"] is None
+    assert d["total_variance"] == pytest.approx(d["factor_variance"], rel=1e-12)
+    assert d["coherent"]
+
+
+def test_a_fit_from_another_window_is_reported_as_incoherent(cov, beta):
+    """The one way the sum goes wrong: sigma from this covariance, residual
+    from a regression on a different panel. Their R-squareds part company."""
+    d = _decomp(cov, beta, {"r2": 0.998, "resid_vol_ann": 2.0})
+    assert d["implied_r2"] < 0.5
+    assert not d["coherent"]
+
+
+def test_a_fit_from_this_window_is_reported_as_coherent(cov, beta):
+    r = at.attribute(beta, cov, FACTORS, BLOCKS)
+    # A residual consistent with an R-squared of 0.9 against this sigma.
+    resid = (r.sigma**2 * (1 / 0.9 - 1)) ** 0.5
+    d = _decomp(cov, beta, {"r2": 0.9, "resid_vol_ann": resid})
+    assert d["implied_r2"] == pytest.approx(0.9, abs=1e-6)
+    assert d["coherent"]
