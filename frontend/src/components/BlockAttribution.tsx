@@ -20,6 +20,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Chart, ChartSkeleton, PALETTE, Panel } from "@/components/Chart";
 import { api, Basis, BlockResult, num, pct } from "@/lib/api";
+import { blockStyle } from "@/lib/blocks";
 
 const DIVERGING: [number, string][] = [
   [0, "#8C3A2E"], [0.25, "#C8836F"], [0.5, "#F7F5F0"],
@@ -28,6 +29,17 @@ const DIVERGING: [number, string][] = [
 
 /** Signed share: the sign carries information, so it is never dropped. */
 const signed = (v: number) => `${v >= 0 ? "+" : "−"}${pct(Math.abs(v))}`;
+
+/**
+ * A volatility contribution, in percentage points of the total.
+ *
+ * Points rather than a percent sign, because these are addends and not shares:
+ * a block's 15.2 is 15.2 of the security's volatility, and writing it as "15.2%"
+ * next to a share column that also reads "98.3%" would put two different
+ * quantities in the same clothes. Negative ones are hedges and keep their sign.
+ */
+const signedPp = (v: number) =>
+  `${v >= 0 ? "+" : "−"}${num(Math.abs(v) * 100, 2)} pp`;
 
 export function BlockAttribution({ start, method, basis }: {
   start: string; method: string; basis: Basis;
@@ -78,7 +90,7 @@ export function BlockAttribution({ start, method, basis }: {
       {/* The budget, and the security it is measured through. Side by side
           because the bar chart is only as good as that series, and a reader who
           cannot see the proxy has to take the decomposition on trust. */}
-      <div className="grid gap-4 xl:grid-cols-[3fr_2fr]">
+      <div className="grid gap-4 xl:grid-cols-[2.6fr_1.15fr_2.25fr]">
       {/* ---------------------------------------------------------------- */}
       <Panel
         title="Risk budget by block"
@@ -128,22 +140,61 @@ export function BlockAttribution({ start, method, basis }: {
 
         {data && (
           <>
+            {/* Whose risk this is, said once and said large. Every number
+                under it is a property of this security and not of the
+                covariance matrix, and a reader who scrolls straight to the
+                bars should not have to hunt for which holding they describe. */}
+            <div className="mb-2.5 border-b border-lineSoft pb-2.5">
+              <div className="label mb-1">Measured through</div>
+              {chosen ? (
+                <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+                  <span className="font-mono text-[19px] font-semibold
+                                   leading-none text-navy">
+                    {chosen.instrument_id}
+                  </span>
+                  <span className="text-[15px] leading-tight text-navy">
+                    {chosen.name}
+                  </span>
+                  <span className="text-[11px] text-muted">
+                    · {chosen.asset_class}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-[15px] leading-tight text-navy">
+                  Equal exposure
+                  <span className="ml-2 text-[11px] text-muted">
+                    · every exposure set to one, across {data.n_factors} factors
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Factor, specific and total, together. Stating a factor
+                volatility on its own invites it to be read as the security's
+                risk, which it is not unless the residual happens to be
+                negligible — and whether it is happens to be the question. */}
             <div className="mb-3 flex flex-wrap items-baseline gap-x-6 gap-y-1
                             text-[11px] text-muted">
               <span>
                 <b className="text-[13px] text-navy">{pct(data.sigma)}</b>{" "}
-                factor volatility
-                {chosen && <> · {chosen.instrument_id} — {chosen.label}</>}
-                {!security && <> · equal exposure across {data.n_factors} factors</>}
+                factor vol
               </span>
-              {data.fit && (
-                <span>
-                  fit R² {num(data.fit.r2, 3)}, residual {pct(data.fit.resid_vol_ann)}{" "}
-                  <span className="text-[10px]">
-                    (what the factors do <i>not</i> explain)
-                  </span>
+              <span>
+                <b className="text-[13px] text-navy">
+                  {pct(data.decomposition.specific_vol)}
+                </b>{" "}
+                specific vol
+              </span>
+              <span>
+                <b className="text-[13px] text-navy">
+                  {pct(data.decomposition.total_vol)}
+                </b>{" "}
+                total vol
+                <span className="ml-1 text-[10px]">
+                  (in quadrature — variances add, volatilities do not)
                 </span>
-              )}
+              </span>
+              {data.fit && <span>fit R² {num(data.fit.r2, 3)}</span>}
               <span>
                 diversification {pct(data.diversification)} — blocks apart would
                 be {pct(data.undiversified)}
@@ -216,7 +267,9 @@ export function BlockAttribution({ start, method, basis }: {
         )}
       </Panel>
 
-        <SecurityPanel id={security} label={chosen?.label} note={chosen?.note}
+        <DecompositionPanel data={data} busy={busy} />
+
+        <SecurityPanel id={security} name={chosen?.name} note={chosen?.note}
                        start={start} />
       </div>
 
@@ -336,8 +389,130 @@ export function BlockAttribution({ start, method, basis }: {
  * Everything here comes from the Raw Explorer's own endpoint, so the two
  * screens cannot disagree about the same security.
  */
-function SecurityPanel({ id, label, note, start }: {
-  id: string | null; label?: string; note?: string; start: string;
+/**
+ * Where the risk comes from, in the currency that adds up.
+ *
+ * The bar chart beside this one splits the factor part and nothing else, so it
+ * cannot show a reader what fraction of the security it is a split *of*. This
+ * carries the same split into variance, where the specific part can sit in the
+ * same column and the column can be made to total.
+ *
+ * Two arithmetics are shown because two are true, and confusing them is the
+ * usual mistake. The volatility column adds down the blocks exactly, by
+ * Euler's theorem — but only down the blocks: the factor and specific
+ * volatilities combine in quadrature, so that column is deliberately left
+ * empty on the total row rather than showing a figure nobody could reconcile.
+ * The share column adds all the way through, which is why it is the one with
+ * a total under it.
+ */
+function DecompositionPanel({ data, busy }: {
+  data: BlockResult | null; busy: boolean;
+}) {
+  if (!data) {
+    return (
+      <Panel title="How the risk adds up">
+        {busy ? <ChartSkeleton height={300} /> : null}
+      </Panel>
+    );
+  }
+
+  const d = data.decomposition;
+  const hasSpecific = d.specific_vol !== null;
+
+  return (
+    <Panel
+      title="How the risk adds up"
+      caption={
+        <>
+          Volatilities do not add; variances do. So the blocks are totalled in
+          variance, where the specific part belongs in the same column.
+        </>
+      }
+    >
+      {!d.coherent && (
+        <div className="mb-2 rounded border border-warn/40 bg-warn/5 px-2.5 py-1.5
+                        text-[10.5px] leading-relaxed text-ink">
+          The loadings were not fitted on this window — the factor share here is{" "}
+          {pct(d.implied_r2)} against the regression&rsquo;s {pct(d.fit_r2)}. The
+          two halves describe different panels, so the total below is not this
+          security&rsquo;s variance. Narrow the sample to the fitted window.
+        </div>
+      )}
+
+      <table className="w-full border-collapse text-[11px]">
+        <thead>
+          <tr>
+            <th className="th">Block</th>
+            <th className="th text-right">σ contrib.</th>
+            <th className="th text-right">Share of var.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {d.blocks.map((b) => {
+            const bs = blockStyle(b.block_id);
+            return (
+              <tr key={b.block_id} className="border-t border-lineSoft">
+                <td className="cell font-sans">
+                  <span className="mr-1.5 inline-block h-2 w-2 rounded-[2px]
+                                   align-middle"
+                        style={{ background: bs.colour }} />
+                  {bs.label}
+                </td>
+                <td className="cell text-right">{signedPp(b.vol_ctr)}</td>
+                {/* Signed like the bars beside it: a block can take variance
+                    out of the total, and dropping the sign would hide it. */}
+                <td className="cell text-right">{signed(b.share_of_total)}</td>
+              </tr>
+            );
+          })}
+
+          <tr className="border-t-2 border-line">
+            <td className="cell font-sans font-semibold text-navy">Factor</td>
+            <td className="cell text-right font-semibold text-navy">
+              {pct(d.factor_vol)}
+            </td>
+            <td className="cell text-right font-semibold text-navy">
+              {pct(d.factor_share)}
+            </td>
+          </tr>
+          <tr className="border-t border-lineSoft">
+            <td className="cell font-sans">Specific</td>
+            <td className="cell text-right">{pct(d.specific_vol)}</td>
+            <td className="cell text-right">{pct(d.specific_share)}</td>
+          </tr>
+          <tr className="border-t-2 border-line">
+            <td className="cell font-sans font-semibold text-navy">Total</td>
+            <td className="cell text-right font-semibold text-navy">
+              {pct(d.total_vol)}
+            </td>
+            <td className="cell text-right font-semibold text-navy">
+              {hasSpecific ? pct(1) : "—"}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p className="mt-2 text-[10.5px] leading-snug text-muted">
+        The σ column adds down the blocks to the factor volatility exactly, by
+        Euler&rsquo;s theorem. It does <i>not</i> continue through to the total:
+        factor and specific combine as{" "}
+        <span className="font-mono text-[10px]">√(σ²ᶠ + σ²ˢ)</span>, which is
+        why {pct(data.sigma)} and {pct(d.specific_vol)} make{" "}
+        {pct(d.total_vol)} rather than their sum. The share column is variance
+        and adds all the way down.
+      </p>
+      {!hasSpecific && (
+        <p className="mt-1.5 text-[10.5px] leading-snug text-muted">
+          The equal-exposure baseline holds no security, so there is no residual
+          to be specific about and the total is the factor part alone.
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+function SecurityPanel({ id, name, note, start }: {
+  id: string | null; name?: string; note?: string; start: string;
 }) {
   const [d, setD] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -370,7 +545,7 @@ function SecurityPanel({ id, label, note, start }: {
       caption={
         <>
           The contributions opposite are measured through <b>{id}</b>
-          {label && <> — {label}</>}. A different proxy would move every number
+          {name && <> — {name}</>}. A different proxy would move every number
           on that chart, so the series is shown rather than asserted.
           {note && <> {note}</>}
         </>

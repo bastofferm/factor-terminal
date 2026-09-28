@@ -314,8 +314,30 @@ export interface BlockResult {
   block_names: string[];
   block_correlation: number[][];
   variance_share: number[][];
+  /**
+   * Factor variance by block, plus specific, adding to the total.
+   *
+   * Volatilities do not add, so the arithmetic is in variance and the
+   * volatilities sit beside it. `coherent` is false when the betas and the
+   * covariance came from different windows, in which case the total is a sum
+   * of two numbers that do not belong to the same panel.
+   */
+  decomposition: {
+    blocks: {
+      block_id: string; name: string;
+      vol_ctr: number; variance: number; share_of_total: number;
+    }[];
+    factor_variance: number; factor_vol: number; factor_share: number;
+    specific_variance: number | null; specific_vol: number | null;
+    specific_share: number | null;
+    total_variance: number; total_vol: number;
+    implied_r2: number; fit_r2: number | null; coherent: boolean;
+  };
   proxies: {
     instrument_id: string; asset_class: string; label: string; note: string;
+    /** From `ref_security` where the catalogue has the security, else `label`. */
+    name: string;
+    named_from: "catalogue" | "label";
   }[];
   regimes?: {
     available: boolean; reason?: string; quantile?: number;

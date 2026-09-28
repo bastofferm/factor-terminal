@@ -156,8 +156,13 @@ export function Panel({
                   shadow-[0_1px_2px_rgba(42,47,58,0.04)] ${className}`}
       style={{ animationDelay: `${Math.min(index, 8) * 45}ms` }}
     >
-      <header className="mb-2 flex items-start justify-between gap-4">
-        <div>
+      {/* Wraps, and the heading claims a floor before it does. A panel with a
+          wide set of actions used to squeeze its own title into whatever was
+          left — on a narrow column that meant a caption running down a
+          hundred-pixel ribbon a word at a time. The actions drop to their own
+          line instead, which costs a row and keeps the prose readable. */}
+      <header className="mb-2 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-[210px] flex-1">
           <h2 className="text-2xs font-semibold uppercase tracking-label text-muted">
             {title}
           </h2>
