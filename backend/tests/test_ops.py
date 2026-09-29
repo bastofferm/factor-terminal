@@ -118,3 +118,126 @@ def test_full_flag_travels_with_the_run():
 
 def test_run_ids_are_distinct():
     assert Refresh(full=False).run_id != Refresh(full=False).run_id
+
+
+# ---------------------------------------------------------------------------
+# The run's own row. Recorded so that pressing the button in Operations leaves
+# something behind in Data Health: before this, a refresh's six stages appeared
+# as six unrelated jobs and a refresh that never reached its first stage left
+# no trace at all.
+#
+# The database is stubbed rather than reached. What is worth testing is which
+# statement gets issued with what status, and that it gets issued at all on the
+# paths that do not reach the bottom of `run`.
+# ---------------------------------------------------------------------------
+
+class _Recorder:
+    """Stands in for `backend.app.db`, keeping what it was asked to run."""
+
+    def __init__(self, fail_on_insert: bool = False) -> None:
+        self.calls: list[tuple[str, tuple]] = []
+        self.fail_on_insert = fail_on_insert
+
+    async def execute(self, query: str, *args):
+        if self.fail_on_insert and query.lstrip().upper().startswith("INSERT"):
+            raise RuntimeError("no database today")
+        self.calls.append((query, args))
+        return "OK"
+
+    def statuses(self) -> list[str]:
+        """The status each UPDATE set, in order."""
+        return [a[1] for q, a in self.calls if q.lstrip().upper().startswith("UPDATE")]
+
+
+@pytest.fixture
+def recorder(monkeypatch):
+    from backend.app.routers import ops as ops_mod
+    r = _Recorder()
+    monkeypatch.setattr(ops_mod, "db", r)
+    return r
+
+
+async def _record(run, recorder):
+    await run._record_start()
+    await run._record_finish()
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_opens_a_row_of_its_own(recorder):
+    run = Refresh(full=False)
+    await run._record_start()
+    inserts = [q for q, _ in recorder.calls if q.lstrip().upper().startswith("INSERT")]
+    assert len(inserts) == 1
+    assert "etl_run" in inserts[0]
+    # The job name is what Data Health groups and labels on.
+    assert "'refresh'" in inserts[0]
+
+
+@pytest.mark.asyncio
+async def test_a_clean_refresh_closes_as_succeeded(recorder):
+    run = Refresh(full=False)
+    for s in STAGES:
+        run.stages[s["key"]]["state"] = "ok"
+    run._finish("ok", 0)
+    await _record(run, recorder)
+    assert recorder.statuses() == ["succeeded"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_stage_under_a_zero_exit_closes_as_partial(recorder):
+    """The chain can exit zero with an advisory stage failed. Calling that a
+    success would hide exactly the failures designed not to stop the run."""
+    run = Refresh(full=False)
+    for s in STAGES:
+        run.stages[s["key"]]["state"] = "ok"
+    run.stages[STAGES[-1]["key"]]["state"] = "failed"
+    run._finish("ok", 0)
+    await _record(run, recorder)
+    assert recorder.statuses() == ["partial"]
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_that_dies_closes_as_failed(recorder):
+    run = Refresh(full=False)
+    run._finish("failed", 1)
+    await _record(run, recorder)
+    assert recorder.statuses() == ["failed"]
+
+
+@pytest.mark.asyncio
+async def test_the_closing_row_carries_every_stage_outcome(recorder):
+    run = Refresh(full=True)
+    for s in STAGES:
+        run.stages[s["key"]]["state"] = "ok"
+    run._finish("ok", 0)
+    await _record(run, recorder)
+
+    import json
+    update = [a for q, a in recorder.calls
+              if q.lstrip().upper().startswith("UPDATE")][0]
+    scope = json.loads(update[-1])
+    assert scope["source"] == "operations"
+    assert scope["full"] is True
+    assert set(scope["stages"]) == {s["key"] for s in STAGES}
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_still_runs_when_it_cannot_be_recorded(monkeypatch):
+    """Recording must never be the reason a refresh does not happen, and a row
+    that was never opened must not be closed."""
+    from backend.app.routers import ops as ops_mod
+    r = _Recorder(fail_on_insert=True)
+    monkeypatch.setattr(ops_mod, "db", r)
+
+    run = Refresh(full=False)
+    await run._record_start()
+    assert run._recorded is False
+    assert any("could not be recorded" in line for line in run.log)
+
+    run._finish("ok", 0)
+    await run._record_finish()
+    assert recorder_updates(r) == 0
+
+
+def recorder_updates(r: _Recorder) -> int:
+    return sum(1 for q, _ in r.calls if q.lstrip().upper().startswith("UPDATE"))

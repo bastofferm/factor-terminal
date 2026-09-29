@@ -18,6 +18,7 @@ race on the same watermarks and the loser would write a partial panel.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sys
 import time
@@ -189,6 +190,13 @@ class Refresh:
 
     def __init__(self, full: bool) -> None:
         self.run_id = uuid.uuid4().hex[:12]
+        # A second id, and a real UUID, because this one goes in the database.
+        # The short one is the handle the Operations page polls on and is not
+        # worth changing; etl_run.run_id is typed uuid and would reject it.
+        self.etl_run_id = uuid.uuid4()
+        # False once the opening insert has failed, so the closing update does
+        # not go looking for a row that was never written.
+        self._recorded = True
         self.full = full
         self.started_at = datetime.now(timezone.utc)
         self.started_monotonic = time.monotonic()
@@ -220,29 +228,37 @@ class Refresh:
     # -- execution ------------------------------------------------------------
 
     async def run(self) -> None:
-        cmd = [sys.executable, "-m", "backend.pipeline.scheduler", "--once"]
-        if self.full:
-            cmd.append("--full")
+        await self._record_start()
         try:
-            self._proc = await asyncio.create_subprocess_exec(
-                *cmd, cwd=str(REPO_ROOT),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-        except Exception as exc:                                  # pragma: no cover
-            self._finish("failed", None, f"could not start the refresh: {exc}")
-            return
+            cmd = [sys.executable, "-m", "backend.pipeline.scheduler", "--once"]
+            if self.full:
+                cmd.append("--full")
+            try:
+                self._proc = await asyncio.create_subprocess_exec(
+                    *cmd, cwd=str(REPO_ROOT),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+            except Exception as exc:                              # pragma: no cover
+                self._finish("failed", None, f"could not start the refresh: {exc}")
+                return
 
-        assert self._proc.stdout is not None
-        async for raw in self._proc.stdout:
-            self._consume(raw.decode("utf-8", "replace").rstrip())
+            assert self._proc.stdout is not None
+            async for raw in self._proc.stdout:
+                self._consume(raw.decode("utf-8", "replace").rstrip())
 
-        rc = await self._proc.wait()
-        # Any stage still marked running when the process exits died with it.
-        for state in self.stages.values():
-            if state["state"] == "running":
-                state["state"] = "failed"
-        self._finish("ok" if rc == 0 else "failed", rc)
+            rc = await self._proc.wait()
+            # Any stage still marked running when the process exits died with it.
+            for state in self.stages.values():
+                if state["state"] == "running":
+                    state["state"] = "failed"
+            self._finish("ok" if rc == 0 else "failed", rc)
+        finally:
+            # In a finally so the row closes on the paths that do not reach the
+            # bottom: a subprocess that would not start, a cancel, a raise.
+            # A refresh left at 'running' for ever is worse than no row at all,
+            # because Data Health would go on reporting it as in progress.
+            await self._record_finish()
 
     def _consume(self, line: str) -> None:
         if not line:
@@ -264,6 +280,66 @@ class Refresh:
     def _set(self, key: str, **fields: Any) -> None:
         if key in self.stages:
             self.stages[key].update(fields)
+
+    # -- the run's own row ----------------------------------------------------
+
+    async def _record_start(self) -> None:
+        """Open a row for the refresh itself.
+
+        Each of the six stages already writes one, which is why Data Health has
+        always been able to say what a refresh *did*. What it could not say is
+        that a refresh happened: the six arrive as six unrelated jobs,
+        indistinguishable from the nightly chain or from someone running one
+        stage by hand, and a refresh that fell over before its first stage left
+        no trace whatsoever.
+
+        Recording it cannot be allowed to stop it. A refresh that runs and is
+        not written down is a worse outcome than a missing row, so a failure
+        here goes to the log the operator is already watching and the chain
+        carries on.
+        """
+        try:
+            await db.execute(
+                "INSERT INTO etl_run (run_id, job, mode, scope, started_at) "
+                "VALUES ($1, 'refresh', $2, $3, $4)",
+                self.etl_run_id, "full" if self.full else "incremental",
+                json.dumps({"source": "operations",
+                            "stages": [s["key"] for s in STAGES]}),
+                self.started_at)
+        except Exception as exc:                                  # pragma: no cover
+            self._recorded = False
+            self.log.append(f"note: this run could not be recorded in etl_run "
+                            f"({exc}); its stages will still appear.")
+
+    async def _record_finish(self) -> None:
+        """Close it, with what each stage came to.
+
+        `partial` is the case worth keeping: the chain can exit zero with an
+        advisory stage failed, and calling that a success would hide exactly
+        the failures that were designed not to stop the run.
+        """
+        if not self._recorded:
+            return
+        states = {s["key"]: self.stages[s["key"]]["state"] for s in STAGES}
+        failed = [k for k, v in states.items() if v == "failed"]
+        status = ("failed" if self.status == "failed"
+                  else "partial" if failed else "succeeded")
+        error = None
+        if failed:
+            error = f"stage(s) failed: {', '.join(failed)}"
+        try:
+            await db.execute(
+                "UPDATE etl_run SET status=$2, finished_at=$3, n_failed=$4, "
+                "error=$5, scope=$6 WHERE run_id=$1",
+                self.etl_run_id, status,
+                self.finished_at or datetime.now(timezone.utc), len(failed),
+                error,
+                json.dumps({"source": "operations",
+                            "full": self.full,
+                            "returncode": self.returncode,
+                            "stages": states}))
+        except Exception as exc:                                  # pragma: no cover
+            self.log.append(f"note: this run's row could not be closed ({exc}).")
 
     def _finish(self, status: str, rc: int | None, note: str | None = None) -> None:
         self.status = status

@@ -160,7 +160,15 @@ export function RunDetail({
       <div className="mt-3 grid grid-cols-2 gap-3 border-t border-lineSoft pt-3 sm:grid-cols-4">
         <Stat label="Started" value={stamp(run.started_at)} />
         <Stat label="Duration" value={duration(run.duration_seconds)} />
-        <Stat label="Rows written" value={(run.rows_out ?? 0).toLocaleString("en-US")} />
+        {/* The refresh writes nothing itself — it starts six jobs that each
+            count their own work. A literal zero here reads as a run that did
+            nothing, directly under a sentence saying where the rows went. */}
+        <Stat
+          label="Rows written"
+          value={run.job === "refresh"
+            ? "by its stages"
+            : (run.rows_out ?? 0).toLocaleString("en-US")}
+        />
         <Stat
           label="Items"
           value={
