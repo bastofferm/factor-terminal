@@ -14,7 +14,7 @@ that is tested rather than assumed.
 Lens, Operations, Data Health. Regenerate with
 `python -m scripts.capture_screenshots` while the app is running.*
 
-**[Watch the film](screenshots/factor-terminal-film.mp4)** — 2m 22s, narrated,
+**[Watch the film](screenshots/factor-terminal-film.mp4)** — 2m 21s, narrated,
 through all eight tabs. Recorded from the running app rather than mocked up, so
 what it shows is what the repository does. There is also a
 **[sales-desk cut](screenshots/factor-terminal-film-floor.mp4)** of the same
