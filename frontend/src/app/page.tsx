@@ -606,8 +606,14 @@ function Tiles() {
             className="enter group relative overflow-hidden rounded border
                        border-line bg-panel px-3 pb-3 pt-3.5 transition-all
                        duration-200 hover:-translate-y-0.5 hover:border-navy2
-                       hover:shadow-[0_3px_10px_rgba(42,47,58,0.09)]"
-            style={{ animationDelay: `${240 + i * 45}ms` }}
+                       hover:bg-white
+                       hover:shadow-[0_4px_14px_rgba(42,47,58,0.10)]"
+            style={{
+              animationDelay: `${240 + i * 45}ms`,
+              // Read by the stylesheet so each mark draws in the order its
+              // tile arrived, rather than all seven at once.
+              ["--draw-delay" as string]: `${420 + i * 55}ms`,
+            } as React.CSSProperties}
           >
             {/* An accent that draws itself across the top on hover. */}
             <span
@@ -615,7 +621,12 @@ function Tiles() {
                          bg-navy transition-transform duration-300
                          group-hover:scale-x-100"
             />
-            <div className="flex items-start justify-between">
+            {/* A light that passes over the tile once, on the way in. Skewed so
+                it reads as a sweep rather than a bar crossing the card. */}
+            <span className="sheen pointer-events-none absolute inset-y-0 w-1/3
+                             -skew-x-12"
+                  style={{ animationDelay: `${560 + i * 55}ms` }} />
+            <div className="relative flex items-start justify-between">
               <Glyph name={p.glyph} />
               <span
                 className="text-[12px] leading-none text-navy3 transition-transform
@@ -649,8 +660,9 @@ function Glyph({ name }: { name: string }) {
     strokeLinecap: "round" as const, strokeLinejoin: "round" as const,
   };
   return (
-    <span className="block text-navy3 transition-colors duration-200
-                     group-hover:text-navy">
+    <span className="glyph block text-navy3 transition-[color,transform]
+                     duration-200 group-hover:scale-110 group-hover:text-navy"
+          style={{ transformOrigin: "left center" }}>
       <svg {...common} aria-hidden="true">
         {name === "line" && <path d="M2 14 L6 8 L9 11 L13 4 L18 9" />}
         {name === "bars" && (
