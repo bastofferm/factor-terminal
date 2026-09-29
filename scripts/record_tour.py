@@ -97,8 +97,8 @@ STOPS: list[tuple[str, str, str, str]] = [
     ("/", "Overview",
      "Start with what it is",
      "Forty daily factors across nine blocks, twenty-two years of history, and "
-     "the whole pipeline in six stages. Nothing on this screen is a number the "
-     "model invented for it."),
+     "the whole pipeline in six stages. Nothing on this screen is computed "
+     "here — every figure is one the pages behind it already report."),
     ("/factors", "Factor Explorer",
      "Every factor, and the arithmetic behind it",
      "One factor at a time: the series, the rolling risk, the distribution, and "
@@ -107,15 +107,15 @@ STOPS: list[tuple[str, str, str, str]] = [
      "from the chart beside it."),
     ("/raw", "Raw Explorer",
      "The series before the model touched it",
-     "The same battery on the raw panel and on the individual instruments "
-     "underneath. This is where a bad print is told apart from a real crash — "
-     "and where the Python that builds the factor is printed from the running "
-     "source."),
+     "The same stationarity battery on the raw panel and on the individual "
+     "instruments underneath. This is where a bad print is told apart from a "
+     "real crash — and where the Python that builds the factor is printed from "
+     "the running source."),
     ("/matrix", "Covariance & PCA",
      "How the factors move together",
      "The correlation matrix with its blocks drawn, its conditioning reported, "
-     "and a risk budget across the nine blocks measured through a proxy security "
-     "the factors never saw."),
+     "and a risk budget across the nine blocks measured through a proxy "
+     "security that played no part in building the factors."),
     ("/loadings", "Loadings Lab",
      "Betas that have to survive the window",
      "Rolling factor betas for any security, on either panel, under an "
