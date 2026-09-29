@@ -114,8 +114,8 @@ STOPS: list[tuple[str, str, str, str]] = [
     ("/matrix", "Covariance & PCA",
      "How the factors move together",
      "The correlation matrix with its blocks drawn, its conditioning reported, "
-     "and a risk budget across the nine blocks measured through a proxy "
-     "security that played no part in building the factors."),
+     "and a risk budget across the nine blocks measured through a "
+     "representative investment vehicle."),
     ("/loadings", "Loadings Lab",
      "Betas that have to survive the window",
      "Rolling factor betas for any security, on either panel, under an "

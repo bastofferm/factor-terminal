@@ -92,8 +92,8 @@ HOUSE: list[tuple[str | None, str, str]] = [
      "market crash."),
     ("/matrix", "Covariance & PCA",
      "The covariance page shows how the factors move together, block by block, "
-     "and budgets risk across them through a security that played no part in "
-     "building them."),
+     "and budgets risk across them through a representative investment "
+     "vehicle."),
     ("/loadings", "Loadings Lab",
      "The Loadings Lab gives you rolling betas for any security. Change the "
      "window, the estimator, the panel, and watch whether those loadings hold "
@@ -136,8 +136,8 @@ FLOOR: list[tuple[str | None, str, str]] = [
      "is how you tell a bad print from a real crash."),
     ("/matrix", "Covariance & PCA",
      "How every factor moves with every other one, block by block. Plus a risk "
-     "budget, measured through a security that played no part in building the "
-     "factors. No circular logic."),
+     "budget, measured through a representative investment vehicle. No "
+     "circular logic."),
     ("/loadings", "Loadings Lab",
      "Rolling betas, any security. Change the window, the estimator, the panel. "
      "If those loadings will not hold still, you find out here. Not later."),
