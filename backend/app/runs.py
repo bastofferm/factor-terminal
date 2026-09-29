@@ -28,6 +28,11 @@ from typing import Any
 
 # What each job is for, in the analyst's terms rather than the scheduler's.
 _WHAT_IT_DOES: dict[str, str] = {
+    "refresh": "The whole chain, started by hand from Operations. It writes no "
+               "rows itself — the stages below it do that — and exists so that "
+               "pressing the button leaves a record: when it ran, whether it "
+               "was a full rebuild, and how each stage came out. The six jobs "
+               "logged around it are its own.",
     "sync_warehouse": "Mirrors the xbrl_sec warehouse into this database over "
                       "postgres_fdw: instrument prices, published reference "
                       "factors, and any security requested for analysis. Reads "
@@ -232,6 +237,24 @@ def outcome(run: dict, items: dict) -> str:
         return "Still running."
     if status == "failed":
         return f"Failed: {run.get('error') or 'no error recorded'}."
+
+    # The refresh has no items of its own: it starts six jobs and each of those
+    # counts its own work. Falling through to the generic sentence would have it
+    # report "0 items processed, writing 0 rows", which is true and reads as a
+    # run that did nothing.
+    if job == "refresh":
+        scope = _as_dict(run.get("scope"))
+        stages = _as_dict(scope.get("stages"))
+        done = sum(1 for v in stages.values() if v == "ok")
+        bad = [k for k, v in stages.items() if v == "failed"]
+        secs = run.get("duration_seconds")
+        out = [f"{done} of {len(stages)} stages completed" if stages
+               else "Ran the chain"]
+        if bad:
+            out.append(f"{', '.join(bad)} failed")
+        if secs is not None:
+            out.append(f"in {_duration(secs)}")
+        return ", ".join(out) + ". Rows are counted by the stages themselves."
 
     ok = items.get("succeeded", 0)
     failed = items.get("failed", 0)
