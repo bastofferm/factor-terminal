@@ -125,6 +125,8 @@ function Hero({
         borderColor: "#D2CFC8",
       }}
     >
+      <HeroMath />
+
       {/* A hairline in the nine block colours: the hues that key every chart in
           the app, introduced here before they mean anything. */}
       <div className="absolute inset-x-0 top-0 flex h-[3px]">
@@ -138,7 +140,7 @@ function Hero({
         ))}
       </div>
 
-      <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-3">
+      <div className="relative flex flex-wrap items-start justify-between gap-x-8 gap-y-3">
         <div className="max-w-[760px]">
           <div className="rise label" style={{ animationDelay: "40ms" }}>
             Multi-asset factor model
@@ -182,6 +184,118 @@ function Hero({
 
       <HeroSpan panel={panel} />
     </section>
+  );
+}
+
+/**
+ * The model, written out behind the masthead.
+ *
+ * A watermark rather than a statement: it cycles between the two objects the
+ * whole terminal is built on — the exposure vector and the covariance matrix
+ * on one side, the pricing equation that relates them on the other. Anyone who
+ * reads it learns what the thing is before reading a word of prose; anyone who
+ * does not is looking at texture.
+ *
+ * Drawn as SVG text rather than typeset with KaTeX. At this opacity the
+ * difference between real typesetting and an italic serif with tspan
+ * subscripts is invisible, and the page would otherwise pay a few hundred
+ * kilobytes for a decoration — which is precisely the trade that took the
+ * equation off the front of this card in the first place.
+ *
+ * It sits behind the copy and is hidden below the breakpoint where the card
+ * still has room to the right of the headline. Background that crowds the
+ * text it sits under has stopped being background.
+ */
+function HeroMath() {
+  const v = "#2F4D73";
+  const serif = { fontFamily: "'Times New Roman', Times, serif",
+                  fontStyle: "italic" as const };
+
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-y-0 right-0 hidden
+                 w-[54%] select-none lg:block"
+      style={{ opacity: 0.095 }}
+    >
+      <svg viewBox="0 0 640 260" className="h-full w-full"
+           preserveAspectRatio="xMidYMid meet">
+        {/* --- the exposure vector and the covariance it is held against --- */}
+        <g className="apt-a" fill={v} stroke={v}>
+          <text x="8" y="140" fontSize="34" {...serif} stroke="none">β</text>
+          <text x="38" y="140" fontSize="30" stroke="none">=</text>
+          <path d="M84 52 H70 V212 H84" strokeWidth="2.5" fill="none" />
+          <path d="M146 52 H160 V212 H146" strokeWidth="2.5" fill="none" />
+          <g fontSize="25" {...serif} stroke="none" textAnchor="middle">
+            <text x="115" y="88">β<tspan fontSize="16" dy="6">1</tspan></text>
+            <text x="115" y="130">β<tspan fontSize="16" dy="6">2</tspan></text>
+            <text x="115" y="170" fontStyle="normal">⋮</text>
+            <text x="115" y="205">β<tspan fontSize="16" dy="6">K</tspan></text>
+          </g>
+
+          <text x="196" y="140" fontSize="34" {...serif} stroke="none">Σ</text>
+          <text x="228" y="140" fontSize="30" stroke="none">=</text>
+          <path d="M276 52 H262 V212 H276" strokeWidth="2.5" fill="none" />
+          <path d="M618 52 H632 V212 H618" strokeWidth="2.5" fill="none" />
+          <g fontSize="23" {...serif} stroke="none" textAnchor="middle">
+            {[
+              ["11", "12", "⋯", "1K"],
+              ["21", "22", "⋯", "2K"],
+              ["⋮", "⋮", "⋱", "⋮"],
+              ["K1", "K2", "⋯", "KK"],
+            ].map((row, r) =>
+              row.map((cell, c) => {
+                const x = 318 + c * 96;
+                const y = 88 + r * 39;
+                const plain = cell.length === 1;
+                return (
+                  <text key={`${r}-${c}`} x={x} y={y}
+                        fontStyle={plain ? "normal" : "italic"}>
+                    {plain ? cell : <>σ<tspan fontSize="15" dy="6">{cell}</tspan></>}
+                  </text>
+                );
+              })
+            )}
+          </g>
+        </g>
+
+        {/* --- and what the model does with them ---
+            Shifted to sit under the middle of the layer: the equation is 414
+            units wide against the matrix's 627, and left at its natural origin
+            it hangs off the left of the space the other frame fills. */}
+        <g className="apt-b" fill={v} stroke="none" transform="translate(99,0)">
+          <g fontSize="34" {...serif}>
+            <text x="14" y="148">
+              r<tspan fontSize="20" dy="8">i,t</tspan>
+              <tspan dy="-8" fontStyle="normal"> = </tspan>
+              α<tspan fontSize="20" dy="8">i</tspan>
+              <tspan dy="-8" fontStyle="normal"> + </tspan>
+            </text>
+          </g>
+          {/* The sum, set large with its limits, because it is the sentence's verb. */}
+          <text x="232" y="158" fontSize="56" fontFamily="'Times New Roman', serif">Σ</text>
+          <text x="238" y="104" fontSize="18" {...serif}>K</text>
+          <text x="228" y="192" fontSize="18" {...serif}>k=1</text>
+          <g fontSize="34" {...serif}>
+            <text x="288" y="148">
+              β<tspan fontSize="20" dy="8">i,k</tspan>
+              <tspan dy="-8"> f</tspan>
+              <tspan fontSize="20" dy="8">k,t</tspan>
+              <tspan dy="-8" fontStyle="normal"> + </tspan>
+              ε<tspan fontSize="20" dy="8">i,t</tspan>
+            </text>
+          </g>
+          {/* Plain f, not f-tilde. Placing an accent over a glyph inside a
+              tspan run means knowing that run's advance width, which is a font
+              metric and not something to guess at: measured, the tilde landed
+              fifty units above the baseline and sixty to the right of the f it
+              was meant to sit on — a stray mark rather than an accent. This is
+              the textbook APT form and reads as one. Where the distinction
+              actually carries weight, the model states it exactly: every
+              factor's profile shows its own orthogonalisation equation. */}
+        </g>
+      </svg>
+    </div>
   );
 }
 

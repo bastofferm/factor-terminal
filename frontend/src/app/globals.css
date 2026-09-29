@@ -104,7 +104,7 @@ html, body {
   /* Named rather than left to the blanket rule below: an infinite animation at
      0.01ms is a loop that never rests, and `both` fill on a zero-length run is
      a race with the paint. Switched off outright, each lands on its end state. */
-  .rise, .sweep, .pulse { animation: none; }
+  .rise, .sweep, .pulse, .apt-a, .apt-b { animation: none; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
@@ -138,6 +138,27 @@ html, body {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.3; }
+}
+
+/* The masthead watermark, turning over between the exposure vector and the
+   equation that uses it. Two layers cross-fading on one clock rather than a
+   timer in JavaScript: there is no state here worth re-rendering React for,
+   and a stylesheet stops on its own when the reader asks for less motion.
+
+   The base opacities are the reduced-motion answer. With the animation off,
+   the first layer stands and the second stays hidden, so the card keeps a
+   watermark instead of stacking both on top of each other. */
+.apt-a { opacity: 1; animation: apt-a 19s ease-in-out infinite; }
+.apt-b { opacity: 0; animation: apt-b 19s ease-in-out infinite; }
+@keyframes apt-a {
+  0%, 40%  { opacity: 1; }
+  50%, 90% { opacity: 0; }
+  100%     { opacity: 1; }
+}
+@keyframes apt-b {
+  0%, 40%  { opacity: 0; }
+  50%, 90% { opacity: 1; }
+  100%     { opacity: 0; }
 }
 
 /* --- numbers ------------------------------------------------------------- */
