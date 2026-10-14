@@ -19,6 +19,7 @@ async def blocks() -> list[dict]:
                count(f.factor_id) FILTER (WHERE f.is_active) AS n_factors
         FROM ref_factor_block b
         LEFT JOIN ref_factor f USING (block_id)
+        WHERE b.block_id <> 'sector'
         GROUP BY b.block_id, b.name, b.sort_order, b.description
         ORDER BY b.sort_order
         """
@@ -26,12 +27,16 @@ async def blocks() -> list[dict]:
 
 
 @router.get("/factors")
-async def factors() -> list[dict]:
-    """Every active factor with its construction, coverage and latest verdict."""
+async def factors(role: str = "core") -> list[dict]:
+    """Every active factor with its construction, coverage and latest verdict.
+
+    `role` 'core' (the default) is the forty-factor model; 'sector' the sector
+    factors a single stock may add; 'all' both.
+    """
     return await db.fetch(
         """
         SELECT f.factor_id, f.block_id, f.name, f.hierarchy_level, f.version,
-               f.orthogonalize_against, f.construction,
+               f.orthogonalize_against, f.construction, f.role,
                c.first_date, c.last_date, c.n_obs,
                round((c.sd_ann * 100)::numeric, 2) AS vol_pct,
                d.verdict, d.verdict_reason, d.flags
@@ -50,9 +55,9 @@ async def factors() -> list[dict]:
             WHERE series_type = 'factor' AND window_days = 0
             ORDER BY series_key, as_of_date DESC
         ) d ON d.series_key = f.factor_id
-        WHERE f.is_active
+        WHERE f.is_active AND ($1 = 'all' OR f.role = $1)
         ORDER BY f.hierarchy_level, f.block_id, f.factor_id
-        """
+        """, role
     )
 
 

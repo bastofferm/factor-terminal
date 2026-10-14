@@ -1,12 +1,16 @@
 # Daily Multi-Asset Factor Model
 
-A fully return-based factor model: forty daily factors across nine blocks, with an
+A fully return-based factor model: forty daily factors across nine blocks, plus
+eleven sector factors a single stock may add for its own sector, with an
 analyst frontend for inspecting factors, the covariance structure, rolling
 loadings, and — the point of the exercise — whether the model's predicted risk for
 a security is actually right.
 
 No holdings, no look-through. Every model input is a stationary return series, and
-that is tested rather than assumed.
+that is tested rather than assumed. Which model a security gets is not a choice
+the analyst makes by hand either: a **model agent** searches the specification
+space, picks the simplest model the data cannot tell apart from the best, and
+judges it on a span of history the search never saw.
 
 ![The pages of the terminal](screenshots/factor-terminal.gif)
 
@@ -37,8 +41,8 @@ not checkable.
 is the model write-up: what each block needs, what the data actually supported, the
 decisions taken where the two differed, and the measured validation.
 **[Documentation/factor-formulas.md](Documentation/factor-formulas.md)** gives every
-one of the forty factors as a formula over named instruments, with the exact
-equation that orthogonalises it.
+one of the factors as a formula over named instruments, with the exact equation
+that orthogonalises it.
 **[Documentation/factor-model-paper.pdf](Documentation/factor-model-paper.pdf)** is
 the same material typeset as a paper, with a flowchart of how the terminal works,
 the statistical methodology as an appendix, and a chapter on the software
@@ -46,6 +50,13 @@ architecture.
 **[Documentation/amzn-case-study.pdf](Documentation/amzn-case-study.pdf)** works one
 security end to end on both factor panels — eleven charts, and the argument for the
 hierarchy made out of sample on a single name.
+**[Documentation/model-agent.md](Documentation/model-agent.md)** is the agent:
+the LangGraph workflow, the search space, the validation/test protocol, the model
+confidence set and the verdict's gates.
+**[Documentation/methodology-review.md](Documentation/methodology-review.md)** is
+the October 2026 review of the model, measured on the live database: what was
+wrong with how the risk forecast was scored, what was wrong with the forecast,
+what was fixed and what is still open.
 
 ---
 
@@ -97,14 +108,26 @@ python -m backend.pipeline.apply_schema          # create the DB, apply migratio
 python -m backend.pipeline.sync --full           # mirror the warehouse over FDW
 python -m backend.pipeline.ingest_yahoo --full   # refresh the factor universe
 python -m backend.pipeline.ingest_fred --full    # FRED levels
-python -m backend.pipeline.build_factors         # construct the 40 factors
+python -m backend.pipeline.build_factors         # construct the 40 + 11 sector factors
 python -m backend.pipeline.run_diagnostics       # stationarity battery
 ```
 
-Then estimate and score a security:
+Then let the agent choose and score a security's model:
 
 ```bash
 python -m backend.pipeline.sync --security US:AAPL
+python -m backend.agent.run --instrument US:AAPL          # --no-llm: rules only
+```
+
+and test whether the model's risk aggregates across a universe of 54 large caps:
+
+```bash
+python -m backend.pipeline.run_portfolio                  # --dry-run: store nothing
+```
+
+or estimate and score a hand-set specification:
+
+```bash
 python -m backend.pipeline.run_estimation --instrument US:AAPL --window 252 --step 1m
 python -m backend.pipeline.run_risk --instrument US:AAPL --horizon 21
 ```
@@ -153,14 +176,15 @@ computed on demand — and does not back-fill a restated history, which is what
 ## Layout
 
 ```
-sql/            15 idempotent migrations, applied in order, fail-fast
+sql/            16 idempotent migrations, applied in order, fail-fast
 backend/
   core/         pure numpy — no database access, so every statistic is testable
                 stationarity · transforms · orthogonalize · regression
                 covariance · risk · distribution
   pipeline/     ingestion, construction and estimation jobs
+  agent/        the model agent: a LangGraph search over specifications
   app/          FastAPI: thin routers over raw SQL, plus the DeepSeek assistant
-  tests/        381 tests, mostly against simulated data with known parameters
+  tests/        517 tests, mostly against simulated data with known parameters
 frontend/       Next.js 14 + Plotly, eight pages
 scripts/        model probe, backfills, screenshots, the narrated film, and the
                 two document builds
@@ -186,6 +210,8 @@ directly:
 | Equity block had only price-return index levels | Added 12 total-return ETFs (ACWI, IVV, IWM, EFA, VGK, EWJ, EEM, …) |
 | No daily gilt curve anywhere | `IGLT.L` as a total-return proxy |
 | Liquidity block thin (TED and LIBOR-OIS discontinued) | Added SOFR, EFFR, OBFR, TGCRRATE, NFCI, ANFCI, STLFSI4 |
+| FRED dates NFCI by its reference Friday, five days before publication | First releases from ALFRED, stored on their publication dates (`FRED:NFCI@release`) |
+| No industry structure | Eleven SPDR sector ETFs as sector factors, one per GICS sector |
 | Warehouse 3 months stale, ingestion manual | Own scheduled refresh; data is current |
 
 Three series are dead and flagged rather than deleted: `^TYVIX` (discontinued 2020),
@@ -232,9 +258,36 @@ reproduce their well-known negative correlation.
 **Ill-conditioned windows are excluded from scoring.** With 40 factors on a 252-day
 window, a period where few factors yet exist leaves the design near-singular; betas
 explode in offsetting pairs and so does β′Σβ. Such forecasts are stored and flagged,
-not silently dropped or silently used. The condition-number limit applies to both
-factor panels; the VIF limit only to the orthogonalised one, where a high VIF is
-anomalous rather than — as on the raw panel — the definition of the factor set.
+not silently dropped or silently used. The condition number is computed on
+standardised regressors - on the raw columns it mostly measured how far apart the
+factor volatilities are - and its limit applies to both factor panels; the VIF
+limit only to the orthogonalised one, where a high VIF is anomalous rather than — as
+on the raw panel — the definition of the factor set.
+
+**Every forecast is compared with one that needs no factor model.** The security's
+own EWMA volatility and a one-factor CAPM are scored beside the model with QLIKE
+loss and a Diebold-Mariano test. The review found that, before the fixes, the
+40-factor forecast lost to the security's own EWMA volatility for five of six
+names since 2014; a calibrated forecast that cannot beat that has not earned its
+factors.
+
+**Risk is tested where it aggregates.** A single security's total volatility cannot
+show whether the off-diagonal structure is right, so `run_portfolio` forecasts 54
+portfolios of 54 large caps - market, sector baskets, within-sector pairs,
+cross-sector spreads, random baskets - and scores them. Without sector factors
+the out-of-sample residuals of stocks in one sector correlate 0.22 and only 27% of
+cross-sector spreads are calibrated at the 21-day horizon; with each stock's own
+sector factor, −0.01 and 82%.
+
+**A release is dated by its publication.** FRED files the NFCI under the Friday
+ending its reference week; it is published the following Wednesday. On the Friday
+dating the factor correlated −0.33 with the equity returns of the five days before
+anyone knew it, so it is read from ALFRED as first releases on their publication
+days.
+
+**A forecast built on noisy betas overstates risk.** E[β̂′Σβ̂] = β′Σβ + tr(ΣV), and
+with forty factors on 252 days the second term is about a sixth of the specific
+variance. Fits keep the covariance of their betas so the term can be removed.
 
 **Any security the warehouse prices can be estimated.** The Loadings Lab searches
 a catalogue of 9,434 securities — 5,376 US equities, 3,878 Japanese, 107 funds —
@@ -258,9 +311,73 @@ condition-number limit earn red.
 residuals, chosen per spec and carried through to the covariance matrix, because
 β′Σβ needs Σ to be the covariance of the same series the βs refer to. Both are
 offered because the choice is a modelling decision rather than a fact, and the
-comparison is measurable: on US:AAPL the raw panel fits better in sample (adj. R²
-0.481 vs 0.442) and forecasts distinctly worse out of it (Mincer-Zarnowitz slope
-0.35 vs 1.02). That is the case for the hierarchy, made out of sample.
+agent tries both. On US:AAPL the raw panel fits better in sample (adj. R² 0.481 vs
+0.441) and forecasts distinctly worse out of it (Mincer-Zarnowitz slope 0.33 vs
+0.93), and its loss is significantly worse than the security's own EWMA volatility
+(Diebold-Mariano p = 0.015), which the orthogonalised panel's is not. That is the
+case for the hierarchy, made out of sample.
+
+---
+
+## The model agent
+
+The Loadings Lab opens on **Run the model agent**. For the chosen security it:
+
+1. splits the history into a validation span and a held-out test span - the last
+   three years of monthly forecasts - and hands the search a copy of the data that
+   ends before the test span begins;
+2. seeds the original model and one departure along each axis that matters, then
+   lets a language model (DeepSeek, or a rule-based critic without a key) propose
+   further specifications from a typed search space - panel, factor set, window,
+   weighting, estimator, Dimson lags, standard errors, the stock's own sector
+   factor, covariance, specific risk, noise correction, refresh, VaR distribution -
+   reading every candidate's diagnostics as it goes, and carrying in what earlier
+   runs chose for this security and for securities like it;
+3. scores every candidate on the daily loss of the forecast in force and keeps the
+   model confidence set of those the data cannot tell apart from the best;
+4. chooses how many lags of cross-day factor covariance the h-day forecast needs,
+   on the validation span's h-day returns;
+5. takes the simplest of them to the test span once, and gives a verdict - pass,
+   pass with caveats, or fail - with the number behind every gate.
+
+The language model chooses what to try; code fits, scores, selects and judges. The
+trace, every candidate and the verdict are on the page as the search runs, and
+the hand-set controls remain under *Expert override*. See
+[model-agent.md](Documentation/model-agent.md).
+
+---
+
+## Portfolio risk
+
+The Risk Lens has a second view, **Portfolio**, which runs the model on a portfolio
+of stocks and funds rather than on one security. Start from a pre-defined
+portfolio (54 large caps, mega-cap technology, defensive, cyclical,
+rate-sensitive), one of eleven sector portfolios (five large caps each, against
+the sector's SPDR fund), or a fund portfolio (60/40, global multi-asset,
+all-weather, US sectors, global equity by region). Or build one: stocks come from
+the catalogue search, funds from a list filtered by asset class. **Broad market
+representatives only** keeps the 26 funds that stand for a whole market or asset
+class (VT, SPY, EFA, EEM, AGG, BNDX, LQD, JNK, EMB, GSG, GLD and the like);
+**Hide factor inputs** drops the funds a factor is built from, which are regressed
+on a factor made of themselves.
+
+Each holding is estimated once on its asset-class template, and the fit is
+stored: a stock with its own sector factor, a sector fund with its sector's, a
+bond fund on rates and credit. The portfolio's risk is then forecast day by day
+from the factor covariance, the holdings' specific risks and the beta-noise
+correction. The forecast is scored on the portfolio's own returns: bias statistic,
+dispersion of standardised returns, VaR breaches with Kupiec, and QLIKE against
+the portfolio's own EWMA volatility. The view also decomposes the risk by holding
+and by factor block, and against a benchmark fund it gives the tracking error.
+
+Two first results show what the view is for. Five large technology stocks against
+XLK: bias statistic 0.99, 99% VaR breaches 51 against 41 expected (Kupiec
+p = 0.12), and a tracking error of 22%. Most of that is specific risk, and ORCL
+alone, at 61% realised volatility, carries 42% of the variance. The global
+multi-asset fund portfolio is the harder case. Its bias statistic is 1.69, but
+0.91 once the 21-day block that began on 21 February 2020 (z = −17) is removed,
+so the view shows both figures. It also loses to its own EWMA volatility on daily
+loss (DM p = 0.005), and the view shows that too.
 
 ---
 
@@ -306,7 +423,7 @@ break-or-heteroskedasticity, or inconclusive. Only the second blocks a series.
 ## Verification
 
 ```bash
-python -m pytest -q                       # 349 pass; 3 more need a populated DB
+python -m pytest -q                       # 447 pass; 3 more call the live DeepSeek API (FACTORS_LIVE_LLM=1)
 python -m pytest backend/tests/test_factor_validation.py   # needs a populated DB
 ```
 

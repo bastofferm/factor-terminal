@@ -525,3 +525,102 @@ def test_vif_handles_a_constant_regressor(rng):
     vifs = _vif(X)
     assert np.isfinite(vifs).all()
     assert vifs[3] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# scale-free conditioning, weighted HAC, the beta covariance, subset Dimson
+# ---------------------------------------------------------------------------
+
+def test_condition_number_ignores_units(rng):
+    """Two independent factors with volatilities a factor of fifty apart are not
+    collinear. The unscaled condition number said ~50; the design is orthogonal."""
+    n = 2000
+    X = np.column_stack([rng.standard_normal(n) * 0.001, rng.standard_normal(n) * 0.05])
+    y = X @ np.array([1.0, 0.2]) + rng.standard_normal(n) * 0.01
+    assert reg.fit(y, X).condition_number < 1.2
+
+
+def test_condition_number_is_unchanged_by_rescaling_a_factor(rng):
+    n = 800
+    f1 = rng.standard_normal(n) * 0.01
+    X = np.column_stack([f1, 0.7 * f1 + rng.standard_normal(n) * 0.004,
+                         rng.standard_normal(n) * 0.02])
+    scaled = X * np.array([1.0, 100.0, 0.01])
+    assert reg.condition_number(scaled) == pytest.approx(reg.condition_number(X), rel=1e-9)
+
+
+def test_weighted_hac_matches_statsmodels_wls(rng):
+    """An EWMA-weighted fit's standard errors must be those of the weighted
+    problem. statsmodels builds WLS-HAC on the whitened design and residuals."""
+    import statsmodels.api as sm
+
+    n = 1500
+    X = rng.standard_normal((n, 3)) * 0.01
+    e = rng.standard_normal(n) * 0.004
+    e = e + 0.3 * np.concatenate([[0.0], e[:-1]])
+    y = X @ np.array([0.9, -0.4, 0.2]) + e
+    w = reg.ewma_weights(n, 120)
+    lags = 4
+
+    ours = reg.fit(y, X, sample_weights=w, hac_lags=lags, annualize_alpha=False)
+    theirs = sm.WLS(y, sm.add_constant(X), weights=w / w.mean()).fit(
+        cov_type="HAC", cov_kwds={"maxlags": lags, "use_correction": False})
+
+    np.testing.assert_allclose(ours.betas, theirs.params[1:], rtol=1e-8)
+    np.testing.assert_allclose(ours.se, theirs.bse[1:], rtol=1e-6)
+
+
+def test_cov_beta_carries_the_standard_errors(rng):
+    n = 600
+    X = rng.standard_normal((n, 4)) * 0.01
+    y = X @ np.array([1.0, 0.5, -0.3, 0.2]) + rng.standard_normal(n) * 0.005
+    r = reg.fit(y, X)
+    assert r.cov_beta.shape == (4, 4)
+    np.testing.assert_allclose(np.sqrt(np.diag(r.cov_beta)), r.se, rtol=1e-12)
+
+
+def test_effective_parameters_are_k_for_ols_and_fewer_for_ridge(rng):
+    n = 300
+    X = rng.standard_normal((n, 6)) * 0.01
+    y = X @ np.ones(6) * 0.5 + rng.standard_normal(n) * 0.01
+    assert reg.fit(y, X).edf == 6
+    light = reg.fit(y, X, estimator="ridge", ridge_lambda=0.01).edf
+    heavy = reg.fit(y, X, estimator="ridge", ridge_lambda=1.0).edf
+    assert 0 < heavy < light < 6
+
+
+def test_ridge_shrinks_the_beta_covariance(rng):
+    """The sandwich uses the penalised bread, so the slopes of a ridge fit are
+    reported as less noisy than those of least squares, which they are."""
+    n = 300
+    f = rng.standard_normal(n) * 0.01
+    X = np.column_stack([f, f + rng.standard_normal(n) * 0.002])
+    y = X @ np.array([0.6, 0.4]) + rng.standard_normal(n) * 0.01
+    ols = reg.fit(y, X)
+    ridge = reg.fit(y, X, estimator="ridge", ridge_lambda=0.5)
+    assert np.trace(ridge.cov_beta) < np.trace(ols.cov_beta)
+
+
+def test_dimson_lags_only_the_named_columns(rng):
+    X = rng.standard_normal((50, 4))
+    D = reg.dimson_design(X, lags=2, columns=[0, 2])
+    assert D.shape == (50, 4 + 2 * 2)
+    np.testing.assert_array_equal(D[2:, 4], X[1:-1, 0])   # lag 1 of column 0
+    np.testing.assert_array_equal(D[2:, 5], X[1:-1, 2])   # lag 1 of column 2
+    np.testing.assert_array_equal(D[2:, 6], X[:-2, 0])    # lag 2 of column 0
+    assert np.isnan(D[0, 4]) and np.isnan(D[1, 6])
+
+
+def test_subset_dimson_recovers_a_delayed_beta_and_collapses_with_covariance(rng):
+    n = 3000
+    X = rng.standard_normal((n, 3)) * 0.01
+    lagged0 = np.concatenate([[0.0], X[:-1, 0]])
+    y = 0.5 * X[:, 0] + 0.5 * lagged0 + 0.8 * X[:, 1] + rng.standard_normal(n) * 0.002
+
+    D = reg.dimson_design(X, lags=1, columns=[0])
+    r = reg.fit(y, D)
+    summed, se = reg.collapse_dimson(r.betas, r.se, k=3, lags=1, cov=r.cov_beta,
+                                     columns=[0])
+    np.testing.assert_allclose(summed, [1.0, 0.8, 0.0], atol=0.03)
+    A = reg.dimson_aggregator(3, 1, [0])
+    np.testing.assert_allclose(se, np.sqrt(np.diag(A @ r.cov_beta @ A.T)))

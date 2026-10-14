@@ -306,7 +306,7 @@ export interface BlockResult {
   undiversified: number;
   diversification: number;
   fit: {
-    spec_id: string; window_end: string; r2: number | null;
+    spec_id: string; spec_name?: string | null; window_end: string; r2: number | null;
     adj_r2: number | null; resid_vol_ann: number | null; n_obs: number;
   } | null;
   blocks: BlockRow[];
@@ -421,8 +421,196 @@ export interface RiskResult {
     max_vif: number | null;
     is_reliable: boolean;
     unreliable_reason: string | null;
+    /** The h-day forecast, per day annualised; differs from sigma_pred_ann only
+     *  with a lead-lag adjustment or a Dimson model, and only on grid dates. */
+    sigma_horizon_ann?: number | null;
   }>;
   backtest: Record<string, number | string | null> | null;
+  backtest_test?: Record<string, number | string | null> | null;
+}
+
+/** One gate of the agent's verdict: the rule, its outcome and the number behind it. */
+export interface AgentGate {
+  name: string;
+  kind: "correctness" | "value" | "calibration";
+  status: "pass" | "fail" | "flag";
+  detail: string;
+}
+
+export interface AgentCandidate {
+  candidate_id: string;
+  round: number;
+  origin: "seed" | "llm" | "critic" | "pool";
+  estimation: Record<string, any>;
+  risk: Record<string, any>;
+  metrics: Record<string, number | null> | null;
+  complexity: number | null;
+  in_mcs: boolean | null;
+  mcs_p: number | null;
+  status: string;
+  note: string | null;
+  /** Where it stood when the model was chosen (see backend/agent/explain.py). */
+  stage?: "chosen" | "eligible" | "uncalibrated" | "outside" | "failed" | null;
+  stage_label?: string | null;
+  /** Passed the calibration screen on the validation span. */
+  calibrated?: boolean | null;
+}
+
+/** How many candidates survived each step of the selection. */
+export interface AgentFunnel {
+  tried: number;
+  scored: number;
+  in_set: number;
+  calibrated: number;
+  chosen: string | null;
+  screen_applied: boolean;
+  /** What the confidence set was computed on. */
+  objective?: AgentObjective;
+}
+
+export type AgentObjective = "daily" | "horizon" | "both";
+
+/** One candidate in full, for its card. */
+export interface AgentCandidateDetail {
+  candidate: AgentCandidate;
+  stage: { stage: string; label: string; text: string; calibration_failures?: string[] };
+  funnel: AgentFunnel;
+  rule_note: string | null;
+  chosen: string | null;
+  factors: Array<{ factor_id: string; name: string; block_id: string | null }>;
+  parsimony: number | null;
+  effective: {
+    regression: number;
+    regression_window: number;
+    covariance: {
+      method: string;
+      effective?: number;
+      effective_ewma?: number;
+      effective_long?: number;
+      ewma_weight?: number;
+    };
+    specific: number;
+  };
+  run: {
+    run_id: string;
+    instrument_id: string;
+    horizon_days: number;
+    validation_start: string | null;
+    validation_end: string | null;
+    test_start: string | null;
+    template: string | null;
+    sector_factor: string | null;
+    asynchronous_close: boolean | null;
+  };
+}
+
+export interface AgentRunDetail {
+  run: {
+    run_id: string;
+    instrument_id: string;
+    horizon_days: number;
+    status: "running" | "succeeded" | "failed";
+    started_at: string;
+    budget?: Record<string, any> | null;
+    finished_at: string | null;
+    profile: Record<string, any> | null;
+    validation_start: string | null;
+    validation_end: string | null;
+    test_start: string | null;
+    test_end: string | null;
+    chosen_candidate: string | null;
+    spec_id: string | null;
+    cov_method: string | null;
+    risk_spec: { estimation: Record<string, any>; risk: Record<string, any> } | null;
+    verdict: string | null;
+    gates: AgentGate[] | null;
+    test_metrics: Record<string, number | string | null> | null;
+    llm_model: string | null;
+    error: string | null;
+  };
+  steps: Array<{ seq: number; node: string; message: string; at: string }>;
+  candidates: AgentCandidate[];
+  selection?: { funnel: AgentFunnel; rule_note: string | null };
+}
+
+// --- portfolio risk --------------------------------------------------------
+
+export interface PortfolioHolding {
+  instrument_id: string;
+  weight: number;
+  name?: string | null;
+}
+
+export interface PortfolioPreset {
+  id: string;
+  group: "predefined" | "sector" | "funds";
+  name: string;
+  holdings: PortfolioHolding[];
+  benchmark: string | null;
+  note?: string;
+}
+
+export interface Fund {
+  instrument_id: string;
+  name: string;
+  group: string;
+  group_label: string;
+  template: string;
+  /** Stands for a whole market or asset class. */
+  broad: boolean;
+  /** Factors built from this fund; non-empty means its fit is partly circular. */
+  factor_inputs: string[];
+  first_obs: string | null;
+  last_obs: string | null;
+  n_obs: number | null;
+}
+
+export interface PortfolioDecomposition {
+  vol: number;
+  systematic_vol: number;
+  specific_vol: number;
+  systematic_share: number | null;
+  by_block: Record<string, number>;
+  factors: Array<{ factor_id: string; name: string; block_id: string | null;
+                   exposure: number; share: number }>;
+}
+
+export interface PortfolioResult {
+  as_of: string;
+  start: string;
+  horizon: number;
+  cov_halflife: number;
+  n_holdings: number;
+  net_weight: number;
+  gross_weight: number;
+  forecast: PortfolioDecomposition & {
+    var_95: number; var_99: number; var_95_t: number | null; var_99_t: number | null;
+    t_df: number | null;
+  };
+  active: (Omit<PortfolioDecomposition, "vol" | "systematic_vol" | "specific_vol"> & {
+    benchmark: string; benchmark_name: string; benchmark_vol: number;
+    tracking_error: number;
+  }) | null;
+  holdings: Array<{
+    instrument_id: string; name: string | null; kind: "stock" | "fund";
+    group: string | null; template: string; n_factors: number; spec_id: string;
+    weight: number; standalone_vol: number; contribution: number | null;
+    beta_to_portfolio: number | null; factor_inputs: string[] | null;
+  }>;
+  backtest: Record<string, Record<string, number | boolean | null>>;
+  series: Record<string, { dates: string[]; predicted: (number | null)[];
+                           realised: (number | null)[] }>;
+  model: Record<string, unknown>;
+  warnings: string[];
+}
+
+export interface PortfolioJob {
+  job_id: string;
+  status: "running" | "succeeded" | "failed";
+  elapsed: number;
+  messages: string[];
+  result: PortfolioResult | null;
+  error: string | null;
 }
 
 // --- endpoints -----------------------------------------------------------
@@ -497,6 +685,25 @@ export const api = {
     post<LoadingResult>("/api/loadings/estimate", body),
   stability: (specId: string, instrumentId: string) =>
     get<any>(`/api/loadings/${specId}/${encodeURIComponent(instrumentId)}/stability`),
+  loadingsFor: (specId: string, instrumentId: string) =>
+    get<LoadingResult>(`/api/loadings/${specId}/${encodeURIComponent(instrumentId)}`),
+
+  agentStatus: () => get<{ llm_available: boolean; model: string }>("/api/agent/status"),
+  agentRun: (body: Record<string, unknown>) =>
+    post<{ run_id: string; already_running: boolean }>("/api/agent/run", body),
+  agentGet: (runId: string, since = 0) =>
+    get<AgentRunDetail>(`/api/agent/run/${runId}`, { since }),
+  agentLatest: (instrumentId: string) =>
+    get<AgentRunDetail>("/api/agent/latest", { instrument_id: instrumentId }),
+  portfolioPresets: () => get<PortfolioPreset[]>("/api/portfolio/presets"),
+  portfolioFunds: () =>
+    get<{ groups: Array<{ key: string; label: string; template: string }>; funds: Fund[] }>(
+      "/api/portfolio/funds"),
+  portfolioRun: (body: Record<string, unknown>) =>
+    post<{ job_id: string }>("/api/portfolio/run", body),
+  portfolioGet: (jobId: string) => get<PortfolioJob>(`/api/portfolio/run/${jobId}`),
+  agentCandidate: (runId: string, candidateId: string) =>
+    get<AgentCandidateDetail>(`/api/agent/run/${runId}/candidate/${candidateId}`),
 
   securityRisk: (body: Record<string, unknown>) => post<RiskResult>("/api/risk/security", body),
   standardized: (specId: string, instrumentId: string, p?: Record<string, unknown>) =>

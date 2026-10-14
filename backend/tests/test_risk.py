@@ -398,3 +398,78 @@ def test_missing_diagnostics_do_not_silently_fail_a_window():
 
     ok, reason = reliability(cond=np.nan, vif=np.nan)
     assert ok and reason is None
+
+
+# ---------------------------------------------------------------------------
+# losses, benchmarks and the comparison between forecasts
+# ---------------------------------------------------------------------------
+
+def test_qlike_is_zero_at_the_truth_and_positive_elsewhere():
+    assert risk.qlike(np.array([0.2]), np.array([0.2]))[0] == pytest.approx(0.0)
+    assert risk.qlike(np.array([0.2]), np.array([0.3]))[0] > 0
+    assert risk.qlike(np.array([0.3]), np.array([0.2]))[0] > 0
+    assert np.isnan(risk.qlike(np.array([0.0]), np.array([0.2]))[0])
+
+
+def test_qlike_ranks_the_true_volatility_first_against_a_noisy_proxy(rng):
+    """Scored against 21-day realised volatility, which is noisy, the true sigma
+    still has the lowest expected loss - the property that makes QLIKE usable."""
+    n, sigma = 60_000, 0.25
+    r = _returns_with_known_vol(rng, sigma, n)
+    realized = risk.forward_realized(r, 21)[::21]
+    loss = {k: np.nanmean(risk.qlike(np.full(realized.size, sigma * k), realized))
+            for k in (0.8, 1.0, 1.25)}
+    assert loss[1.0] < loss[0.8] and loss[1.0] < loss[1.25]
+
+
+def test_diebold_mariano_prefers_the_truth(rng):
+    n = 12_000
+    path = np.repeat(rng.uniform(0.10, 0.45, n // 126 + 1), 126)[:n]
+    r = _returns_with_known_vol(rng, path, n)
+    realized = risk.forward_realized(r, 21)[::21]
+    truth, wrong = path[::21], path[::21] * 1.5
+    dm = risk.diebold_mariano(risk.qlike(truth, realized), risk.qlike(wrong, realized))
+    assert dm.mean_diff < 0 and dm.t_stat < 0
+    assert dm.p_value < 0.01
+
+
+def test_diebold_mariano_on_identical_forecasts_is_no_evidence():
+    loss = np.abs(np.sin(np.arange(200)))
+    dm = risk.diebold_mariano(loss, loss)
+    assert dm.p_value == 1.0 and dm.t_stat == 0.0
+
+
+def test_ewma_volatility_is_causal(rng):
+    r = _returns_with_known_vol(rng, 0.2, 500)
+    base = risk.ewma_volatility(r, 21)
+    shocked = r.copy()
+    shocked[300:] *= 10.0
+    after = risk.ewma_volatility(shocked, 21)
+    np.testing.assert_array_equal(base[:300], after[:300])
+    assert after[300] > base[300]
+    assert np.all(np.isnan(base[:59])) and np.isfinite(base[59])
+
+
+def test_ewma_volatility_recovers_a_constant_vol(rng):
+    r = _returns_with_known_vol(rng, 0.3, 20_000)
+    assert np.nanmean(risk.ewma_volatility(r, 21)) == pytest.approx(0.3, rel=0.05)
+
+
+def test_t_degrees_of_freedom_are_recovered(rng):
+    df = 5.0
+    z = rng.standard_t(df, 20_000) / np.sqrt(df / (df - 2.0))
+    assert risk.estimate_t_df(z) == pytest.approx(df, abs=1.0)
+    assert risk.estimate_t_df(rng.standard_normal(20_000)) > 15
+    assert np.isnan(risk.estimate_t_df(np.zeros(10)))
+
+
+def test_overlap_lags_cover_the_overlap():
+    assert risk.overlap_hac_lags(300, horizon=21, step=1) >= 20
+    from backend.core.regression import newey_west_lags
+    assert risk.overlap_hac_lags(300, horizon=21, step=21) == newey_west_lags(300)
+
+
+def test_var_accepts_a_degrees_of_freedom_path():
+    sigma = np.array([0.2, 0.2])
+    v = risk.value_at_risk(sigma, 0.99, "t", df=np.array([4.0, 30.0]))
+    assert v[0] > v[1]

@@ -167,6 +167,39 @@ def diff_standardized(values: np.ndarray, window: int = 252, min_periods: int = 
     return out
 
 
+def abs_return_surprise(returns: np.ndarray, halflife: float = 21.0,
+                        min_obs: int = 21) -> np.ndarray:
+    """A volatility shock: today's absolute return relative to yesterday's forecast.
+
+        f_t = |r_t| / s_{t-1} - sqrt(2/pi),   s^2_{t-1} = EWMA_h(r^2) through t-1
+
+    sqrt(2/pi) is E|z| for a standard normal, so the factor is zero on average when
+    the forecast is right, positive on a day that is more volatile than expected.
+
+    This replaces the change in a 21-day rolling volatility. That series moves by
+    (r_t^2 - r_{t-21}^2) / 21, so half of its variance was the squared return that
+    left the window three weeks earlier - an echo no security responds to. Here a
+    day's return enters once, on its own day, and fades with the EWMA thereafter.
+    Dividing by the forecast also keeps the factor's scale from following the level
+    of volatility, so one crisis day does not dominate a covariance estimated on it:
+    a six-sigma day is a value of about five, not thirty-six times a quiet day's.
+
+    Causal: s_{t-1} uses returns through t-1 only. NaN until `min_obs` returns.
+    """
+    r = np.asarray(returns, dtype=float)
+    n = r.size
+    out = np.full(n, np.nan)
+    lam = 0.5 ** (1.0 / float(halflife))
+    var, seen = np.nan, 0
+    for t in range(n):
+        if seen >= min_obs and np.isfinite(r[t]) and var > 0:
+            out[t] = abs(r[t]) / np.sqrt(var) - np.sqrt(2.0 / np.pi)
+        if np.isfinite(r[t]):
+            var = r[t] ** 2 if not np.isfinite(var) else lam * var + (1.0 - lam) * r[t] ** 2
+            seen += 1
+    return out
+
+
 def apply_transform(values: np.ndarray, transform: str, **kwargs) -> np.ndarray:
     """Dispatch on the rule stored in ref_level_series.transform."""
     if transform == "diff":

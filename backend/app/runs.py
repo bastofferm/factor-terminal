@@ -65,6 +65,16 @@ _WHAT_IT_DOES: dict[str, str] = {
                 "horizon.",
     "scheduler": "The nightly refresh: ingestion, construction and diagnostics in "
                  "dependency order, each step recorded as its own run.",
+    "model_agent": "Chooses each security's factor model. Searches estimation and "
+                   "risk specifications on a validation span - a language model "
+                   "proposing, code fitting and scoring - takes the simplest model "
+                   "in the confidence set to a held-out test span once, and records "
+                   "a verdict.",
+    "portfolio_validation": "Tests whether the model's risk aggregates: forecasts the "
+                            "risk of market, sector, pair, cross-sector and random "
+                            "portfolios of 54 US large caps from the stocks' betas, the "
+                            "factor covariance and specific risks, with and without "
+                            "sector factors, and scores them.",
 }
 
 # Jobs whose `mode` is a real choice rather than a default nobody set.
@@ -151,6 +161,9 @@ def chips(job: str, mode: str | None, scope: Any,
     if "n_instruments" in scope:
         out.append(_chip("securities", scope["n_instruments"],
                          "instruments estimated in this run"))
+    if "llm" in scope:
+        out.append(_chip("proposer", "language model" if scope["llm"] else "rules",
+                         "who chose the candidates; code scored them either way"))
     if "orth_mode" in scope and not any(c["label"] == "mode" for c in out):
         out.append(_chip("orthogonalisation", scope["orth_mode"],
                          _MODE_HINT.get(str(scope["orth_mode"])), emphasis=True))

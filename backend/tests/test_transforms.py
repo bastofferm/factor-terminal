@@ -345,3 +345,54 @@ def test_observation_frequency_separates_daily_from_weekly():
     assert tr.observation_frequency(daily) == pytest.approx(1.0)
     assert tr.observation_frequency(weekly) == pytest.approx(0.2, abs=0.01)
     assert tr.observation_frequency(np.array([])) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# volatility surprise (vol_rates)
+# ---------------------------------------------------------------------------
+
+def test_vol_surprise_is_zero_on_average_when_the_forecast_is_right():
+    rng = np.random.default_rng(7)
+    r = rng.standard_normal(20_000) * 0.01
+    f = tr.abs_return_surprise(r)
+    assert np.isnan(f[:21]).all()
+    assert np.nanmean(f) == pytest.approx(0.0, abs=0.03)
+
+
+def test_vol_surprise_has_no_echo_when_a_shock_leaves_the_window():
+    """The rolling-volatility change it replaced jumped again 21 days after a shock,
+    when the shock left the window. Here the shock is felt on its own day and the
+    days after only see a smoothly decaying forecast."""
+    r = np.full(200, 0.01) * np.where(np.arange(200) % 2 == 0, 1.0, -1.0)
+    r[100] = 0.08
+    f = tr.abs_return_surprise(r)
+    assert f[100] > 5.0
+    after = f[101:140]
+    assert (np.diff(after) > 0).all(), "the surprise recovers monotonically"
+    assert abs(f[121] - f[120]) < abs(f[101] - f[100])
+
+
+def test_vol_surprise_is_scale_free():
+    rng = np.random.default_rng(3)
+    r = rng.standard_normal(500) * 0.01
+    np.testing.assert_allclose(tr.abs_return_surprise(r), tr.abs_return_surprise(r * 7.0),
+                               equal_nan=True)
+
+
+def test_vol_surprise_uses_only_yesterday_s_forecast():
+    rng = np.random.default_rng(5)
+    r = rng.standard_normal(300) * 0.01
+    base = tr.abs_return_surprise(r)
+    bumped = r.copy()
+    bumped[200] *= 10
+    out = tr.abs_return_surprise(bumped)
+    np.testing.assert_allclose(out[:200], base[:200], equal_nan=True)
+    assert out[200] > base[200]
+
+
+def test_vol_surprise_skips_missing_days():
+    rng = np.random.default_rng(9)
+    r = rng.standard_normal(100) * 0.01
+    r[50] = np.nan
+    f = tr.abs_return_surprise(r)
+    assert np.isnan(f[50]) and np.isfinite(f[51])

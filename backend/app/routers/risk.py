@@ -21,7 +21,11 @@ class RiskRequest(BaseModel):
     instrument_id: str
     spec_id: str
     horizon_days: int = Field(default=21, ge=5, le=252)
-    cov_method: str = Field(default="blend", pattern="^(sample|ewma|ledoit_wolf|blend)$")
+    # A plain method, or the label of a risk assembly the model agent chose. The
+    # agent's forecasts are stored, never recomputed here: forcing one would have
+    # to know the whole RiskSpec, and the agent run that chose it already scored it.
+    cov_method: str = Field(default="blend",
+                            pattern="^(sample|ewma|ledoit_wolf|blend|agent:[0-9a-f]{10})$")
     force: bool = False
 
 
@@ -43,6 +47,9 @@ async def security_risk(req: RiskRequest) -> dict:
         "AND horizon_days=$3 AND cov_method=$4",
         req.spec_id, req.instrument_id, req.horizon_days, req.cov_method)
 
+    if (not n or req.force) and req.cov_method.startswith("agent:"):
+        raise HTTPException(
+            404, "no stored forecasts for that agent model; run the model agent again")
     if not n or req.force:
         has_loadings = await db.fetchval(
             "SELECT count(*) FROM fact_loading WHERE spec_id=$1 AND instrument_id=$2",
@@ -59,7 +66,8 @@ async def security_risk(req: RiskRequest) -> dict:
         SELECT as_of_date, sigma_pred_ann, sigma_factor_ann, sigma_specific_ann,
                factor_risk_share, sigma_realized_ann, bias_ratio,
                var95_pred, var99_pred, es97_5_pred,
-               condition_number, max_vif, is_reliable, unreliable_reason
+               condition_number, max_vif, is_reliable, unreliable_reason,
+               sigma_horizon_ann
         FROM fact_risk_forecast
         WHERE spec_id=$1 AND instrument_id=$2 AND horizon_days=$3 AND cov_method=$4
         ORDER BY as_of_date
@@ -69,14 +77,19 @@ async def security_risk(req: RiskRequest) -> dict:
     if not forecasts:
         raise HTTPException(422, "no forecasts could be produced for this combination")
 
-    backtest = await db.fetchrow(
+    # The full-history backtest, and - for a model the agent chose - the one on the
+    # held-out span its search never saw. Only the second is evidence about the
+    # chosen model; the first includes the dates it was selected on.
+    rows = await db.fetch(
         """
         SELECT * FROM fact_risk_backtest
         WHERE spec_id=$1 AND instrument_id=$2 AND horizon_days=$3 AND cov_method=$4
-        ORDER BY computed_at DESC LIMIT 1
+        ORDER BY computed_at DESC
         """,
         req.spec_id, req.instrument_id, req.horizon_days, req.cov_method,
     )
+    backtest = next((r for r in rows if r.get("scope") in (None, "full")), None)
+    held_out = next((r for r in rows if r.get("scope") == "test"), None)
 
     n_unreliable = sum(1 for f in forecasts if not f["is_reliable"])
     return {
@@ -86,13 +99,43 @@ async def security_risk(req: RiskRequest) -> dict:
         "cov_method": req.cov_method,
         "forecasts": forecasts,
         "backtest": backtest,
+        "backtest_test": held_out,
         "n_forecasts": len(forecasts),
         "n_unreliable": n_unreliable,
-        "interpretation": _interpret(backtest, n_unreliable),
+        "interpretation": _interpret(backtest, n_unreliable, held_out),
     }
 
 
-def _interpret(bt: dict | None, n_unreliable: int) -> list[str]:
+def _benchmark_line(bt: dict, prefix: str = "") -> str | None:
+    """Model QLIKE against the security's own EWMA volatility, in words."""
+    q, q0 = bt.get("qlike"), bt.get("qlike_own_ewma")
+    t, p = bt.get("dm_t_own_ewma"), bt.get("dm_p_own_ewma")
+    if q is None or q0 is None or t is None or p is None:
+        return None
+    if p < 0.05:
+        verdict = ("beats" if t < 0 else "loses to") + " it significantly"
+    else:
+        verdict = "is not distinguishable from it"
+    return (f"{prefix}Against the naive forecast - the security's own EWMA volatility - "
+            f"the model {verdict}: QLIKE {q:.3f} against {q0:.3f} "
+            f"(Diebold-Mariano p = {p:.3f}).")
+
+
+def _horizon_line(bt: dict) -> str | None:
+    """The h-day forecast against the h-day return, where it differs from the daily one."""
+    hl, ho = bt.get("horizon_loss"), bt.get("horizon_loss_own_ewma")
+    p, t, nw = bt.get("dm_p_horizon_own_ewma"), bt.get("dm_t_horizon_own_ewma"), bt.get("nw_lags")
+    if hl is None or ho is None or not nw:
+        return None
+    verdict = ("beats" if (t or 0) < 0 else "loses to") + " own EWMA significantly" \
+        if p is not None and p < 0.05 else "is not distinguishable from own EWMA"
+    return (f"The h-day forecast adds the cross-day covariance of factors that close at "
+            f"different times ({nw} lag{'s' if nw > 1 else ''}). Scored against h-day "
+            f"returns it {verdict}: loss {hl:.3f} against {ho:.3f}.")
+
+
+def _interpret(bt: dict | None, n_unreliable: int,
+               held_out: dict | None = None) -> list[str]:
     """Plain statements of what the statistics say.
 
     Written for an analyst who knows the tests but should not have to re-derive each
@@ -102,6 +145,16 @@ def _interpret(bt: dict | None, n_unreliable: int) -> list[str]:
         return ["No backtest is available yet for this combination."]
 
     notes: list[str] = []
+    line = _benchmark_line(bt)
+    if line:
+        notes.append(line)
+    if held_out:
+        line = _benchmark_line(held_out, "On the held-out span the agent never saw: ")
+        if line:
+            notes.append(line)
+    line = _horizon_line(held_out or bt)
+    if line:
+        notes.append(line)
 
     z = bt.get("z_std")
     if z is not None:
@@ -154,7 +207,8 @@ def _interpret(bt: dict | None, n_unreliable: int) -> list[str]:
 
 
 @router.get("/decomposition/{spec_id}/{instrument_id}")
-async def decomposition(spec_id: str, instrument_id: str) -> dict:
+async def decomposition(spec_id: str, instrument_id: str,
+                        cov_method: str = "blend") -> dict:
     """Factor versus specific risk through time, and the block split at the latest date.
 
     The question is not what the instrument earned but why it is
@@ -165,10 +219,10 @@ async def decomposition(spec_id: str, instrument_id: str) -> dict:
         SELECT as_of_date, sigma_pred_ann, sigma_factor_ann, sigma_specific_ann,
                factor_risk_share
         FROM fact_risk_forecast
-        WHERE spec_id=$1 AND instrument_id=$2 AND is_reliable
+        WHERE spec_id=$1 AND instrument_id=$2 AND cov_method=$3 AND is_reliable
         ORDER BY as_of_date
         """,
-        spec_id, instrument_id,
+        spec_id, instrument_id, cov_method,
     )
     if not series:
         raise HTTPException(404, "no reliable forecasts stored for that combination")

@@ -103,14 +103,21 @@ def _redact(text: str, api_key: str) -> str:
 
 
 def _payload(messages: list[dict], model: str, max_tokens: int,
-             temperature: float, stream: bool) -> dict:
-    return {
+             temperature: float, stream: bool, json_mode: bool = False) -> dict:
+    payload = {
         "model": model,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "stream": stream,
     }
+    # DeepSeek's JSON output mode: the reply is guaranteed to parse as a JSON
+    # object, though not to follow any particular schema - the caller still
+    # validates it. Only sent when asked for, so the Ask panel's requests are
+    # byte-for-byte what they were.
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    return payload
 
 
 async def complete(
@@ -119,14 +126,17 @@ async def complete(
     max_tokens: int = 1600,
     temperature: float = 0.2,
     timeout: float = REQUEST_TIMEOUT,
+    json_mode: bool = False,
 ) -> tuple[str, str, Usage]:
     """One blocking completion. Returns (content, finish_reason, usage).
 
-    Used by the probe script and the tests; the chat endpoint streams instead.
+    Used by the probe script, the tests and the model agent's proposer; the chat
+    endpoint streams instead.
     """
     api_key, _ = resolve_api_key()
     model = model or DEFAULT_MODEL
-    payload = _payload(messages, model, max_tokens, temperature, stream=False)
+    payload = _payload(messages, model, max_tokens, temperature, stream=False,
+                       json_mode=json_mode)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(

@@ -54,7 +54,7 @@ async def _panel(factor_ids: list[str] | None, start: date | None, end: date | N
         FROM fact_factor_return f
         JOIN ref_factor r USING (factor_id)
         WHERE f.{col} IS NOT NULL AND r.is_active
-          AND ($1::text[] IS NULL OR f.factor_id = ANY($1))
+          AND (($1::text[] IS NULL AND r.role = 'core') OR f.factor_id = ANY($1))
           AND ($2::date IS NULL OR f.date >= $2)
           AND ($3::date IS NULL OR f.date <= $3)
         """,
@@ -327,26 +327,48 @@ async def _named_proxies() -> list[dict[str, str]]:
             for p in DEFAULT_PROXIES]
 
 
-async def _betas(spec_id: str | None, instrument_id: str
+async def _betas(spec_id: str | None, instrument_id: str, basis: str = "orth"
                  ) -> tuple[dict[str, float], dict]:
     """Latest-window betas for one security, with the fit they came from.
 
     The fit travels with them because a block split of a security the factors
     explain half of is a block split of half a security, and the page has to be
     able to say so.
+
+    The betas must come from a spec estimated on the panel the covariance is
+    built from. This used to take the newest window of *any* spec - the page
+    sends no spec_id, so the widest window won, raw or orthogonalised, Dimson or
+    not - and pair it with whichever basis was toggled: beta' Sigma beta on two
+    different factor sets, the error run_risk was fixed for. Now the spec's panel
+    has to match `basis`; among those, the agent's latest choice comes first, then
+    the plain 252-day OLS shape the rest of the terminal defaults to.
     """
     row = await db.fetchrow(
         """
-        SELECT spec_id, window_end, r2, adj_r2, resid_vol_ann, n_obs
-        FROM fact_regression_meta
-        WHERE instrument_id = $1 AND ($2::text IS NULL OR spec_id = $2)
-        ORDER BY window_end DESC, n_obs DESC LIMIT 1
+        SELECT m.spec_id, m.window_end, m.r2, m.adj_r2, m.resid_vol_ann, m.n_obs,
+               s.name AS spec_name
+        FROM fact_regression_meta m
+        JOIN dim_model_spec s USING (spec_id)
+        LEFT JOIN LATERAL (
+            SELECT max(a.started_at) AS chosen_at FROM agent_run a
+            WHERE a.spec_id = m.spec_id AND a.instrument_id = m.instrument_id
+              AND a.status = 'succeeded'
+        ) ag ON TRUE
+        WHERE m.instrument_id = $1 AND ($2::text IS NULL OR m.spec_id = $2)
+          AND s.orthogonalized = ($3 = 'orth')
+        ORDER BY m.window_end DESC,
+                 ag.chosen_at DESC NULLS LAST,
+                 (s.window_days = 252 AND s.step_days = 21 AND s.estimator = 'ols'
+                  AND s.weighting = 'equal' AND s.dimson_lags = 0) DESC,
+                 s.created_at DESC
+        LIMIT 1
         """,
-        instrument_id, spec_id)
+        instrument_id, spec_id, basis)
     if row is None:
+        panel = "orthogonalised" if basis == "orth" else "raw"
         raise HTTPException(
-            404, f"no factor loadings stored for {instrument_id!r}; estimate "
-                 f"them from the Loadings Lab first")
+            404, f"no factor loadings on the {panel} panel stored for "
+                 f"{instrument_id!r}; estimate them from the Loadings Lab first")
 
     rows = await db.fetch(
         "SELECT factor_id, beta FROM fact_loading "
@@ -354,6 +376,7 @@ async def _betas(spec_id: str | None, instrument_id: str
         row["spec_id"], instrument_id, row["window_end"])
     return ({r["factor_id"]: float(r["beta"]) for r in rows},
             {"spec_id": row["spec_id"],
+             "spec_name": row["spec_name"],
              "window_end": row["window_end"].isoformat(),
              "r2": float(row["r2"]) if row["r2"] is not None else None,
              "adj_r2": float(row["adj_r2"]) if row["adj_r2"] is not None else None,
@@ -542,7 +565,7 @@ async def blocks(req: BlockRequest) -> dict:
     fit: dict | None = None
     excluded: list[str] = []
     if req.instrument_id:
-        beta_map, fit = await _betas(req.spec_id, req.instrument_id)
+        beta_map, fit = await _betas(req.spec_id, req.instrument_id, req.basis)
         # Betas and Sigma have to describe the same factors. One the regression
         # never saw is reported as excluded rather than quietly treated as a
         # zero exposure, which would read as "this block costs nothing".

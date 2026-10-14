@@ -116,6 +116,21 @@ def trading_calendar(cur: Any) -> set:
     return {d for d, n in rows if n >= threshold}
 
 
+def roll_onto_calendar(s: pd.Series, idx: pd.DatetimeIndex) -> pd.Series:
+    """Move each observation to the first trading day on or after its date.
+
+    A release-timed series is dated by the day it was published, and a Chicago Fed
+    Wednesday can be a market holiday. Reindexing onto the calendar would drop that
+    release; it became known on the next trading day, so it lands there. Two
+    releases rolled onto one day keep the later one.
+    """
+    s = s.dropna().sort_index()
+    pos = idx.searchsorted(s.index, side="left")
+    keep = pos < len(idx)
+    rolled = pd.Series(s.to_numpy()[keep], index=idx[pos[keep]])
+    return rolled.groupby(level=0).last().reindex(idx)
+
+
 def load_panels(cur: Any) -> Panels:
     calendar = trading_calendar(cur)
     cur.execute(
@@ -144,7 +159,11 @@ def load_panels(cur: Any) -> Panels:
     # reindexed onto it; macro series that only print weekly are NOT forward
     # filled here (see level_transform).
     idx = returns.index
+    released = {c: roll_onto_calendar(levels[c], idx)
+                for c in levels.columns if str(c).endswith(seed.RELEASE_SUFFIX)}
     levels = levels.reindex(idx)
+    for c, rolled in released.items():
+        levels[c] = rolled
     fx = fx.reindex(idx).ffill()
 
     # The cash rate is an overnight rate quoted every business day; forward filling
@@ -287,16 +306,17 @@ def _variance_premium(p: Panels, inputs: dict, vix_level: pd.Series) -> pd.Serie
     return implied - realized
 
 
-def _realized_vol_change(p: Panels, inputs: dict) -> pd.Series:
-    """Change in trailing realised volatility, standardised.
+def _abs_return_surprise(p: Panels, inputs: dict) -> pd.Series:
+    """A volatility shock: today's absolute return over yesterday's EWMA forecast.
 
-    A stand-in for a traded rates-vol series. It is a change in a risk measure, not
-    a tradable return, which is recorded in the factor note.
+    A stand-in for a traded rates-vol series. It is a surprise in a risk measure,
+    not a tradable return, which is recorded in the factor note. See
+    transforms.abs_return_surprise for why it replaced the change in a rolling
+    volatility.
     """
     r = p.ret(inputs["instrument"])
-    window = int(inputs.get("window", 21))
-    rv = r.rolling(window, min_periods=window // 2).std() * np.sqrt(tr.TRADING_DAYS)
-    return pd.Series(tr.diff_standardized(rv.to_numpy(), window=252), index=p.index)
+    out = tr.abs_return_surprise(r.to_numpy(), halflife=float(inputs.get("halflife", 21)))
+    return pd.Series(out, index=p.index)
 
 
 def _tsmom(p: Panels, inputs: dict) -> pd.Series:
@@ -385,7 +405,7 @@ BUILDERS = {
     "synthetic_bond": _synthetic_bond,
     "level_transform": _level_transform,
     "spread_level": _spread_level,
-    "realized_vol_change": _realized_vol_change,
+    "abs_return_surprise": _abs_return_surprise,
     "tsmom": _tsmom,
     "xs_momentum": _xs_momentum,
     "fx_carry": _fx_carry,
@@ -430,7 +450,7 @@ def upsert_registry(cur: Any) -> int:
     rows = [
         (f["id"], f["block"], f["name"], json.dumps(
             {"method": f["method"], "inputs": f["inputs"], "note": f.get("note")}),
-         get_settings().base_ccy, f.get("orth", []), f["level"])
+         get_settings().base_ccy, f.get("orth", []), f["level"], factor_defs.role(f))
         for f in factor_defs.FACTORS
     ]
     bulk_insert(
@@ -438,11 +458,13 @@ def upsert_registry(cur: Any) -> int:
         """
         INSERT INTO ref_factor
             (factor_id, block_id, name, construction, base_ccy,
-             orthogonalize_against, hierarchy_level)
+             orthogonalize_against, hierarchy_level, role)
         VALUES %s
         ON CONFLICT (factor_id) DO UPDATE SET
             block_id = EXCLUDED.block_id,
             name = EXCLUDED.name,
+            role = EXCLUDED.role,
+            is_active = TRUE,
             base_ccy = EXCLUDED.base_ccy,
             orthogonalize_against = EXCLUDED.orthogonalize_against,
             hierarchy_level = EXCLUDED.hierarchy_level,

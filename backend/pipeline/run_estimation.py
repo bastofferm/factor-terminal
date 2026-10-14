@@ -55,11 +55,57 @@ class Spec:
     winsor_hi: float | None = None
     min_obs: int = 126
     base_ccy: str = "USD"
+    # Added after specs were already stored. Fields below this line are left out
+    # of the hash while they hold their defaults, so every spec_id computed before
+    # they existed still hashes to itself.
+    dimson_factors: list[str] | None = None
+
+    _HASH_OPTIONAL = {"dimson_factors": None}
 
     def canonical(self) -> dict:
         d = asdict(self)
         d["factor_set"] = sorted(self.factor_set)
+        for key, default in self._HASH_OPTIONAL.items():
+            if d.get(key) == default:
+                d.pop(key, None)
+        if d.get("dimson_factors") is not None:
+            d["dimson_factors"] = sorted(d["dimson_factors"])
         return d
+
+    @classmethod
+    def from_row(cls, row: dict) -> "Spec":
+        """Rebuild a stored spec from its dim_model_spec row, hash included.
+
+        Used to re-estimate what is already cached - after a change to the
+        diagnostics, say - without guessing at its parameters.
+        """
+        fs = row["factor_set"]
+        if isinstance(fs, str):
+            fs = json.loads(fs)
+        dfs = row.get("dimson_factors")
+        if isinstance(dfs, str):
+            dfs = json.loads(dfs)
+        spec = cls(
+            factor_set=list(fs),
+            window_days=int(row["window_days"]),
+            step_days=int(row["step_days"]),
+            estimator=row["estimator"],
+            weighting=row["weighting"],
+            ewma_halflife=None if row.get("ewma_halflife") is None else int(row["ewma_halflife"]),
+            hac_lags=None if row.get("hac_lags") is None else int(row["hac_lags"]),
+            ridge_lambda=float(row.get("ridge_lambda") or 0.0),
+            dimson_lags=int(row.get("dimson_lags") or 0),
+            orthogonalized=bool(row["orthogonalized"]),
+            winsor_lo=None if row.get("winsor_lo") is None else float(row["winsor_lo"]),
+            winsor_hi=None if row.get("winsor_hi") is None else float(row["winsor_hi"]),
+            min_obs=int(row.get("min_obs") or 126),
+            base_ccy=row.get("base_ccy") or "USD",
+            dimson_factors=list(dfs) if dfs else None,
+        )
+        stored = row.get("spec_id")
+        if stored and spec.spec_id != stored:
+            raise ValueError(f"spec {stored} does not round-trip (got {spec.spec_id})")
+        return spec
 
     @property
     def spec_id(self) -> str:
@@ -73,7 +119,10 @@ class Spec:
         if self.ridge_lambda:
             bits.append(f"ridge{self.ridge_lambda:g}")
         if self.dimson_lags:
-            bits.append(f"dimson{self.dimson_lags}")
+            bits.append(f"dimson{self.dimson_lags}"
+                        + (f"[{len(self.dimson_factors)}]" if self.dimson_factors else ""))
+        if not self.orthogonalized:
+            bits.append("raw")
         return " ".join(bits)
 
 
@@ -178,13 +227,47 @@ def estimate(
     y: pd.Series,
     factors: pd.DataFrame,
     spec: Spec,
+    exclude: set[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Roll the regression. Returns (loadings long-format, per-window diagnostics)."""
+    loadings, meta, _ = estimate_with_cov(y, factors, spec, exclude)
+    return loadings, meta
+
+
+def estimate_with_cov(
+    y: pd.Series,
+    factors: pd.DataFrame,
+    spec: Spec,
+    exclude: set[str] | None = None,
+    ends: Sequence | None = None,
+    designs: dict | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Roll the regression, keeping each window's beta covariance.
+
+    Returns (loadings long-format, per-window diagnostics, {window_end: (factor
+    ids, covariance of the betas)}). The covariance is of the betas as stored -
+    after a Dimson design is collapsed back to one beta per factor - so it pairs
+    with them directly in the risk forecast's noise correction.
+
+    `exclude` removes factors from every window without touching the spec, so the
+    spec_id stays the one that was asked for. `ends` overrides the roll-forward
+    dates, which is how the agent scores every candidate on the same grid.
+
+    For a Dimson spec, `designs` (when given) is filled with each window's
+    per-lag coefficients and their covariance blocks: {window_end: {"names",
+    "lag_names", "blocks": [b0, b1, ...], "vblocks": [V00, V11, ...]}}. The
+    collapsed beta is right for the variance of a multi-day return; the variance
+    of a *daily* return is sum_l b_l' S b_l, without the cross-lag terms the
+    collapsed beta adds, and predicting a day's return needs each lag separately.
+    """
     joined = factors.reindex(y.index)
-    ends = window_ends(y.index, spec.window_days, spec.step_days, spec.min_obs)
+    if ends is None:
+        ends = window_ends(y.index, spec.window_days, spec.step_days, spec.min_obs)
+    skip = set(exclude or ())
 
     loading_rows: list[dict] = []
     meta_rows: list[dict] = []
+    covs: dict = {}
     prev_betas: np.ndarray | None = None
     prev_names: list[str] | None = None
 
@@ -200,7 +283,8 @@ def estimate(
         # did not exist in 2005 must not truncate the sample for the whole panel.
         coverage = win_X.notna().mean()
         usable = [f for f in spec.factor_set
-                  if f in coverage.index and coverage[f] >= MIN_FACTOR_COVERAGE]
+                  if f not in skip
+                  and f in coverage.index and coverage[f] >= MIN_FACTOR_COVERAGE]
         if len(usable) < 1:
             continue
         win_X = win_X[usable]
@@ -215,7 +299,11 @@ def estimate(
         if spec.winsor_lo is not None and spec.winsor_hi is not None:
             yv = tr.winsorize(yv, spec.winsor_lo, spec.winsor_hi)
 
-        design = reg.dimson_design(Xv, spec.dimson_lags) if spec.dimson_lags else Xv
+        lag_cols = None
+        if spec.dimson_lags and spec.dimson_factors is not None:
+            lag_cols = [usable.index(f) for f in spec.dimson_factors if f in usable]
+        design = (reg.dimson_design(Xv, spec.dimson_lags, lag_cols)
+                  if spec.dimson_lags else Xv)
         weights = (reg.ewma_weights(design.shape[0], spec.ewma_halflife or 60)
                    if spec.weighting == "ewma" else None)
 
@@ -230,9 +318,27 @@ def estimate(
         if r.n_obs == 0 or r.betas.size == 0:
             continue
 
-        betas, ses = r.betas, r.se
+        betas, ses, cov_b = r.betas, r.se, r.cov_beta
+        if spec.dimson_lags and designs is not None:
+            k = len(usable)
+            lag_idx = list(range(k)) if lag_cols is None else list(lag_cols)
+            m = len(lag_idx)
+            blocks = [r.betas[:k].copy()]
+            vblocks = [r.cov_beta[:k, :k].copy()]
+            for b in range(spec.dimson_lags):
+                sl = slice(k + b * m, k + (b + 1) * m)
+                blocks.append(r.betas[sl].copy())
+                vblocks.append(r.cov_beta[sl, sl].copy())
+            designs[end] = {"names": list(usable),
+                            "lag_names": [usable[i] for i in lag_idx],
+                            "blocks": blocks, "vblocks": vblocks}
         if spec.dimson_lags:
-            betas, ses = reg.collapse_dimson(betas, ses, k=len(usable), lags=spec.dimson_lags)
+            A = reg.dimson_aggregator(len(usable), spec.dimson_lags, lag_cols)
+            betas, ses = reg.collapse_dimson(betas, ses, k=len(usable),
+                                             lags=spec.dimson_lags, cov=cov_b,
+                                             columns=lag_cols)
+            cov_b = A @ cov_b @ A.T
+        covs[end] = (list(usable), cov_b)
         vifs = r.vif[: len(usable)] if r.vif.size >= len(usable) else np.full(len(usable), np.nan)
 
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -267,9 +373,10 @@ def estimate(
             "lb_resid_p": _f(r.lb_resid_p), "arch_lm_resid_p": _f(r.arch_lm_resid_p),
             "beta_shift_l1": _f(l1), "beta_corr_prev": _f(corr),
             "beta_overlap": overlap or None,
+            "edf": _f(r.edf),
         })
 
-    return pd.DataFrame(loading_rows), pd.DataFrame(meta_rows)
+    return pd.DataFrame(loading_rows), pd.DataFrame(meta_rows), covs
 
 
 def _f(v: Any) -> float | None:
@@ -292,24 +399,61 @@ def upsert_spec(cur: Any, spec: Spec) -> str:
         INSERT INTO dim_model_spec
             (spec_id, name, factor_set, estimator, window_days, step_days, weighting,
              ewma_halflife, hac_lags, ridge_lambda, dimson_lags, orthogonalized,
-             winsor_lo, winsor_hi, min_obs, base_ccy)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+             winsor_lo, winsor_hi, min_obs, base_ccy, dimson_factors)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (spec_id) DO NOTHING
         """,
         (spec.spec_id, spec.name(), json.dumps(sorted(spec.factor_set)), spec.estimator,
          spec.window_days, spec.step_days, spec.weighting, spec.ewma_halflife,
          spec.hac_lags, spec.ridge_lambda, spec.dimson_lags, spec.orthogonalized,
-         spec.winsor_lo, spec.winsor_hi, spec.min_obs, spec.base_ccy),
+         spec.winsor_lo, spec.winsor_hi, spec.min_obs, spec.base_ccy,
+         json.dumps(sorted(spec.dimson_factors)) if spec.dimson_factors else None),
     )
     return spec.spec_id
 
 
+def write_beta_cov(cur: Any, spec_id: str, instrument_id: str, covs: dict) -> int:
+    """Persist each window's beta covariance, so a later risk run can debias."""
+    cur.execute("DELETE FROM fact_loading_cov WHERE spec_id=%s AND instrument_id=%s",
+                (spec_id, instrument_id))
+    rows = [(spec_id, instrument_id, end, list(names),
+             [float(v) if np.isfinite(v) else None for v in np.asarray(V).ravel()])
+            for end, (names, V) in covs.items()]
+    return bulk_insert(cur, """
+        INSERT INTO fact_loading_cov (spec_id, instrument_id, window_end, factor_ids, cov)
+        VALUES %s
+    """, rows)
+
+
+def load_beta_cov(cur: Any, spec_id: str, instrument_id: str) -> dict:
+    """{window_end: (factor ids, covariance)}; empty for specs fitted before it existed."""
+    cur.execute("SELECT window_end, factor_ids, cov FROM fact_loading_cov "
+                "WHERE spec_id=%s AND instrument_id=%s", (spec_id, instrument_id))
+    out = {}
+    for end, names, flat in cur.fetchall():
+        k = len(names)
+        V = np.array([np.nan if v is None else v for v in flat], dtype=float)
+        if V.size == k * k:
+            out[pd.Timestamp(end)] = (list(names), V.reshape(k, k))
+    return out
+
+
 def write_results(cur: Any, spec_id: str, instrument_id: str,
-                  loadings: pd.DataFrame, meta: pd.DataFrame) -> int:
+                  loadings: pd.DataFrame, meta: pd.DataFrame,
+                  covs: dict | None = None) -> int:
     cur.execute("DELETE FROM fact_loading WHERE spec_id=%s AND instrument_id=%s",
                 (spec_id, instrument_id))
     cur.execute("DELETE FROM fact_regression_meta WHERE spec_id=%s AND instrument_id=%s",
                 (spec_id, instrument_id))
+    # Risk forecasts are built from these loadings, so new loadings make them stale:
+    # their betas_window_end may name a window that no longer exists. The Risk Lens
+    # recomputes a plain method on demand; an agent writes its own straight after.
+    cur.execute("DELETE FROM fact_risk_forecast WHERE spec_id=%s AND instrument_id=%s",
+                (spec_id, instrument_id))
+    cur.execute("DELETE FROM fact_risk_backtest WHERE spec_id=%s AND instrument_id=%s",
+                (spec_id, instrument_id))
+    if covs is not None:
+        write_beta_cov(cur, spec_id, instrument_id, covs)
     if loadings.empty:
         return 0
 
@@ -351,19 +495,23 @@ def run_for(instruments: Sequence[str], spec: Spec, quiet: bool = False) -> int:
         constituents = factor_constituents(cur)
         upsert_spec(cur, spec)
 
-    keep = [f for f in spec.factor_set if f not in blocked]
-    if blocked & set(spec.factor_set):
-        print(f"  excluded by diagnostics: {sorted(blocked & set(spec.factor_set))}")
-    spec.factor_set = keep
+    # The spec is left exactly as requested. Removing blocked factors from
+    # spec.factor_set used to change spec_id after the spec had been upserted, so
+    # the loadings were written under an id dim_model_spec did not hold - a foreign
+    # key violation the first time any factor failed the battery, and a cache miss
+    # for the caller asking by the original id. The exclusion is applied per window.
+    excluded = blocked & set(spec.factor_set)
+    if excluded:
+        print(f"  excluded by diagnostics: {sorted(excluded)}")
 
     with etl_run(JOB, scope={"spec_id": spec.spec_id, "n_instruments": len(instruments)}) as run_id:
         for inst in instruments:
             try:
                 with connect() as conn, conn.cursor() as cur:
                     y = load_instrument(cur, inst)
-                loadings, meta = estimate(y, factors, spec)
+                loadings, meta, covs = estimate_with_cov(y, factors, spec, exclude=excluded)
                 with connect() as conn, conn.cursor() as cur:
-                    n = write_results(cur, spec.spec_id, inst, loadings, meta)
+                    n = write_results(cur, spec.spec_id, inst, loadings, meta, covs)
                 mark_item_done(run_id, JOB, f"{spec.spec_id[:8]}:{inst}", "succeeded",
                                rows_out=n,
                                min_date=meta.window_end.min() if not meta.empty else None,
@@ -388,7 +536,9 @@ def run_for(instruments: Sequence[str], spec: Spec, quiet: bool = False) -> int:
 
 
 def default_factor_set(cur: Any) -> list[str]:
-    cur.execute("SELECT factor_id FROM ref_factor WHERE is_active ORDER BY hierarchy_level, factor_id")
+    # Core factors only: a sector factor enters a regression only when asked for.
+    cur.execute("SELECT factor_id FROM ref_factor WHERE is_active AND role = 'core' "
+                "ORDER BY hierarchy_level, factor_id")
     return [r[0] for r in cur.fetchall()]
 
 

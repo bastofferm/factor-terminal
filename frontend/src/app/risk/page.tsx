@@ -7,6 +7,9 @@
  * data ending at or before its own date; the realised volatility it is scored
  * against covers the following horizon. That lag is what makes the comparison mean
  * anything, and it is enforced in the pipeline rather than assumed here.
+ *
+ * The Portfolio view runs the same model on a portfolio of stocks and funds and
+ * scores it on the portfolio's own returns (components/PortfolioRisk.tsx).
  */
 
 import { useEffect, useState } from "react";
@@ -17,12 +20,48 @@ import { METRICS } from "@/lib/metrics";
 import { SecuritySearch } from "@/components/SecuritySearch";
 import { backtest } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
+import { PortfolioRisk } from "@/components/PortfolioRisk";
 
 const HORIZONS = [
   [5, "1 week"], [21, "1 month"], [63, "3 months"], [126, "6 months"],
 ] as const;
 
+type Mode = "security" | "portfolio";
+
+/**
+ * Both views stay mounted and the hidden one is only hidden, so switching back
+ * keeps a security's result or a portfolio run in progress. `#portfolio` in the
+ * address opens the portfolio view.
+ */
 export default function RiskPage() {
+  const [mode, setMode] = useState<Mode>("security");
+  useEffect(() => {
+    if (window.location.hash === "#portfolio") setMode("portfolio");
+  }, []);
+  const choose = (m: Mode) => {
+    setMode(m);
+    window.history.replaceState(null, "", m === "portfolio" ? "#portfolio" : " ");
+  };
+  return (
+    <div className="space-y-4">
+      <div role="tablist" aria-label="What to forecast"
+           className="inline-flex rounded border border-line bg-white p-0.5">
+        {([["security", "Single security"], ["portfolio", "Portfolio"]] as const).map(([m, label]) => (
+          <button key={m} role="tab" aria-selected={mode === m} onClick={() => choose(m)}
+                  className={"rounded px-3 py-1 text-[12px] transition " + (mode === m
+                    ? "bg-navy font-medium text-white"
+                    : "text-navy hover:bg-lineSoft/60")}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div hidden={mode !== "security"}><SecurityRisk /></div>
+      <div hidden={mode !== "portfolio"}><PortfolioRisk /></div>
+    </div>
+  );
+}
+
+function SecurityRisk() {
   const [specs, setSpecs] = useState<Spec[]>([]);
   const [specId, setSpecId] = useState("");
   const [instrument, setInstrument] = useState("US:AAPL");
@@ -71,7 +110,32 @@ export default function RiskPage() {
       .finally(() => setBusy(false));
   };
 
-  useEffect(() => { if (specId) run(); }, [specId]);
+  useEffect(() => { if (specId) run(); }, [specId, covMethod]);
+
+  /**
+   * The model the agent chose for this security: its spec, its risk assembly
+   * (stored under an `agent:` covariance label) and its horizon. Its forecasts are
+   * read, never recomputed - the run that chose them already scored them.
+   */
+  const [agentInfo, setAgentInfo] = useState<string | null>(null);
+  const useAgentModel = () => {
+    setError(null);
+    api.agentLatest(instrument)
+      .then((d) => {
+        const r = d.run;
+        if (r.status !== "succeeded" || !r.spec_id || !r.cov_method) {
+          setError("The model agent has no finished model for this security yet - run it "
+                   + "from the Loadings Lab.");
+          return;
+        }
+        setAgentInfo(`${r.verdict?.replace(/_/g, " ").toLowerCase()}, `
+                     + `test span ${r.test_start} to ${r.test_end}`);
+        setHorizon(r.horizon_days);
+        setCovMethod(r.cov_method);
+        setSpecId(r.spec_id);
+      })
+      .catch(() => setError("The model agent has not run for this security yet."));
+  };
 
   const bt = result?.backtest as any;
   const reliable = (result?.forecasts ?? []).filter((f) => f.is_reliable);
@@ -146,12 +210,25 @@ export default function RiskPage() {
               <option value="ledoit_wolf">Ledoit-Wolf</option>
               <option value="ewma">EWMA</option>
               <option value="sample">Sample</option>
+              {covMethod.startsWith("agent:") && (
+                <option value={covMethod}>Agent&apos;s risk model</option>
+              )}
             </select>
           </div>
           <button className="btn" onClick={run} disabled={busy || !specId}>
             {busy ? "Scoring…" : "Run backtest"}
           </button>
+          <button className="btn" onClick={useAgentModel} disabled={busy}
+                  title="Load the model the agent chose for this security">
+            Agent&apos;s model
+          </button>
         </div>
+        {agentInfo && covMethod.startsWith("agent:") && (
+          <p className="mt-2 text-[11px] text-navy">
+            Showing the agent&apos;s model ({agentInfo}). Forecasts dated before the test
+            span are inside the sample the model was selected on.
+          </p>
+        )}
         <p className="mt-2 text-[11px] text-muted">
           Loadings must exist for this security and spec. Estimate them first in the
           Loadings Lab if the request comes back empty.
@@ -214,6 +291,10 @@ export default function RiskPage() {
              backtest.christoffersen(bt.christoffersen_p_95).reason,
              backtest.christoffersen(bt.christoffersen_p_95).tone,
              METRICS.clustering],
+            ["vs own EWMA", `${num(bt.qlike, 3)} / ${num(bt.qlike_own_ewma, 3)}`,
+             backtest.benchmark(bt.dm_t_own_ewma, bt.dm_p_own_ewma).reason,
+             backtest.benchmark(bt.dm_t_own_ewma, bt.dm_p_own_ewma).tone,
+             METRICS.vsNaive],
           ] as const).map(([label, value, sub, tone, metric], i) => (
             <MetricCard key={label} label={label} value={value} sub={sub}
                         tone={tone} metric={metric} align={alignFor(i)} />

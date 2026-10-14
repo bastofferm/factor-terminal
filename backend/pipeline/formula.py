@@ -466,6 +466,16 @@ def _f_level_transform(inputs: dict) -> Formula:
                  r"0 & \text{otherwise}\end{cases}")
         steps = [
             "The series prints weekly, not daily.",
+        ]
+        if series.endswith(seed.RELEASE_SUFFIX):
+            steps.append(
+                "Each reading is the first release, placed on the day it was "
+                "published (rolled to the next trading day over a holiday), not on "
+                "the reference date the source files it under. A change is the "
+                "difference between consecutive readings as published, so it "
+                "includes the revision to the previous week: that, too, was news on "
+                "the day.")
+        steps += [
             "It is NOT forward filled. A filled series carries no new information "
             "between releases, which manufactures autocorrelation, understates "
             "standard errors and can smuggle in lookahead.",
@@ -517,28 +527,45 @@ def _f_variance_premium(inputs: dict) -> Formula:
     )
 
 
-def _f_realized_vol_change(inputs: dict) -> Formula:
+def _f_abs_return_surprise(inputs: dict) -> Formula:
     inst = inputs["instrument"]
-    window = int(inputs.get("window", 21))
-    plain = (f"v_t = sqrt({TRADING_DAYS}) * sd(r_{{t-{window - 1}}}^{inst}, ..., "
-             f"r_t^{inst})\n"
-             f"f_t = (v_t - v_{{t-1}}) / sd(dv over the trailing {TRADING_DAYS} "
-             f"observations, at least 60)")
-    latex = (rf"v_t = \sqrt{{252}}\;\operatorname{{sd}}"
-             rf"\bigl(r^{{\text{{{_tex(inst)}}}}}_{{t-{window - 1}}},\dots,"
-             rf"r^{{\text{{{_tex(inst)}}}}}_t\bigr)"
+    halflife = float(inputs.get("halflife", 21))
+    plain = (f"f_t = |r_t^{inst}| / s_{{t-1}} - sqrt(2/pi)\n"
+             f"s_t^2 = l * s_{{t-1}}^2 + (1 - l) * (r_t^{inst})^2,  "
+             f"l = 0.5^(1/{halflife:g})")
+    latex = (rf"f_t = \frac{{\lvert r^{{\text{{{_tex(inst)}}}}}_t\rvert}}{{s_{{t-1}}}}"
+             r" - \sqrt{2/\pi}"
              "\n\n"
-             r"f_t = \frac{\Delta v_t}"
-             r"{\operatorname{sd}(\Delta v_{t-251},\dots,\Delta v_t)}")
+             rf"s_t^2 = \lambda\, s_{{t-1}}^2 + (1-\lambda)"
+             rf"\bigl(r^{{\text{{{_tex(inst)}}}}}_t\bigr)^2, \qquad "
+             rf"\lambda = 0.5^{{1/{halflife:g}}}")
     return Formula(
         plain, latex,
-        [_instrument(inst, "instrument whose realised volatility is tracked")],
-        [f"Realised volatility over a trailing {window} days, annualised.",
-         "Differenced, because a volatility level is not stationary.",
-         "Standardised on a trailing window, because a change in volatility is not "
-         "measured in return units.",
-         "This is a change in a risk measure, not a tradable return. It stands in for "
-         "a rates-volatility series because CBOE discontinued ^TYVIX in 2020."],
+        [_instrument(inst, "instrument whose volatility is tracked"),
+         Symbol("s_{t-1}", r"s_{t-1}",
+                f"yesterday's volatility forecast: an exponentially weighted average "
+                f"of squared {inst} returns with a {halflife:g}-day half-life, "
+                f"through t-1 only", "constant",
+                meaning_tex=rf"yesterday's volatility forecast: an exponentially "
+                            rf"weighted average of squared {inst} returns with a "
+                            rf"{halflife:g}-day half-life, through $t-1$ only")],
+        ["Divide today's absolute return by yesterday's forecast. Nothing about "
+         "day t enters the forecast it is measured against.",
+         Step("Subtract sqrt(2/pi), the mean absolute value of a standard normal, so "
+              "the factor is zero on average when the forecast is right and positive "
+              "on a day more volatile than expected.",
+              r"Subtract $\sqrt{2/\pi}$, the mean absolute value of a standard normal, "
+              r"so the factor is zero on average when the forecast is right and "
+              r"positive on a day more volatile than expected."),
+         "A day's return enters once, on its own day, and fades with the average "
+         "thereafter. The change in a 21-day rolling volatility it replaced moved by "
+         "the squared return entering the window minus the one leaving it, so half its "
+         "variance was an echo of a day three weeks earlier.",
+         "Dividing by the forecast keeps the scale from following the level of "
+         "volatility, so one crisis day does not dominate a covariance estimated on it.",
+         f"Undefined until {inst} has 21 returns behind it.",
+         "This is a volatility shock, not a tradable return. It stands in for a "
+         "rates-volatility series because CBOE discontinued ^TYVIX in 2020."],
     )
 
 
@@ -687,7 +714,7 @@ _RENDERERS = {
     "spread_level": _f_spread_level,
     "level_transform": _f_level_transform,
     "variance_premium": _f_variance_premium,
-    "realized_vol_change": _f_realized_vol_change,
+    "abs_return_surprise": _f_abs_return_surprise,
     "tsmom": _f_tsmom,
     "xs_momentum": _f_xs_momentum,
     "fx_carry": _f_fx_carry,
@@ -843,7 +870,7 @@ _BUILDER_HELPERS: dict[str, list[tuple[str, str]]] = {
     "level_transform": [("backend.core.transforms", "sparse_release_change"),
                         ("backend.core.transforms", "apply_transform")],
     "spread_level": [("backend.core.transforms", "diff_standardized")],
-    "realized_vol_change": [("backend.core.transforms", "diff_standardized")],
+    "abs_return_surprise": [("backend.core.transforms", "abs_return_surprise")],
     "single": [("backend.core.transforms", "to_excess_return")],
 }
 
@@ -889,7 +916,7 @@ def source_code(method: str, inputs: dict[str, Any] | None = None) -> dict:
             "single": "_single", "spread": "_spread", "basket": "_basket",
             "curve": "_curve", "synthetic_bond": "_synthetic_bond",
             "spread_level": "_spread_level", "level_transform": "_level_transform",
-            "realized_vol_change": "_realized_vol_change", "tsmom": "_tsmom",
+            "abs_return_surprise": "_abs_return_surprise", "tsmom": "_tsmom",
             "xs_momentum": "_xs_momentum", "fx_carry": "_fx_carry",
         }.get(method)
     if entry is None:

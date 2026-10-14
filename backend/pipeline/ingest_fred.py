@@ -8,6 +8,10 @@ Uses the FRED REST API directly over httpx. `fredapi` is not installed in either
 source venv and the proven code path there is plain HTTP, so it buys nothing.
 
 Series ids are stored namespaced ('FRED:SOFR'), matching the warehouse convention.
+Weekly series in seed.RELEASE_TIMED_SERIES are also fetched from ALFRED as first
+releases and stored under their publication dates ('FRED:NFCI@release'): a
+factor has to see a number on the day it was published, not on the date of the
+week it describes.
 
     python -m backend.pipeline.ingest_fred [--full] [--series SOFR]
 """
@@ -75,6 +79,132 @@ def fetch_series(client: httpx.Client, api_key: str, series_id: str,
     return out
 
 
+# ALFRED: the same endpoint, read with a real-time period. output_type 4 is
+# "initial release only": one row per observation, carrying the value first
+# published inside the period and, in realtime_start, the day it was published.
+# Asked for every vintage at once, NFCI's 800 weekly re-estimations of its whole
+# history time out on FRED's side, so the history is read a year at a time.
+VINTAGES_URL = "https://api.stlouisfed.org/fred/series/vintagedates"
+
+# A first release recorded more than this long after its reference date was not
+# published then: it is history loaded when the series' vintages begin.
+MAX_PUBLICATION_LAG_DAYS = 14
+
+
+def _alfred_get(client: httpx.Client, url: str, params: dict) -> dict:
+    resp = client.get(url, params=params, timeout=120.0)
+    if resp.status_code >= 400:
+        # Never the URL: it carries the API key.
+        raise RuntimeError(f"ALFRED returned {resp.status_code} for {params.get('series_id')}")
+    return resp.json()
+
+
+def fetch_first_releases(client: httpx.Client, api_key: str,
+                         series_id: str) -> list[tuple[date, float, date]]:
+    """(reference date, first-release value, publication date) for every observation.
+
+    Observations dated in year Y are first published between Y-01-01 and early
+    Y+1, so a real-time period starting on Y-01-01 sees each one's first release
+    and nothing earlier. History older than the first vintage is read from that
+    vintage, and dated by it.
+    """
+    base = {"series_id": series_id, "api_key": api_key, "file_type": "json",
+            "sort_order": "asc", "limit": 100_000}
+    vintages = _alfred_get(client, VINTAGES_URL, {**base, "limit": 10_000}).get("vintage_dates", [])
+    if not vintages:
+        return []
+    first = datetime.strptime(vintages[0], "%Y-%m-%d").date()
+
+    chunks = [{"observation_end": first.isoformat(), "realtime_start": first.isoformat(),
+               "realtime_end": first.isoformat(), "output_type": 1}]
+    for year in range(first.year, date.today().year + 1):
+        # FRED refuses a real-time end after today unless it is the open end.
+        end = date(year + 1, 3, 31)
+        chunks.append({"observation_start": f"{year}-01-01",
+                       "observation_end": f"{year}-12-31",
+                       "realtime_start": max(first, date(year, 1, 1)).isoformat(),
+                       "realtime_end": end.isoformat() if end < date.today() else "9999-12-31",
+                       "output_type": 4})
+
+    found: dict[date, tuple[float, date]] = {}
+    for extra in chunks:
+        for obs in _alfred_get(client, BASE_URL, {**base, **extra}).get("observations", []):
+            raw = obs.get("value")
+            if raw in (None, ".", ""):
+                continue
+            try:
+                ref = datetime.strptime(obs["date"], "%Y-%m-%d").date()
+                released = datetime.strptime(obs["realtime_start"], "%Y-%m-%d").date()
+                value = float(raw)
+            except (ValueError, KeyError):
+                continue
+            if ref not in found or released < found[ref][1]:
+                found[ref] = (value, released)
+    return [(ref, v, rel) for ref, (v, rel) in sorted(found.items())]
+
+
+def release_points(obs: list[tuple[date, float, date]], lag_days: int,
+                   max_lag_days: int = MAX_PUBLICATION_LAG_DAYS) -> list[tuple[date, float]]:
+    """Each first release placed on the day it became known.
+
+    An observation whose recorded release is within `max_lag_days` of its
+    reference date is placed on that release date. One recorded later than that
+    predates the series' vintage history - every such observation shares the first
+    vintage's date - and is placed `lag_days` after its reference date, the
+    publication lag the vintage history shows.
+
+    When two readings land on one day - a delayed week published with the next -
+    the later reference date's value is the one the day ends with, and only it is
+    kept: the factor is the change between consecutive readings as published.
+    """
+    placed: dict[date, tuple[date, float]] = {}
+    for ref, value, released in sorted(obs):
+        on = released if (released - ref).days <= max_lag_days else ref + timedelta(days=lag_days)
+        on = max(on, ref)
+        if on not in placed or placed[on][0] < ref:
+            placed[on] = (ref, value)
+    return [(d, placed[d][1]) for d in sorted(placed)]
+
+
+def fetch_release_timed(client: httpx.Client, api_key: str, run_id, limiter,
+                        items: list[str]) -> int:
+    """Refresh release-timed series in full; they are short and revised every week."""
+    failed = 0
+    for spec in seed.RELEASE_TIMED_SERIES:
+        sid = spec["series_id"]
+        item = f"{sid}{seed.RELEASE_SUFFIX}"
+        if item not in items:
+            continue
+        namespaced = f"FRED:{item}"
+        limiter.acquire()
+        try:
+            obs = with_backoff(lambda: fetch_first_releases(client, api_key, sid))
+            points = release_points(obs, lag_days=int(spec["lag_days"]))
+            rows = [(namespaced, d, v, "alfred") for d, v in points]
+            with connect() as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM fact_input_level WHERE series_id = %s", (namespaced,))
+                n = bulk_insert(cur, UPSERT, rows)
+                cur.execute(
+                    """
+                    INSERT INTO ref_level_series (series_id, name, category, unit, transform)
+                    VALUES (%s, %s, %s, 'index', %s)
+                    ON CONFLICT (series_id) DO UPDATE SET
+                        name = EXCLUDED.name, is_active = TRUE
+                    """,
+                    (namespaced, spec["name"], spec["category"], spec["transform"]),
+                )
+            mark_item_done(run_id, JOB, item, "succeeded", rows_in=len(obs), rows_out=n,
+                           min_date=points[0][0] if points else None,
+                           max_date=points[-1][0] if points else None)
+            span = f"{points[0][0]} .. {points[-1][0]}" if points else "-"
+            print(f"  {item:14s} {n:>7,} rows  {span}  (first releases)")
+        except Exception as exc:
+            failed += 1
+            mark_item_done(run_id, JOB, item, "failed", error=str(exc))
+            print(f"  {item:14s} FAILED: {exc}", file=sys.stderr)
+    return failed
+
+
 def _registered_fred_series() -> list[str]:
     """Every FRED-sourced level series in the registry, de-namespaced.
 
@@ -86,7 +216,9 @@ def _registered_fred_series() -> list[str]:
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT series_id FROM ref_level_series "
-            "WHERE is_active AND series_id LIKE 'FRED:%' ORDER BY 1"
+            "WHERE is_active AND series_id LIKE 'FRED:%%' "
+            "AND series_id NOT LIKE %s ORDER BY 1",
+            (f"%{seed.RELEASE_SUFFIX}",),
         )
         return [r[0].split(":", 1)[1] for r in cur.fetchall()]
 
@@ -104,15 +236,17 @@ def fetch(full: bool = False, only: str | None = None, scope: str = "registered"
     else:
         targets = sorted(set(_registered_fred_series())
                          | {x["series_id"] for x in seed.NEW_FRED_SERIES})
+    release_timed = [f"{x['series_id']}{seed.RELEASE_SUFFIX}" for x in seed.RELEASE_TIMED_SERIES]
     if only:
         targets = [t for t in targets if t == only]
-    if not targets:
+        release_timed = [t for t in release_timed if t == only]
+    if not targets and not release_timed:
         print(f"no such series registered: {only}", file=sys.stderr)
         return 1
 
     default_start = datetime.strptime(s.default_start, "%Y-%m-%d").date()
 
-    prune_items(JOB, targets)
+    prune_items(JOB, targets + release_timed)
 
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
@@ -122,19 +256,23 @@ def fetch(full: bool = False, only: str | None = None, scope: str = "registered"
         )
         marks = {r[0]: r[1] for r in cur.fetchall() if r[1]}
 
-    skip = set() if full else checked_today(JOB, targets)
+    skip = set() if full else checked_today(JOB, targets + release_timed)
     todo = [t for t in targets if t not in skip]
+    todo_release = [t for t in release_timed if t not in skip]
     if skip:
         print(f"  skipping {len(skip)} already checked today")
-    if not todo:
+    if not todo and not todo_release:
         return 0
 
     limiter = RateLimiter(s.fred_rate_limit)
     failed_before = 0
 
     with etl_run(JOB, mode="full" if full else "incremental") as run_id:
-        mark_items(run_id, JOB, todo)
+        mark_items(run_id, JOB, todo + todo_release)
         with httpx.Client() as client:
+            if todo_release:
+                # Failures are recorded per item and counted by run_failed below.
+                fetch_release_timed(client, api_key, run_id, limiter, todo_release)
             for sid in todo:
                 namespaced = f"FRED:{sid}"
                 start = default_start

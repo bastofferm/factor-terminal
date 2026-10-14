@@ -1209,35 +1209,37 @@ with $g_1$ = `eq_global`, each taken as its own *orthogonalised* series, and $\t
 
 ---
 
-### `vol_rates` — Rates Volatility (realised)
+### `vol_rates` — Rates Volatility (surprise)
 
-Hierarchy level 1. Method `realized_vol_change`.
+Hierarchy level 1. Method `abs_return_surprise`.
 
-> Substitute for ^TYVIX, which CBOE discontinued in 2020.
+> Substitute for ^TYVIX, which CBOE discontinued in 2020: TLT's absolute return over yesterday's EWMA volatility forecast. Replaced the change in a 21-day rolling volatility, half of whose variance was the squared return leaving the window three weeks earlier.
 
 **Construction**
 
 $$
-v_t = \sqrt{252}\;\operatorname{sd}\bigl(r^{\text{TLT}}_{t-20},\dots,r^{\text{TLT}}_t\bigr)
+f_t = \frac{\lvert r^{\text{TLT}}_t\rvert}{s_{t-1}} - \sqrt{2/\pi}
 $$
 
 $$
-f_t = \frac{\Delta v_t}{\operatorname{sd}(\Delta v_{t-251},\dots,\Delta v_t)}
+s_t^2 = \lambda\, s_{t-1}^2 + (1-\lambda)\bigl(r^{\text{TLT}}_t\bigr)^2, \qquad \lambda = 0.5^{1/21}
 $$
 
 $$
 f_t \leftarrow k\,f_t, \qquad k = \frac{0.1 / \sqrt{252}}{\operatorname{sd}(f)}
 $$
 
-1. Realised volatility over a trailing 21 days, annualised.
-2. Differenced, because a volatility level is not stationary.
-3. Standardised on a trailing window, because a change in volatility is not measured in return units.
-4. This is a change in a risk measure, not a tradable return. It stands in for a rates-volatility series because CBOE discontinued ^TYVIX in 2020.
-5. Rescale to 10% annualised volatility. The transform above yields a z-score, and every factor in this model is a return.
+1. Divide today's absolute return by yesterday's forecast. Nothing about day t enters the forecast it is measured against.
+2. Subtract $\sqrt{2/\pi}$, the mean absolute value of a standard normal, so the factor is zero on average when the forecast is right and positive on a day more volatile than expected.
+3. A day's return enters once, on its own day, and fades with the average thereafter. The change in a 21-day rolling volatility it replaced moved by the squared return entering the window minus the one leaving it, so half its variance was an echo of a day three weeks earlier.
+4. Dividing by the forecast keeps the scale from following the level of volatility, so one crisis day does not dominate a covariance estimated on it.
+5. Undefined until TLT has 21 returns behind it.
+6. This is a volatility shock, not a tradable return. It stands in for a rates-volatility series because CBOE discontinued ^TYVIX in 2020.
+7. Rescale to 10% annualised volatility. The transform above yields a z-score, and every factor in this model is a return.
 
 | Symbol | Source | Meaning |
 |---|---|---|
-| `r_t^TLT` | `TLT` | instrument whose realised volatility is tracked: log total return of TLT |
+| `r_t^TLT` | `TLT` | instrument whose volatility is tracked: log total return of TLT |
 
 **Orthogonalisation**
 
@@ -1298,7 +1300,7 @@ Nothing sits above this factor in the hierarchy, so the raw and orthogonalised p
 
 Hierarchy level 0. Method `level_transform`.
 
-> Weekly series; the daily factor is zero between releases rather than forward-filled, since a forward fill would manufacture information.
+> Weekly series; the daily factor is zero between releases rather than forward-filled, since a forward fill would manufacture information. Each reading is the first release, on the Wednesday it was published - not the Friday of the week it describes, which FRED dates it by and which is five days before anyone knew it.
 
 **Construction**
 
@@ -1311,14 +1313,15 @@ f_t \leftarrow k\,f_t, \qquad k = \frac{0.1 / \sqrt{252}}{\operatorname{sd}(f)}
 $$
 
 1. The series prints weekly, not daily.
-2. It is NOT forward filled. A filled series carries no new information between releases, which manufactures autocorrelation, understates standard errors and can smuggle in lookahead.
-3. Instead the standardised change lands on the publication day and the factor is exactly zero in between: a release-event factor, sparse daily.
-4. The scaling window counts releases rather than days, so 52 of them is about a year of the series' own history.
-5. Rescale to 10% annualised volatility. The transform above yields a z-score, and every factor in this model is a return.
+2. Each reading is the first release, placed on the day it was published (rolled to the next trading day over a holiday), not on the reference date the source files it under. A change is the difference between consecutive readings as published, so it includes the revision to the previous week: that, too, was news on the day.
+3. It is NOT forward filled. A filled series carries no new information between releases, which manufactures autocorrelation, understates standard errors and can smuggle in lookahead.
+4. Instead the standardised change lands on the publication day and the factor is exactly zero in between: a release-event factor, sparse daily.
+5. The scaling window counts releases rather than days, so 52 of them is about a year of the series' own history.
+6. Rescale to 10% annualised volatility. The transform above yields a z-score, and every factor in this model is a return.
 
 | Symbol | Source | Meaning |
 |---|---|---|
-| `FRED:NFCI` | `FRED:NFCI` | the published level series |
+| `FRED:NFCI@release` | `FRED:NFCI@release` | the published level series |
 
 **Orthogonalisation**
 
@@ -1468,6 +1471,371 @@ $$
 $$
 
 with $g_1, g_2$ = `eq_global`, `arp_trend`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
+
+---
+
+## 10. Equity Sector (role 'sector': a single stock adds only its own)
+
+### `sec_tech` — Sector: Information Technology
+
+Hierarchy level 2. Method `single`.
+
+> XLK total return less cash, residualised against the market and the cyclical tilt. Enters a regression only for a Information Technology stock, and only when the model agent finds it earns its place.
+
+**Construction**
+
+$$
+f_t = x^{\text{XLK}}_t
+$$
+
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. XLK is a funded long position, so its return has to be measured over cash.
+
+| Symbol | Source | Meaning |
+|---|---|---|
+| `r_t^XLK` | `XLK` | instrument return: log total return of XLK |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
+
+**Orthogonalisation**
+
+$$
+\tilde{f}_t = f_t - \hat{a}_\tau - \hat{b}_{1,\tau}\,\tilde{f}^{\text{eq\_global}}_t - \hat{b}_{2,\tau}\,\tilde{f}^{\text{eq\_us}}_t - \hat{b}_{3,\tau}\,\tilde{f}^{\text{eq\_cyclical}}_t
+$$
+
+$$
+(\hat{a}_\tau, \hat{b}_\tau) = \arg\min_{a,b} \sum_{s=\tau-504}^{\tau-1} \Bigl(f_s - a - \sum_j b_j\,\tilde{f}^{g_j}_s\Bigr)^2
+$$
+
+with $g_1, \dots, g_{3}$ = `eq_global`, `eq_us`, `eq_cyclical`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
+
+---
+
+### `sec_financials` — Sector: Financials
+
+Hierarchy level 2. Method `single`.
+
+> XLF total return less cash, residualised against the market and the cyclical tilt. Enters a regression only for a Financials stock, and only when the model agent finds it earns its place.
+
+**Construction**
+
+$$
+f_t = x^{\text{XLF}}_t
+$$
+
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. XLF is a funded long position, so its return has to be measured over cash.
+
+| Symbol | Source | Meaning |
+|---|---|---|
+| `r_t^XLF` | `XLF` | instrument return: log total return of XLF |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
+
+**Orthogonalisation**
+
+$$
+\tilde{f}_t = f_t - \hat{a}_\tau - \hat{b}_{1,\tau}\,\tilde{f}^{\text{eq\_global}}_t - \hat{b}_{2,\tau}\,\tilde{f}^{\text{eq\_us}}_t - \hat{b}_{3,\tau}\,\tilde{f}^{\text{eq\_cyclical}}_t
+$$
+
+$$
+(\hat{a}_\tau, \hat{b}_\tau) = \arg\min_{a,b} \sum_{s=\tau-504}^{\tau-1} \Bigl(f_s - a - \sum_j b_j\,\tilde{f}^{g_j}_s\Bigr)^2
+$$
+
+with $g_1, \dots, g_{3}$ = `eq_global`, `eq_us`, `eq_cyclical`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
+
+---
+
+### `sec_health` — Sector: Health Care
+
+Hierarchy level 2. Method `single`.
+
+> XLV total return less cash, residualised against the market and the cyclical tilt. Enters a regression only for a Health Care stock, and only when the model agent finds it earns its place.
+
+**Construction**
+
+$$
+f_t = x^{\text{XLV}}_t
+$$
+
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. XLV is a funded long position, so its return has to be measured over cash.
+
+| Symbol | Source | Meaning |
+|---|---|---|
+| `r_t^XLV` | `XLV` | instrument return: log total return of XLV |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
+
+**Orthogonalisation**
+
+$$
+\tilde{f}_t = f_t - \hat{a}_\tau - \hat{b}_{1,\tau}\,\tilde{f}^{\text{eq\_global}}_t - \hat{b}_{2,\tau}\,\tilde{f}^{\text{eq\_us}}_t - \hat{b}_{3,\tau}\,\tilde{f}^{\text{eq\_cyclical}}_t
+$$
+
+$$
+(\hat{a}_\tau, \hat{b}_\tau) = \arg\min_{a,b} \sum_{s=\tau-504}^{\tau-1} \Bigl(f_s - a - \sum_j b_j\,\tilde{f}^{g_j}_s\Bigr)^2
+$$
+
+with $g_1, \dots, g_{3}$ = `eq_global`, `eq_us`, `eq_cyclical`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
+
+---
+
+### `sec_industrials` — Sector: Industrials
+
+Hierarchy level 2. Method `single`.
+
+> XLI total return less cash, residualised against the market and the cyclical tilt. Enters a regression only for a Industrials stock, and only when the model agent finds it earns its place.
+
+**Construction**
+
+$$
+f_t = x^{\text{XLI}}_t
+$$
+
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. XLI is a funded long position, so its return has to be measured over cash.
+
+| Symbol | Source | Meaning |
+|---|---|---|
+| `r_t^XLI` | `XLI` | instrument return: log total return of XLI |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
+
+**Orthogonalisation**
+
+$$
+\tilde{f}_t = f_t - \hat{a}_\tau - \hat{b}_{1,\tau}\,\tilde{f}^{\text{eq\_global}}_t - \hat{b}_{2,\tau}\,\tilde{f}^{\text{eq\_us}}_t - \hat{b}_{3,\tau}\,\tilde{f}^{\text{eq\_cyclical}}_t
+$$
+
+$$
+(\hat{a}_\tau, \hat{b}_\tau) = \arg\min_{a,b} \sum_{s=\tau-504}^{\tau-1} \Bigl(f_s - a - \sum_j b_j\,\tilde{f}^{g_j}_s\Bigr)^2
+$$
+
+with $g_1, \dots, g_{3}$ = `eq_global`, `eq_us`, `eq_cyclical`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
+
+---
+
+### `sec_discretionary` — Sector: Consumer Discretionary
+
+Hierarchy level 2. Method `single`.
+
+> XLY total return less cash, residualised against the market and the cyclical tilt. Enters a regression only for a Consumer Discretionary stock, and only when the model agent finds it earns its place.
+
+**Construction**
+
+$$
+f_t = x^{\text{XLY}}_t
+$$
+
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. XLY is a funded long position, so its return has to be measured over cash.
+
+| Symbol | Source | Meaning |
+|---|---|---|
+| `r_t^XLY` | `XLY` | instrument return: log total return of XLY |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
+
+**Orthogonalisation**
+
+$$
+\tilde{f}_t = f_t - \hat{a}_\tau - \hat{b}_{1,\tau}\,\tilde{f}^{\text{eq\_global}}_t - \hat{b}_{2,\tau}\,\tilde{f}^{\text{eq\_us}}_t - \hat{b}_{3,\tau}\,\tilde{f}^{\text{eq\_cyclical}}_t
+$$
+
+$$
+(\hat{a}_\tau, \hat{b}_\tau) = \arg\min_{a,b} \sum_{s=\tau-504}^{\tau-1} \Bigl(f_s - a - \sum_j b_j\,\tilde{f}^{g_j}_s\Bigr)^2
+$$
+
+with $g_1, \dots, g_{3}$ = `eq_global`, `eq_us`, `eq_cyclical`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
+
+---
+
+### `sec_staples` — Sector: Consumer Staples
+
+Hierarchy level 2. Method `single`.
+
+> XLP total return less cash, residualised against the market and the cyclical tilt. Enters a regression only for a Consumer Staples stock, and only when the model agent finds it earns its place.
+
+**Construction**
+
+$$
+f_t = x^{\text{XLP}}_t
+$$
+
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. XLP is a funded long position, so its return has to be measured over cash.
+
+| Symbol | Source | Meaning |
+|---|---|---|
+| `r_t^XLP` | `XLP` | instrument return: log total return of XLP |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
+
+**Orthogonalisation**
+
+$$
+\tilde{f}_t = f_t - \hat{a}_\tau - \hat{b}_{1,\tau}\,\tilde{f}^{\text{eq\_global}}_t - \hat{b}_{2,\tau}\,\tilde{f}^{\text{eq\_us}}_t - \hat{b}_{3,\tau}\,\tilde{f}^{\text{eq\_cyclical}}_t
+$$
+
+$$
+(\hat{a}_\tau, \hat{b}_\tau) = \arg\min_{a,b} \sum_{s=\tau-504}^{\tau-1} \Bigl(f_s - a - \sum_j b_j\,\tilde{f}^{g_j}_s\Bigr)^2
+$$
+
+with $g_1, \dots, g_{3}$ = `eq_global`, `eq_us`, `eq_cyclical`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
+
+---
+
+### `sec_energy` — Sector: Energy
+
+Hierarchy level 2. Method `single`.
+
+> XLE total return less cash, residualised against the market and the cyclical tilt. Enters a regression only for a Energy stock, and only when the model agent finds it earns its place.
+
+**Construction**
+
+$$
+f_t = x^{\text{XLE}}_t
+$$
+
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. XLE is a funded long position, so its return has to be measured over cash.
+
+| Symbol | Source | Meaning |
+|---|---|---|
+| `r_t^XLE` | `XLE` | instrument return: log total return of XLE |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
+
+**Orthogonalisation**
+
+$$
+\tilde{f}_t = f_t - \hat{a}_\tau - \hat{b}_{1,\tau}\,\tilde{f}^{\text{eq\_global}}_t - \hat{b}_{2,\tau}\,\tilde{f}^{\text{eq\_us}}_t - \hat{b}_{3,\tau}\,\tilde{f}^{\text{eq\_cyclical}}_t
+$$
+
+$$
+(\hat{a}_\tau, \hat{b}_\tau) = \arg\min_{a,b} \sum_{s=\tau-504}^{\tau-1} \Bigl(f_s - a - \sum_j b_j\,\tilde{f}^{g_j}_s\Bigr)^2
+$$
+
+with $g_1, \dots, g_{3}$ = `eq_global`, `eq_us`, `eq_cyclical`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
+
+---
+
+### `sec_materials` — Sector: Materials
+
+Hierarchy level 2. Method `single`.
+
+> XLB total return less cash, residualised against the market and the cyclical tilt. Enters a regression only for a Materials stock, and only when the model agent finds it earns its place.
+
+**Construction**
+
+$$
+f_t = x^{\text{XLB}}_t
+$$
+
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. XLB is a funded long position, so its return has to be measured over cash.
+
+| Symbol | Source | Meaning |
+|---|---|---|
+| `r_t^XLB` | `XLB` | instrument return: log total return of XLB |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
+
+**Orthogonalisation**
+
+$$
+\tilde{f}_t = f_t - \hat{a}_\tau - \hat{b}_{1,\tau}\,\tilde{f}^{\text{eq\_global}}_t - \hat{b}_{2,\tau}\,\tilde{f}^{\text{eq\_us}}_t - \hat{b}_{3,\tau}\,\tilde{f}^{\text{eq\_cyclical}}_t
+$$
+
+$$
+(\hat{a}_\tau, \hat{b}_\tau) = \arg\min_{a,b} \sum_{s=\tau-504}^{\tau-1} \Bigl(f_s - a - \sum_j b_j\,\tilde{f}^{g_j}_s\Bigr)^2
+$$
+
+with $g_1, \dots, g_{3}$ = `eq_global`, `eq_us`, `eq_cyclical`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
+
+---
+
+### `sec_utilities` — Sector: Utilities
+
+Hierarchy level 2. Method `single`.
+
+> XLU total return less cash, residualised against the market and the cyclical tilt. Enters a regression only for a Utilities stock, and only when the model agent finds it earns its place.
+
+**Construction**
+
+$$
+f_t = x^{\text{XLU}}_t
+$$
+
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. XLU is a funded long position, so its return has to be measured over cash.
+
+| Symbol | Source | Meaning |
+|---|---|---|
+| `r_t^XLU` | `XLU` | instrument return: log total return of XLU |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
+
+**Orthogonalisation**
+
+$$
+\tilde{f}_t = f_t - \hat{a}_\tau - \hat{b}_{1,\tau}\,\tilde{f}^{\text{eq\_global}}_t - \hat{b}_{2,\tau}\,\tilde{f}^{\text{eq\_us}}_t - \hat{b}_{3,\tau}\,\tilde{f}^{\text{eq\_cyclical}}_t
+$$
+
+$$
+(\hat{a}_\tau, \hat{b}_\tau) = \arg\min_{a,b} \sum_{s=\tau-504}^{\tau-1} \Bigl(f_s - a - \sum_j b_j\,\tilde{f}^{g_j}_s\Bigr)^2
+$$
+
+with $g_1, \dots, g_{3}$ = `eq_global`, `eq_us`, `eq_cyclical`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
+
+---
+
+### `sec_real_estate` — Sector: Real Estate
+
+Hierarchy level 2. Method `single`.
+
+> XLRE total return less cash, residualised against the market and the cyclical tilt. Enters a regression only for a Real Estate stock, and only when the model agent finds it earns its place. XLRE starts in October 2015.
+
+**Construction**
+
+$$
+f_t = x^{\text{XLRE}}_t
+$$
+
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. XLRE is a funded long position, so its return has to be measured over cash.
+
+| Symbol | Source | Meaning |
+|---|---|---|
+| `r_t^XLRE` | `XLRE` | instrument return: log total return of XLRE |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
+
+**Orthogonalisation**
+
+$$
+\tilde{f}_t = f_t - \hat{a}_\tau - \hat{b}_{1,\tau}\,\tilde{f}^{\text{eq\_global}}_t - \hat{b}_{2,\tau}\,\tilde{f}^{\text{eq\_us}}_t - \hat{b}_{3,\tau}\,\tilde{f}^{\text{eq\_cyclical}}_t
+$$
+
+$$
+(\hat{a}_\tau, \hat{b}_\tau) = \arg\min_{a,b} \sum_{s=\tau-504}^{\tau-1} \Bigl(f_s - a - \sum_j b_j\,\tilde{f}^{g_j}_s\Bigr)^2
+$$
+
+with $g_1, \dots, g_{3}$ = `eq_global`, `eq_us`, `eq_cyclical`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
+
+---
+
+### `sec_communication` — Sector: Communication Services
+
+Hierarchy level 2. Method `single`.
+
+> XLC total return less cash, residualised against the market and the cyclical tilt. Enters a regression only for a Communication Services stock, and only when the model agent finds it earns its place. XLC starts in June 2018.
+
+**Construction**
+
+$$
+f_t = x^{\text{XLC}}_t
+$$
+
+1. Subtract the overnight rate: $x_t = r_t - c_{t-1}$. XLC is a funded long position, so its return has to be measured over cash.
+
+| Symbol | Source | Meaning |
+|---|---|---|
+| `r_t^XLC` | `XLC` | instrument return: log total return of XLC |
+| `c_t` | `FRED:DFF` | daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ |
+
+**Orthogonalisation**
+
+$$
+\tilde{f}_t = f_t - \hat{a}_\tau - \hat{b}_{1,\tau}\,\tilde{f}^{\text{eq\_global}}_t - \hat{b}_{2,\tau}\,\tilde{f}^{\text{eq\_us}}_t - \hat{b}_{3,\tau}\,\tilde{f}^{\text{eq\_cyclical}}_t
+$$
+
+$$
+(\hat{a}_\tau, \hat{b}_\tau) = \arg\min_{a,b} \sum_{s=\tau-504}^{\tau-1} \Bigl(f_s - a - \sum_j b_j\,\tilde{f}^{g_j}_s\Bigr)^2
+$$
+
+with $g_1, \dots, g_{3}$ = `eq_global`, `eq_us`, `eq_cyclical`, each taken as its own *orthogonalised* series, and $\tau$ the most recent refit at or before $t$.
 
 ---
 

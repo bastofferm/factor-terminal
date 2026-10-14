@@ -35,7 +35,7 @@ TICKERS = sorted({
     "EURUSD=X", "USDCHF=X", "DX-Y.NYB", "CEW", "TLT", "UUP", "GLD", "HYG", "SPY",
     "EFA", "IEF", "DBC", "USO", "LQD", "FXE", "FXY", "VIXY", "DBA", "CPER", "EMB",
     "EMLC", "BKLN", "VLUE", "MTUM", "QUAL", "USMV", "XLI", "XLB", "XLE", "XLF",
-    "XLY", "XLP", "XLU", "XLV",
+    "XLY", "XLP", "XLU", "XLV", "XLK", "XLRE", "XLC",
 })
 
 CURVE_SERIES = [sid for sid, _ in seed.CURVES["US_TSY"]]
@@ -46,7 +46,8 @@ LEVEL_SERIES = sorted(set(
 ))
 
 # NFCI prints weekly; the sparse path is only taken below DAILY_COVERAGE_THRESHOLD.
-SPARSE_SERIES = "FRED:NFCI"
+# It is stored under its publication dates, as first releases.
+SPARSE_SERIES = "FRED:NFCI@release"
 
 
 @pytest.fixture(scope="module")
@@ -295,15 +296,21 @@ def test_variance_premium_lags_the_implied_leg(panels):
     same(built(panels, "vol_variance_premium").to_numpy(), expected)
 
 
-def test_realized_vol_change_differences_an_annualised_volatility(panels):
+def test_vol_surprise_divides_by_yesterday_s_forecast(panels):
+    """f_t = |r_t| / s_{t-1} - sqrt(2/pi), s^2 an EWMA of r^2 with a 21-day half-life."""
     plain = rendered("vol_rates")["construction"]["plain"]
-    assert plain.splitlines()[0].startswith("v_t = sqrt(252) * sd(r_{t-20}^TLT")
+    assert plain.splitlines()[0] == "f_t = |r_t^TLT| / s_{t-1} - sqrt(2/pi)"
 
-    r = panels.ret("TLT")
-    v = (r.rolling(21, min_periods=10).std() * np.sqrt(TRADING_DAYS)).to_numpy()
-    dv = np.diff(v, prepend=np.nan)
-    expected = rescaled(dv / trailing_sd(dv, 252, 60),
-                        factor_defs.STANDARDIZED_TARGET_VOL)
+    r = panels.ret("TLT").to_numpy()
+    lam = 0.5 ** (1 / 21)
+    expected = np.full(r.size, np.nan)
+    var, seen = None, 0
+    for t in range(r.size):
+        if seen >= 21:
+            expected[t] = abs(r[t]) / np.sqrt(var) - np.sqrt(2 / np.pi)
+        var = r[t] ** 2 if var is None else lam * var + (1 - lam) * r[t] ** 2
+        seen += 1
+    expected = rescaled(expected, factor_defs.STANDARDIZED_TARGET_VOL)
     same(built(panels, "vol_rates").to_numpy(), expected)
 
 
@@ -675,3 +682,21 @@ def test_an_unknown_method_returns_a_gap_rather_than_raising():
     code = formula.source_code("teleology", {})
     assert code["builder"] is None
     assert code["helpers"] == []
+
+
+def test_a_release_on_a_holiday_lands_on_the_next_trading_day():
+    idx = pd.DatetimeIndex(["2024-07-01", "2024-07-02", "2024-07-03", "2024-07-05",
+                            "2024-07-08"])
+    published = pd.Series([1.0, 2.0, 3.0],
+                          index=pd.to_datetime(["2024-07-03", "2024-07-04", "2024-07-06"]))
+    rolled = bf.roll_onto_calendar(published, idx)
+    assert rolled.loc["2024-07-03"] == 1.0
+    assert rolled.loc["2024-07-05"] == 2.0, "the July 4 release is known on the 5th"
+    assert rolled.loc["2024-07-08"] == 3.0, "a Saturday release is known on Monday"
+    assert rolled.isna().sum() == 2
+
+
+def test_nfci_is_read_on_its_publication_dates():
+    assert spec("liq_conditions")["inputs"]["series"].endswith(seed.RELEASE_SUFFIX)
+    steps = " ".join(rendered("liq_conditions")["construction"]["steps"])
+    assert "first release" in steps

@@ -30,6 +30,15 @@ export interface Metric {
   what: string;
   how: string;
   read: string;
+  /** For a statistical test: the null hypothesis and the reference distribution. */
+  h0?: string;
+  /** Where the method comes from, for a reader who wants the derivation. */
+  ref?: string;
+  /**
+   * The computation as LaTeX, typeset with KaTeX. A blank line separates the
+   * lines of a multi-line display, as in formula.py's registry.
+   */
+  formula?: string;
 }
 
 export const METRICS: Record<string, Metric> = {
@@ -69,9 +78,9 @@ export const METRICS: Record<string, Metric> = {
     what: "The annualised volatility of what the factors do not explain — the "
         + "security's idiosyncratic risk.",
     how: "Standard deviation of the regression residuals × √252. The risk model "
-       + "shrinks this toward the cross-sectional median before using it, and "
        + "floors it at 2%, so a single quiet window cannot produce a falsely "
-       + "precise idiosyncratic risk.",
+       + "precise idiosyncratic risk; a model the agent chose may instead track "
+       + "specific risk from out-of-sample residuals.",
     read: "This enters the risk forecast directly: predicted variance is β′Σβ plus "
         + "this squared. For a single stock it is usually the larger of the two.",
   },
@@ -189,6 +198,20 @@ export const METRICS: Record<string, Metric> = {
         + "is itself a noisy estimate, which caps how much of it anything can "
         + "explain. Near zero means the forecast is delivering a level and no "
         + "timing.",
+  },
+  vsNaive: {
+    title: "Against the naive forecast",
+    what: "Whether the factor model forecasts this security's volatility better "
+        + "than the security's own EWMA volatility - a forecast that needs no "
+        + "factor model at all.",
+    how: "QLIKE loss of each forecast against the realised volatility over the "
+       + "horizon, compared with a Diebold-Mariano test whose standard error "
+       + "allows for overlapping outcome windows.",
+    read: "A factor model that is significantly worse than its own security's EWMA "
+        + "volatility has not earned its factors, however well calibrated it looks. "
+        + "Indistinguishable is common for a single stock, whose total risk its own "
+        + "history forecasts well; the factor model's case then rests on the "
+        + "decomposition rather than the total.",
   },
   var95: {
     title: "VaR 95% coverage",

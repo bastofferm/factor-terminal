@@ -108,7 +108,7 @@ async def estimate(req: EstimateRequest) -> dict:
         factor_ids = req.factor_ids
     else:
         factor_ids = [r["factor_id"] for r in await db.fetch(
-            "SELECT factor_id FROM ref_factor WHERE is_active "
+            "SELECT factor_id FROM ref_factor WHERE is_active AND role = 'core' "
             "ORDER BY hierarchy_level, factor_id")]
 
     await _ensure_mirrored(req.instrument_id)

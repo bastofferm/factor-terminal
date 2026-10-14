@@ -195,6 +195,14 @@ export function BlockAttribution({ start, method, basis }: {
                 </span>
               </span>
               {data.fit && <span>fit R² {num(data.fit.r2, 3)}</span>}
+              {/* Which estimation the betas came from. It has to be one fitted on
+                  the panel this covariance is built from, and the page says which. */}
+              {data.fit && (
+                <span title={data.fit.spec_id}>
+                  betas from <span className="font-mono">{data.fit.spec_name ?? data.fit.spec_id.slice(0, 8)}</span>{" "}
+                  on the {data.basis === "orth" ? "orthogonalised" : "raw"} panel
+                </span>
+              )}
               <span>
                 diversification {pct(data.diversification)} — blocks apart would
                 be {pct(data.undiversified)}

@@ -343,3 +343,94 @@ def test_residual_pca_is_flat_when_residuals_are_idiosyncratic(rng):
 def test_residual_pca_handles_degenerate_input(rng):
     out = cv.residual_pca(rng.standard_normal((3, 8)))
     assert out["eigenvalues"] == []
+
+
+def test_beta_noise_term_explains_and_removes_the_overforecast():
+    """With k = 30 noisy betas on 252 days, b_hat' S b_hat overshoots b' S b by
+    about tr(S V). Averaged over many samples the debiased figure sits on the
+    truth and the raw one does not."""
+    from backend.core import regression as reg
+
+    rng = np.random.default_rng(20261012)
+    k, n, sims = 30, 252, 300
+    beta = np.zeros(k)
+    beta[:3] = [1.0, 0.5, -0.3]
+    S = np.eye(k) * 0.01**2 * 252
+    true_sys = float(beta @ S @ beta)
+    raw, debiased = [], []
+    for _ in range(sims):
+        X = rng.standard_normal((n, k)) * 0.01
+        y = X @ beta + rng.standard_normal(n) * 0.015
+        r = reg.fit(y, X, hac_lags=0)
+        raw.append(float(r.betas @ S @ r.betas))
+        _, sys_d, _ = cv.predicted_volatility(r.betas, S, 0.0, beta_cov=r.cov_beta)
+        debiased.append(sys_d**2)
+    assert np.mean(raw) > true_sys * 1.10, "the noise term should be material here"
+    assert np.mean(debiased) == pytest.approx(true_sys, rel=0.05)
+
+
+# ---------------------------------------------------------------------------
+# lead-lag: asynchronous closes
+# ---------------------------------------------------------------------------
+
+def _asynchronous(rng, n=40_000):
+    """A sees a common shock the day it happens; B sees half of it a day late, as
+    a market that closes before New York sees a US-hours move."""
+    z = rng.standard_normal(n + 1) * 0.01
+    a = z[1:] + rng.standard_normal(n) * 0.002
+    b = 0.5 * z[1:] + 0.5 * z[:-1] + rng.standard_normal(n) * 0.002
+    return np.column_stack([a, b]), 0.01**2
+
+
+def test_lead_lag_term_recovers_the_h_day_covariance_of_asynchronous_series(rng):
+    X, s2 = _asynchronous(rng)
+    h = 21
+    daily = cv.sample_covariance(X)
+    term = cv.lead_lag_term(X, lags=2, horizon=h, method="sample")
+    adjusted = cv.horizon_covariance(daily, term)
+    # Exact: Cov(sum A, sum B) over h days = (h - 0.5) s2, i.e. (1 - 0.5/h) s2 a day.
+    assert daily[0, 1] / 252 == pytest.approx(0.5 * s2, rel=0.05)
+    assert adjusted[0, 1] / 252 == pytest.approx((1 - 0.5 / h) * s2, rel=0.05)
+    # And against the sums themselves, on non-overlapping h-day blocks.
+    m = X.shape[0] // h
+    sums = X[: m * h].reshape(m, h, 2).sum(axis=1)
+    assert adjusted[0, 1] / 252 * h == pytest.approx(np.cov(sums.T)[0, 1], rel=0.12)
+
+
+def test_lead_lag_term_is_negligible_for_synchronous_iid_returns(rng):
+    X = rng.standard_normal((5_000, 4)) * 0.01
+    term = cv.lead_lag_term(X, lags=3, horizon=21, method="sample")
+    daily = cv.sample_covariance(X)
+    assert np.abs(term).max() < 0.1 * np.abs(np.diag(daily)).min()
+
+
+def test_lead_lag_term_weights_follow_the_covariance_method(rng):
+    X, _ = _asynchronous(rng, 3_000)
+    eq = cv.lead_lag_term(X, 1, 21, method="sample")
+    ew = cv.lead_lag_term(X, 1, 21, method="ewma", halflife=42)
+    bl = cv.lead_lag_term(X, 1, 21, method="blend", halflife=42, ewma_weight=0.6)
+    np.testing.assert_allclose(bl, 0.6 * ew + 0.4 * eq, rtol=1e-10, atol=1e-14)
+    assert cv.lead_lag_term(X, 1, 21, method="ledoit_wolf") == pytest.approx(eq)
+
+
+def test_lead_lag_never_pairs_days_across_a_gap():
+    X = np.array([[1.0, 1.0], [np.nan, np.nan], [1.0, 1.0], [-1.0, -1.0], [2.0, 2.0]])
+    g = cv.lagged_autocovariance(X, 1)
+    # Only the pairs (3, 2) and (4, 3) are complete; the gap is not bridged.
+    mu = np.full(2, 3 / 4)
+    expected = (np.outer(X[3] - mu, X[2] - mu) + np.outer(X[4] - mu, X[3] - mu)) / 2
+    np.testing.assert_allclose(g, expected)
+
+
+def test_horizon_covariance_is_positive_semi_definite(rng):
+    X = rng.standard_normal((300, 6)) * 0.01
+    X[1:, 3] += 0.9 * X[:-1, 0]
+    C = cv.horizon_covariance(cv.sample_covariance(X), cv.lead_lag_term(X, 5, 21, "sample"))
+    assert np.linalg.eigvalsh(C).min() >= -1e-12
+    np.testing.assert_allclose(C, C.T)
+
+
+def test_no_lags_or_a_one_day_horizon_adds_nothing(rng):
+    X, _ = _asynchronous(rng, 1_000)
+    assert not cv.lead_lag_term(X, 0, 21).any()
+    assert not cv.lead_lag_term(X, 3, 1).any()

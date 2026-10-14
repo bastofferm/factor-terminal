@@ -36,6 +36,7 @@ BLOCK_TITLES = {
     "volatility": "7. Volatility",
     "liquidity": "8. Liquidity & Stress",
     "arp": "9. Alternative Risk Premia",
+    "sector": "10. Equity Sector (role 'sector': a single stock adds only its own)",
 }
 
 HEADER = """# Factor Formulas

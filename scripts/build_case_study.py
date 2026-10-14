@@ -37,7 +37,6 @@ ORTH_SPEC = "88b9b8e7d5af77f185231d7c013f3075"
 RAW_SPEC = "a8d1454d32ea74fb103f8a7e8edafb3e"
 COV_WINDOW = 504          # matches run_risk
 SPECIFIC_FLOOR_ANN = 0.02
-SPECIFIC_SHRINK = 0.25
 
 DOCS = Path(__file__).resolve().parents[1] / "Documentation"
 FIGS = DOCS / "figures"
@@ -128,12 +127,14 @@ def load() -> dict:
                factor_risk_share, sigma_realized_ann, var95_pred, var99_pred,
                is_reliable, condition_number, max_vif
           FROM fact_risk_forecast
-         WHERE spec_id = %s AND instrument_id = %s
+         WHERE spec_id = %s AND instrument_id = %s AND cov_method = 'blend'
          ORDER BY as_of_date
     """
     q_bt = """
         SELECT * FROM fact_risk_backtest
-         WHERE spec_id = %s AND instrument_id = %s
+         WHERE spec_id = %s AND instrument_id = %s AND cov_method = 'blend'
+           AND horizon_days = 21
+         ORDER BY computed_at DESC LIMIT 1
     """
     q_load = """
         SELECT window_end, factor_id, beta, se, t_stat, p_value, vif
@@ -187,16 +188,6 @@ def load() -> dict:
         cur.execute("SELECT f.factor_id, b.block_id, b.name FROM ref_factor f "
                     "JOIN ref_factor_block b ON b.block_id = f.block_id")
         out["blocks"] = {r[0]: r[2] for r in cur.fetchall()}
-
-        # The peer variance the specific risk is shrunk toward, exactly as
-        # run_risk.peer_specific_variance computes it.
-        for key, spec in (("orth", ORTH_SPEC), ("raw", RAW_SPEC)):
-            cur.execute(
-                "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY resid_vol_ann) "
-                "FROM fact_regression_meta WHERE spec_id = %s "
-                "AND resid_vol_ann IS NOT NULL", (spec,))
-            row = cur.fetchone()
-            out[f"peer_{key}"] = float(row[0]) ** 2 if row and row[0] else float("nan")
     return out
 
 
@@ -222,12 +213,11 @@ def block_decomposition(d: dict, key: str) -> pd.DataFrame:
     res = cv.estimate(R, usable, method="blend", halflife=60.0)
     b = betas[usable].to_numpy(dtype=float)
 
+    # As run_risk assembles it: the window's residual variance, floored. The
+    # shrinkage toward a spec-wide peer median is gone from both - that median
+    # was taken over future windows and over whatever else shared the spec.
     spec_vol = float(d[f"meta_{key}"].loc[as_of, "resid_vol_ann"])
-    spec_var = spec_vol**2
-    peer = d[f"peer_{key}"]
-    if np.isfinite(peer):
-        spec_var = (1 - SPECIFIC_SHRINK) * spec_var + SPECIFIC_SHRINK * peer
-    spec_var = max(spec_var, SPECIFIC_FLOOR_ANN**2)
+    spec_var = max(spec_vol**2, SPECIFIC_FLOOR_ANN**2)
     rc = cv.risk_contributions(b, res.cov, spec_var)
 
     df = pd.DataFrame({"factor_id": usable, "rc": rc})

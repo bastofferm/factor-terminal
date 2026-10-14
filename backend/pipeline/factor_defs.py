@@ -4,10 +4,16 @@ Each definition is stored verbatim in ref_factor.construction (JSONB) so that a
 factor value can always be traced to the rule that produced it, and a change to a
 rule is visible as a version bump.
 
-Forty factors is a deliberate size. Broad enough to span the cross-asset exposures
+Forty core factors is a deliberate size. Broad enough to span the cross-asset exposures
 a multi-asset portfolio actually carries, small enough that a 252-day window still
 estimates them: the design already runs a condition number near 150 at forty, and
 doubling the count would put every window past the reliability gate.
+
+Eleven sector factors sit beside the forty with `role` 'sector'. They are not
+part of the default factor set - eleven more regressors on every window would undo
+the point above - and a single stock may add only its own sector's factor
+(`SECTOR_FACTORS` maps its GICS sector to it). Default sets, the overview and the
+covariance page read the 'core' role.
 
 `level` is the block hierarchy. Factors are built in ascending
 level order and residualised against the ids in `orth`, so global precedes regional,
@@ -238,7 +244,7 @@ FACTORS: list[dict] = [
     #    so a linear beta on them is only a first approximation.
     #
     #    No rates-vol factor: ^TYVIX was discontinued in 2020 and the warehouse
-    #    holds a single row. Realised TLT volatility is the available substitute.
+    #    holds a single row. A TLT volatility shock is the available substitute.
     # -----------------------------------------------------------------------
     {"id": "vol_equity", "block": "volatility", "name": "Equity Volatility (VIX futures)", "level": 1,
      "method": "single", "inputs": {"instrument": "VIXY"}, "orth": ["eq_global"],
@@ -250,10 +256,14 @@ FACTORS: list[dict] = [
      "note": "Daily payoff of a short variance position: yesterday's implied "
              "variance minus today's realised squared return."},
 
-    {"id": "vol_rates", "block": "volatility", "name": "Rates Volatility (realised)", "level": 1,
-     "method": "realized_vol_change", "inputs": {"scale_to_vol": STANDARDIZED_TARGET_VOL, "instrument": "TLT", "window": 21},
+    {"id": "vol_rates", "block": "volatility", "name": "Rates Volatility (surprise)", "level": 1,
+     "method": "abs_return_surprise",
+     "inputs": {"scale_to_vol": STANDARDIZED_TARGET_VOL, "instrument": "TLT", "halflife": 21},
      "orth": ["rt_us_level"],
-     "note": "Substitute for ^TYVIX, which CBOE discontinued in 2020."},
+     "note": "Substitute for ^TYVIX, which CBOE discontinued in 2020: TLT's absolute "
+             "return over yesterday's EWMA volatility forecast. Replaced the change "
+             "in a 21-day rolling volatility, half of whose variance was the squared "
+             "return leaving the window three weeks earlier."},
 
     # -----------------------------------------------------------------------
     # 8. Liquidity & Stress. Standardised daily changes plus a cross-asset
@@ -267,12 +277,15 @@ FACTORS: list[dict] = [
              "not comparable to the return-scaled factors."},
 
     {"id": "liq_conditions", "block": "liquidity", "name": "Financial Conditions (NFCI)", "level": 0,
-     "method": "level_transform", "inputs": {"scale_to_vol": STANDARDIZED_TARGET_VOL, "series": "FRED:NFCI",
-                "transform": "diff_std", "sparse": True},
+     "method": "level_transform", "inputs": {"scale_to_vol": STANDARDIZED_TARGET_VOL,
+                                             "series": "FRED:NFCI@release",
+                                             "transform": "diff_std", "sparse": True},
      "orth": [],
      "note": "Weekly series; the daily factor is zero between releases rather than "
              "forward-filled, since a forward fill would manufacture "
-             "information."},
+             "information. Each reading is the first release, on the Wednesday it "
+             "was published - not the Friday of the week it describes, which FRED "
+             "dates it by and which is five days before anyone knew it."},
 
     {"id": "liq_risk_off", "block": "liquidity", "name": "Cross-Asset Risk-Off", "level": 2,
      "method": "basket",
@@ -305,6 +318,53 @@ FACTORS: list[dict] = [
      "note": "Long the top third, short the bottom third by trailing return; "
              "dollar-neutral by construction."},
 ]
+
+
+# ---------------------------------------------------------------------------
+# 10. Equity Sector. One SPDR sector ETF per GICS sector, residualised against
+#     the market, the US market and the cyclical tilt, so what is left is the
+#     sector's own co-movement - the part that otherwise lands in a stock's
+#     specific risk, where a diagonal specific covariance treats it as
+#     diversifiable. Role 'sector': never in a default factor set; a single
+#     stock adds only its own.
+# ---------------------------------------------------------------------------
+SECTORS: list[tuple[str, str, str, str]] = [
+    # (factor id, ETF, GICS sector name as ref_security records it, label)
+    ("sec_tech", "XLK", "Information Technology", "Information Technology"),
+    ("sec_financials", "XLF", "Financials", "Financials"),
+    ("sec_health", "XLV", "Health Care", "Health Care"),
+    ("sec_industrials", "XLI", "Industrials", "Industrials"),
+    ("sec_discretionary", "XLY", "Consumer Discretionary", "Consumer Discretionary"),
+    ("sec_staples", "XLP", "Consumer Staples", "Consumer Staples"),
+    ("sec_energy", "XLE", "Energy", "Energy"),
+    ("sec_materials", "XLB", "Materials", "Materials"),
+    ("sec_utilities", "XLU", "Utilities", "Utilities"),
+    ("sec_real_estate", "XLRE", "Real Estate", "Real Estate"),
+    ("sec_communication", "XLC", "Communication Services", "Communication Services"),
+]
+
+FACTORS += [
+    {"id": fid, "block": "sector", "name": f"Sector: {label}", "level": 2,
+     "role": "sector", "method": "single", "inputs": {"instrument": etf},
+     "orth": ["eq_global", "eq_us", "eq_cyclical"],
+     "note": f"{etf} total return less cash, residualised against the market and the "
+             f"cyclical tilt. Enters a regression only for a {gics} stock, and only "
+             f"when the model agent finds it earns its place."
+             + (" XLRE starts in October 2015." if etf == "XLRE" else "")
+             + (" XLC starts in June 2018." if etf == "XLC" else "")}
+    for fid, etf, gics, label in SECTORS
+]
+
+# GICS sector -> the factor a stock in it may add.
+SECTOR_FACTORS: dict[str, str] = {gics: fid for fid, _, gics, _ in SECTORS}
+
+
+def role(f: dict) -> str:
+    return f.get("role", "core")
+
+
+def core() -> list[dict]:
+    return [f for f in FACTORS if role(f) == "core"]
 
 
 def by_id() -> dict[str, dict]:
