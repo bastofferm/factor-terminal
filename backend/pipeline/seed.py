@@ -61,6 +61,23 @@ NEW_FRED_SERIES: list[dict] = [
     {"series_id": "STLFSI4",  "name": "St. Louis Fed Financial Stress",   "category": "stress",    "transform": "diff"},
 ]
 
+# Weekly series that enter a factor on the day they were *published*, not on the
+# date FRED files them under. FRED dates an NFCI reading by the Friday that ends
+# its reference week; the Chicago Fed publishes it the following Wednesday. A
+# factor built on the FRED dates puts the change on the Friday, five days before
+# anyone could trade on it. These are fetched from ALFRED as first releases and
+# stored as '<FRED id>@release' under their publication dates.
+#
+# lag_days is the publication lag used for observations older than the series'
+# first ALFRED vintage, whose recorded release date is the vintage date - years
+# after the fact - and therefore says nothing about when they were known.
+RELEASE_TIMED_SERIES: list[dict] = [
+    {"series_id": "NFCI", "name": "Chicago Fed NFCI, first release on its publication date",
+     "category": "stress", "transform": "diff", "lag_days": 5},
+]
+
+RELEASE_SUFFIX = "@release"
+
 # ---------------------------------------------------------------------------
 # Yield curves. tenor_years drives the duration scaling that turns a yield change
 # into a synthetic bond return.

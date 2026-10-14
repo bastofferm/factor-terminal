@@ -14,7 +14,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app import db
-from backend.app.routers import chat, factors, loadings, matrix, meta, ops, raw, risk
+from backend.app.routers import (
+    agent, chat, factors, loadings, matrix, meta, ops, portfolio, raw, risk,
+)
 from backend.app.settings import get_settings
 
 
@@ -53,13 +55,21 @@ def create_app() -> FastAPI:
     app.include_router(raw.router, prefix="/api/raw", tags=["raw"])
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
     app.include_router(ops.router, prefix="/api/ops", tags=["ops"])
+    app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
+    app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"])
 
     @app.get("/api/health")
     async def health() -> dict:
         as_of = await db.fetchval("SELECT max(date) FROM fact_input_return")
-        n_factors = await db.fetchval(
-            "SELECT count(*) FROM ref_factor WHERE is_active")
-        return {"status": "ok", "as_of": as_of, "active_factors": n_factors}
+        # The model's factors: the core forty. The sector factors a single stock
+        # may add are counted separately rather than inflating "factors in nine
+        # blocks" - they are neither in a default set nor in those blocks.
+        rows = await db.fetch(
+            "SELECT role, count(*) AS n FROM ref_factor WHERE is_active GROUP BY role")
+        by_role = {r["role"]: r["n"] for r in rows}
+        return {"status": "ok", "as_of": as_of,
+                "active_factors": by_role.get("core", 0),
+                "sector_factors": by_role.get("sector", 0)}
 
     return app
 

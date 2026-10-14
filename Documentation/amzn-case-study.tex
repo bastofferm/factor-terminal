@@ -426,10 +426,12 @@ current on that day, the standardised series still has an excess kurtosis of
 correctly does not make it normal, and Amazon's is emphatically not.
 
 \begin{takeaway}
-Both panels also fail the Christoffersen conditional-coverage test, with $p$-values below 0.001: the breaches cluster. That
-is expected when a 21-day-horizon forecast is applied to daily returns, it is the
-same on both panels, and it is therefore not evidence about the panel choice --- but
-it is a limit of the forecast and is reported as one.
+Both panels also fail the Christoffersen conditional-coverage test, with $p$-values below 0.001: the breaches cluster. The
+cause is a forecast held for a month while volatility moves within it --- the
+methodology review measured that re-estimating the covariance daily, with the betas
+held, removes most of the clustering. It is the same on both panels and therefore
+not evidence about the panel choice, but it is a limit of this specification and is
+reported as one; the model agent searches the daily refresh as an option.
 \end{takeaway}
 
 The practical consequence is narrow and worth stating: use this model's volatility

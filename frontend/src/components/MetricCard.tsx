@@ -17,10 +17,27 @@
  * on the Loadings Lab as it does on Covariance & PCA.
  */
 
+import dynamic from "next/dynamic";
 import { ReactNode, useId, useState } from "react";
 import { Metric } from "@/lib/metrics";
 import { Tone } from "@/lib/verdict";
 import { useCountUp } from "@/hooks/useCountUp";
+
+// KaTeX is a few hundred kilobytes; it loads when a definition with a formula
+// is first opened, not with every page that shows a card.
+const Equation = dynamic(() => import("@/components/Math").then((m) => m.Equation),
+                         { ssr: false, loading: () => null });
+
+/** The computation, typeset - where the definition has one. */
+export function FormulaSection({ latex }: { latex?: string }) {
+  if (!latex) return null;
+  return (
+    <div className="mt-1.5">
+      <div className="text-2xs uppercase tracking-label text-muted">Formula</div>
+      <div className="mt-0.5 text-[12px]"><Equation latex={latex} plain={latex} /></div>
+    </div>
+  );
+}
 
 /**
  * Which edge the popover hangs from.
@@ -133,14 +150,17 @@ export function MetricCard({
           </div>
           <Section body={metric.what} />
           <Section head="How it is computed" body={metric.how} />
+          <FormulaSection latex={metric.formula} />
+          {metric.h0 && <Section head="Null hypothesis" body={metric.h0} />}
           <Section head="How to read it" body={metric.read} />
+          {metric.ref && <Section head="Source" body={metric.ref} />}
         </div>
       )}
     </div>
   );
 }
 
-function Section({ head, body }: { head?: string; body: string }) {
+export function Section({ head, body }: { head?: string; body: string }) {
   return (
     <div className="mt-1.5 first:mt-0">
       {head && (

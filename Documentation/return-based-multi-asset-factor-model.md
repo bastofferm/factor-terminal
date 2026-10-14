@@ -12,8 +12,12 @@ in full — is [factor-model-paper.pdf](factor-model-paper.pdf); rebuild it with
 both factor panels, with every chart and every quoted number generated from the
 database by `python -m scripts.build_case_study --pdf`.
 
-Panel as of 2026-09-11 · 40 factors in 9 blocks · 203 instruments · 53 level
-series · 200,072 factor observations from 2003-12-02 · 340 tests.
+Panel as of 2026-10-07 · 40 factors in 9 blocks, plus 11 sector factors · 254
+instruments · 51 level series · 200,958 factor observations from 2003-12-02, and
+56,466 for the sector factors · 517 tests. The October 2026
+[methodology review](methodology-review.md) and the [model agent](model-agent.md)
+supersede the numbers in §5.2 and the procedures in §6-7 where they differ; both
+are re-measured below.
 
 ---
 
@@ -153,8 +157,23 @@ keeps a loading interpretable — see §5.
 | Volatility | vol_equity, vol_rates, vol_variance_premium | 10.0 – 67.7% |
 | Liquidity & Stress | liq_conditions, liq_funding, liq_risk_off | 10.0 – 20.8% |
 | Alternative Risk Premia | arp_trend, arp_xs_momentum | 5.5 – 19.5% |
+| Equity Sector (role `sector`) | sec_tech, sec_financials, sec_health, sec_industrials, sec_discretionary, sec_staples, sec_energy, sec_materials, sec_utilities, sec_real_estate, sec_communication | 14.0 – 29.4% |
 
 Volatilities are of the **raw** series, before orthogonalisation.
+
+The eleven sector factors are not part of the forty. Each is a SPDR sector ETF
+residualised against `eq_global`, `eq_us` and `eq_cyclical` - 7.7 to 17.5%
+annualised once that is done - and none is in a default factor set: a single stock
+may add the factor of its own GICS sector, and the model agent decides whether it
+earns its place. What they buy is not visible in one stock's total risk but in
+portfolios (§7, and the [methodology review](methodology-review.md#portfolio-level-validation)).
+
+Two constructions were corrected in October 2026. `vol_rates` is a volatility
+surprise - TLT's absolute return over yesterday's EWMA forecast, less its normal
+mean - rather than the change in a 21-day rolling volatility, half of whose
+variance was the squared return leaving the window three weeks earlier.
+`liq_conditions` reads the NFCI as first published, on the Wednesday it was
+published, rather than on the Friday FRED files it under.
 
 ### Every construction, written out
 
@@ -286,32 +305,39 @@ exists to make visible.
 The argument for the hierarchy has until now been made from in-sample statistics —
 correlations, condition numbers, residual correlations. Being able to estimate both
 panels end to end turns it into an out-of-sample measurement. Identical settings
-(252-day window, monthly step, OLS, blend covariance, 21-day horizon) on US:AAPL:
-249 monthly windows each way, and 5,208 daily observations behind the VaR coverage
-test.
+(252-day window, monthly step, OLS, blend covariance, 21-day horizon) on US:AAPL,
+re-measured in October 2026 after the fixes the methodology review describes:
 
 | | Orthogonalised | Raw |
 |---|---|---|
-| Windows excluded as ill-conditioned | **0** of 249 | **16** of 249 |
-| Mean max VIF (worst) | 26 (90) | 822 (69,720) |
-| Mean condition number (worst) | 56 (134) | 142 (1,473) |
-| Mean adjusted R² in sample | 0.442 | 0.481 |
-| Bias ratio (target 1) | **0.964** | 0.884 |
-| Mincer-Zarnowitz slope (target 1) | **1.023** (p = 0.95) | **0.350** (p = 0.0003) |
-| Mincer-Zarnowitz R² | 0.134 | 0.055 |
-| VaR 95% breaches vs 260 expected | **248** (Kupiec p = 0.43) | 201 (Kupiec p = 0.0001) |
+| Windows excluded as ill-conditioned | **0** of 248 | 2 of 248 |
+| Mean max VIF (worst) | 25 (90) | 4,990 (230,726) |
+| Mean condition number, standardised (worst) | 16 (41) | 117 (1,451) |
+| Mean adjusted R² in sample | 0.441 | 0.481 |
+| Bias ratio (target 1) | 0.901 | 0.868 |
+| Mincer-Zarnowitz slope (target 1) | **0.93** (p = 0.69) | 0.33 (p = 0.0002) |
+| Mincer-Zarnowitz R² | 0.156 | 0.060 |
+| QLIKE, model against own EWMA volatility | 0.322 vs 0.290 (p = 0.16) | 0.372 vs 0.292 (**p = 0.015**) |
+| VaR 95% breaches | 208 of 260 (Kupiec p = 0.0006) | 199 of 258 (p = 0.0001) |
 
-The raw panel fits *better* in sample — adjusted R² 0.481 against 0.442 — and
-forecasts distinctly worse out of sample. That is the entire case for the
-orthogonalisation in two lines. A Mincer-Zarnowitz slope of 0.35 says the raw-panel
-forecast barely tracks the variation in realised risk: it produces roughly the right
-average level (bias 0.88) while getting individual periods wrong, which is exactly
-what unstable betas on a collinear design do. Its VaR is systematically too wide —
-201 breaches where 260 were expected — for the same reason.
+The raw panel fits *better* in sample — adjusted R² 0.481 against 0.441 — and
+forecasts distinctly worse out of it. A Mincer-Zarnowitz slope of 0.33 says the
+raw-panel forecast barely tracks the variation in realised risk, which is what
+unstable betas on a collinear design do, and its loss is significantly worse than
+the security's own EWMA volatility, which the orthogonalised panel's is not.
 
-Both panels fail Christoffersen (p < 0.0001): breaches cluster. That is a property
-of applying a 21-day-horizon forecast to daily returns and is the same on both, so
-it is not evidence about the panel choice.
+An earlier version of this table reported a bias ratio of 0.964 and 248 breaches
+for the orthogonalised panel, with Kupiec passing. Those figures depended on
+shrinking AAPL's specific risk toward the median of every window, past and future,
+of every security that happened to share the spec - bond ETFs and factor
+constituents among them. Without that look-ahead neither panel's VaR is
+calibrated as built: both over-forecast single-stock risk by about 10%, a third of
+it beta estimation noise. That is what the model agent's search addresses.
+
+Both panels fail Christoffersen (p < 0.0001): breaches cluster. The cause is a
+forecast held for a month while volatility moves within it; the review measured
+that refreshing the covariance daily removes most of the clustering. It is the
+same on both panels, so it is not evidence about the panel choice.
 
 The covariance matrix tells the same story from the other end. Same 39 factors, same
 sample (2015-01 to 2026-05, 2,794 days), same blend estimator:
@@ -350,9 +376,16 @@ saying *which* factor is responsible. This is the same treatment ARCH-LM gets in
 stationarity battery — recorded, never gated, where what it detects is a property of
 the design rather than a defect in it.
 
-The raw panel still loses 16 windows to the condition-number check, all of them in
-2002-03 where few factors yet existed. Nothing about relaxing the VIF rule makes it
-ungated: a window with a condition number of 610 is excluded on either panel.
+The raw panel still loses windows to the condition-number check. Nothing about
+relaxing the VIF rule makes it ungated.
+
+The condition number itself changed in October 2026. It was computed on centred but
+unscaled regressors, and the factors run from 1.4% to 68% annualised volatility, so
+an orthogonal design already scored about 50 and the figure correlated 0.86 with the
+spread of factor volatilities. It is now computed on standardised regressors, where
+it reads collinearity only: across every stored window the orthogonalised panel
+never exceeds 46, the raw panel's 90th percentile is 97, and the limit of 200
+catches the near-singular tail - 2 of AAPL's raw windows rather than 16.
 
 ### 5.4 Per factor, side by side
 
@@ -385,26 +418,32 @@ and moving. Both are shown rather than smoothed over.
 
 ## 6. Exposure estimation
 
-Rolling regression of an instrument's excess return on the factor panel. Every
-control that changes the answer is a user choice rather than a hard-coded constant,
-because each one is a modelling judgement and none has a default that is right for
-every instrument:
+Rolling regression of an instrument's excess return on the factor panel. None of
+the controls below has a default that is right for every instrument, so since
+October 2026 they are not chosen by hand: the [model agent](model-agent.md)
+searches them - with the risk half of the forecast - on a validation span, takes
+the simplest model the data cannot tell apart from the best to a held-out test
+span once, and gives a verdict. The controls remain, as an expert override:
 
 - **Estimation window** 63 – 756 days
 - **Roll-forward step** 1d / 1w / 1m / 3m / 6m
 - **Estimator** OLS, Huber (robust), or ridge
 - **Weighting** equal or exponentially decayed
 - **HAC lags** automatic or explicit
-- **Dimson lead-lag** 0–2, for instruments pricing after the factor close
+- **Dimson lead-lag** 0–2, for instruments pricing before the factor close, on
+  every factor or on the equity, style, FX and sector factors only
+- **Sector** the stock's own GICS sector factor, or none
 - **Winsorisation** optional at 1% / 99%
 
 Every parameter combination hashes to a `spec_id`, so re-requesting a view an
 analyst has already seen is a table read rather than several hundred regressions.
 
 Diagnostics stored per window: R², adjusted R², F and its p-value, RMSE, annualised
-residual volatility, Durbin-Watson, condition number, maximum VIF, Ljung-Box and
-ARCH-LM on the residuals, and the change in the loading vector since the previous
-window.
+residual volatility, Durbin-Watson, condition number (on standardised regressors),
+maximum VIF, Ljung-Box and ARCH-LM on the residuals, the change in the loading
+vector since the previous window - and the full HAC covariance of the betas, which
+the risk forecast needs to remove their estimation noise. Standard errors of
+weighted fits (EWMA, Huber) are those of the weighted problem.
 
 ### Beta stability
 
@@ -434,10 +473,37 @@ target, and a blend. Positive semi-definiteness is checked and, if needed, repai
 by eigenvalue clipping followed by a rescale that puts the factor volatilities back
 where they were — clipping alone inflates the diagonal and shifts every risk number.
 
-Specific risk is shrunk 25% toward the cross-sectional median and floored at 2%
-annualised: a single short or unusually quiet history should not produce a falsely
-precise idiosyncratic risk, and the floor is the model's admission that it cannot
-see every risk a security carries.
+Specific risk is the loading window's residual volatility, or - an option the
+agent searches - an EWMA of the out-of-sample residuals of the betas in force, each
+corrected by f′Vf for the beta noise it contains. It is floored at 2% annualised:
+the floor is the model's admission that it cannot see every risk a security
+carries. It used to be shrunk 25% toward a "cross-sectional median" that was in
+fact the median over every window, past and future, of whatever shared the spec;
+that is gone (see the [methodology review](methodology-review.md), finding 1).
+
+Systematic risk β′Σβ overstates the truth by tr(ΣV) when β is estimated with
+covariance V - about a sixth of the specific variance with forty factors on 252
+days. The forecast can subtract it. A forecast can also be refreshed daily, with
+the covariance and specific risk re-estimated each day and the betas held, and its
+VaR can use a Student t fitted to the security's own standardised returns.
+
+**Daily and h-day risk are different numbers.** Factors that close at different
+times - the euro and Japanese curves, a London ETF, Yahoo's FX fixes - put one
+day's shock into two days' returns. The daily covariance cannot see that and
+should not, but the variance of an h-day return contains it:
+h[Γ₀ + Σₗ(1 − l/h)(Γₗ + Γₗ′)]. Every forecast carries the daily volatility, from
+which VaR is read, and the h-day volatility, which adds the lead-lag term truncated
+at a chosen number of lags (`covariance.lead_lag_term`) and, for a Dimson model,
+uses the collapsed beta. The bias statistic and an h-day loss score the second
+against h-day returns.
+
+**Risk is also tested where it aggregates.** `backend/pipeline/run_portfolio.py`
+forecasts the risk of market, sector, within-sector pair, cross-sector and random
+portfolios of 54 large caps from the stocks' betas, the factor covariance and
+their specific risks, and scores those forecasts; with each stock's own sector
+factor the residuals of stocks in one sector stop co-moving and the sector, pair
+and cross-sector portfolios become calibrated (see the
+[methodology review](methodology-review.md#portfolio-level-validation)).
 
 **The covariance page is computed on the orthogonalised factors and must be.** The
 loadings are loadings on that set, and portfolio risk is β′Σβ, so Σ has to be the
@@ -457,6 +523,11 @@ Four tests, each answering a different question:
   test of α = 0, β = 1.
 - **Kupiec** — is the VaR exception *count* right?
 - **Christoffersen** — are the exceptions *independent*, or do they cluster?
+- **Against the naive forecast** — QLIKE loss of the model and of two forecasts that
+  need no factor model, the security's own EWMA volatility and a one-factor CAPM,
+  with a Diebold-Mariano test. A calibrated forecast that is significantly worse than
+  the security's own volatility has not earned its factors; before the October 2026
+  fixes that was the case for five of six single stocks since 2014.
 
 Kupiec and Christoffersen are both reported because they fail differently, and the
 second failure is the dangerous one: a model can have exactly the right number of
@@ -466,10 +537,10 @@ Forecasts built on ill-conditioned windows are stored, flagged and excluded from
 scoring. With forty factors on a 252-day window, a period where few factors yet
 existed leaves the design near-singular; AAPL produced a 360% predicted volatility
 that way, which then dominated the Mincer-Zarnowitz regression as a single leverage
-point. The gate is a condition number above 200 on either panel, plus a maximum VIF
-above 100 on the orthogonalised panel only — see §5.3 for why that half cannot apply
-to the raw one. It excludes about 3% of orthogonalised windows and 6% of raw ones,
-almost all in 2002–03.
+point. The gate is a condition number above 200, on standardised regressors, on
+either panel, plus a maximum VIF above 100 on the orthogonalised panel only — see
+§5.3 for why that half cannot apply to the raw one. On the current panel it excludes
+no orthogonalised window and under 2% of raw ones.
 
 ### A caveat on reading Mincer-Zarnowitz
 
@@ -486,6 +557,35 @@ regimes while the forecast refers to one. Measured on simulated data with a
 
 So a slope under 1 on real data is not by itself evidence that the model
 over-reacts. The application says so where the statistic is displayed.
+
+### A portfolio, not a security
+
+The Risk Lens's **Portfolio** view applies the same forecast to a weighted set of
+stocks and funds (`backend/pipeline/portfolio_risk.py`). Each holding is fitted
+with the specification that the portfolio validation calibrated: 252-day OLS
+refitted every 21 days on the orthogonalised panel, on its asset-class template.
+A stock adds its own sector factor and a sector fund adds its sector's. The fit is
+stored, so a holding is estimated once. With x = B′w, the forecast for day t+1 is
+
+  σ̂²_p = x′Σ̂_F x − Σᵢ wᵢ² tr(Σ̂_F Vᵢ) + Σᵢ wᵢ² σ̂²_ε,i
+
+with Σ̂_F a causal EWMA (half-life 42 days by default) and specific variances
+tracked from out-of-sample residuals. Its accuracy is measured with the portfolio
+scores of §9: on the portfolio's own returns, against its own EWMA volatility.
+Risk is decomposed by Euler contributions, by holding and by factor block. Against
+a benchmark fund the same forecast on the active weights gives the tracking error.
+
+The bias statistic is a standard deviation, so one month the forecast could not
+anticipate can carry it. For a global multi-asset fund portfolio the statistic is
+1.69. The block from 21 February 2020 alone contributes z = −17, and without it
+the statistic is 0.91. The view reports the worst block and the statistic without
+it beside the formal figure, not in its place.
+
+Funds are catalogued by what they represent (`backend/pipeline/funds.py`). A
+*broad market representative* stands for a whole market or asset class, and a
+*factor input* is a fund a factor is built from. A factor input among the holdings
+is flagged: its loadings restate the factor's recipe, though its risk still
+aggregates correctly.
 
 ---
 
@@ -543,6 +643,26 @@ results:
    matched, `count()` counted them, and one NaN turned an average over the whole
    column into NaN.
 
+The October 2026 [methodology review](methodology-review.md) found five more, by
+re-running the backtests against the database rather than by inspection:
+
+6. Specific risk was shrunk toward a median taken over future windows and over
+   unrelated securities sharing the spec. It made AAPL's VaR count pass Kupiec.
+7. A re-run of the risk backtest over the same sample refreshed the bias and
+   Mincer-Zarnowitz columns and kept the old VaR exception counts and tests.
+8. The block-attribution page paired the newest betas of any spec with whichever
+   covariance basis was toggled - β′Σβ on two different factor sets.
+9. Estimating a spec while a factor was blocked by the diagnostics changed the
+   spec's id after it had been stored: a foreign-key violation.
+10. The condition number measured the spread of factor volatilities rather than
+    collinearity, so a units convention moved the reliability gate.
+11. `liq_conditions` placed each NFCI change on the Friday ending its reference
+    week, five days before publication; on that dating it correlated −0.33 with the
+    equity returns of the week before anyone knew it.
+12. `vol_rates`' autocorrelation at lag 21 was −0.44: on TLT's thirty largest days
+    it read +4.2 standard deviations, and −3.5 three weeks later when the day left
+    its rolling window.
+
 ---
 
 ## 10. Limits
@@ -555,6 +675,13 @@ results:
 - **Short histories.** Style factors begin 2011–2013, `liq_funding` in 2018. Any
   window longer than the shortest factor's history silently drops it.
 - **No optimiser, no attribution, no macro state-space.**
+- **Portfolio validation is on one universe and one configuration.** Fifty-four
+  US large caps, the equity template with and without sector factors. The agent's
+  per-security choices are not yet aggregated.
+- **The lead-lag adjustment rests on few h-day returns.** A validation span holds
+  60 to 150 of them, so the lag count stays at zero unless the evidence is clear.
+- **Sector factors are US sector ETFs.** For a Tokyo stock they are a global
+  industry proxy, asynchronous to it and in the Dimson set for that reason.
 - **The model can only measure risks that have appeared in returns.** Derivatives,
   concentration and tail trades remain invisible, which is why residual risk has a
   floor and why model uncertainty is surfaced rather than hidden.
@@ -571,9 +698,12 @@ results:
 | Rolling regression | `backend/core/regression.py` |
 | Covariance | `backend/core/covariance.py` |
 | Forecast validation | `backend/core/risk.py` |
+| Portfolio validation | `backend/core/portfolio.py`, `backend/pipeline/run_portfolio.py` |
+| Portfolio risk view | `backend/pipeline/portfolio_risk.py`, `backend/pipeline/funds.py` |
+| Model agent | `backend/agent/` |
 | Density estimation | `backend/core/distribution.py` |
 | Factor definitions | `backend/pipeline/factor_defs.py` |
-| Schema | `sql/` (15 migrations) |
+| Schema | `sql/` (17 migrations) |
 | API | `backend/app/` |
 | Interface | `frontend/` (eight pages) |
 

@@ -1,8 +1,9 @@
 "use client";
 
 /**
- * Loadings Lab: estimate factor betas for one security under a chosen window,
- * roll-forward step and estimator, and inspect how stable they are.
+ * Loadings Lab: the model agent chooses a security's factor model - estimation and
+ * risk specification - and the page shows the betas it chose and how stable they
+ * are. The hand-set controls remain, collapsed, as an expert override.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -13,6 +14,7 @@ import { MetricCard, MetricStrip, alignFor } from "@/components/MetricCard";
 import { METRICS } from "@/lib/metrics";
 import { design } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
+import { ModelAgent } from "@/components/ModelAgent";
 
 const WINDOWS = [63, 126, 252, 504, 756];
 const STEPS = [
@@ -39,6 +41,10 @@ export default function LoadingsPage() {
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Where the betas on screen came from: the agent's choice, a hand-set
+  // specification, or the default shown before the agent has run.
+  const [source, setSource] = useState<"agent" | "manual" | "default">("default");
+  const [agentVerdict, setAgentVerdict] = useState<string | null>(null);
 
 
   /**
@@ -58,7 +64,30 @@ export default function LoadingsPage() {
     return () => window.clearInterval(id);
   }, [busy]);
 
-  const run = () => {
+  const show = (r: LoadingResult) => {
+    setResult(r);
+    // Default to the six most significant loadings in the latest window;
+    // forty lines at once is unreadable.
+    setShown(r.latest.loadings.slice(0, 6).map((l) => l.factor_id));
+    return api.stability(r.spec_id, r.instrument_id).catch(() => null);
+  };
+
+  /** The agent's chosen model, or - when it has never run here - the default. */
+  const onModel = (specId: string | null, detail: any) => {
+    setAgentVerdict(detail?.run?.verdict ?? null);
+    if (specId) {
+      setBusy(true); setError(null);
+      api.loadingsFor(specId, instrument)
+        .then((r) => { setSource("agent"); return show(r); })
+        .then(setStability)
+        .catch((e) => setError(String(e.message ?? e)))
+        .finally(() => setBusy(false));
+    } else {
+      run("default");
+    }
+  };
+
+  const run = (why: "manual" | "default" = "manual") => {
     setBusy(true); setError(null);
     api.estimate({
       instrument_id: instrument,
@@ -73,19 +102,11 @@ export default function LoadingsPage() {
       hac_lags: hacLags === "" ? null : Number(hacLags),
       orthogonalized,
     })
-      .then((r) => {
-        setResult(r);
-        // Default to the six most significant loadings in the latest window;
-        // forty lines at once is unreadable.
-        setShown(r.latest.loadings.slice(0, 6).map((l) => l.factor_id));
-        return api.stability(r.spec_id, instrument).catch(() => null);
-      })
+      .then((r) => { setSource(why); return show(r); })
       .then(setStability)
       .catch((e) => setError(String(e.message ?? e)))
       .finally(() => setBusy(false));
   };
-
-  useEffect(run, []);
 
   const meta = result?.diagnostics ?? [];
   const latestMeta = meta[meta.length - 1] as any;
@@ -143,12 +164,20 @@ export default function LoadingsPage() {
   return (
     <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
       <aside className="space-y-3">
-        <Panel title="Estimation">
-          <div className="space-y-2.5">
-            <div>
-              <label className="label">Security</label>
-              <SecuritySearch value={instrument} onChange={setInstrument} />
-            </div>
+        <Panel title="Security">
+          <SecuritySearch value={instrument} onChange={setInstrument} />
+        </Panel>
+
+        {/*
+          The hand-set specification. The agent makes these choices now; they stay
+          available, collapsed, so a specific specification can still be reproduced
+          or inspected - and what is on screen says which of the two produced it.
+        */}
+        <details className="rounded border border-line bg-panel px-4 py-3">
+          <summary className="cursor-pointer text-2xs font-semibold uppercase tracking-label text-muted">
+            Expert override
+          </summary>
+          <div className="mt-2.5 space-y-2.5">
 
             {/*
               Which factor panel the regression reads. This is the most consequential
@@ -265,13 +294,13 @@ export default function LoadingsPage() {
               Winsorise returns at 1% / 99%
             </label>
 
-            <button className="btn w-full" onClick={run} disabled={busy}>
+            <button className="btn w-full" onClick={() => run("manual")} disabled={busy}>
               {busy
                 ? elapsed > 2 ? `Estimating… ${elapsed}s` : "Estimating…"
-                : "Estimate"}
+                : "Estimate this specification"}
             </button>
           </div>
-        </Panel>
+        </details>
 
         {result && (
           <Panel title="Factors shown" caption="Ordered by significance in the latest window.">
@@ -301,6 +330,18 @@ export default function LoadingsPage() {
       </aside>
 
       <div className="space-y-4">
+        <ModelAgent instrument={instrument} onModel={onModel} />
+
+        {result && (
+          <p className="text-[11px] text-muted">
+            {source === "agent"
+              ? <>Showing the model the agent chose{agentVerdict ? ` (verdict: ${agentVerdict.replace(/_/g, " ").toLowerCase()})` : ""}: <span className="font-mono">{(result.spec as any)?.name ?? result.spec_id.slice(0, 8)}</span>.</>
+              : source === "manual"
+                ? <>Showing a hand-set specification from the expert override: <span className="font-mono">{(result.spec as any)?.name}</span>.</>
+                : <>The agent has not run for this security yet; showing the default specification. Run the agent to choose one.</>}
+          </p>
+        )}
+
         {error && (
           <div className="rounded border border-fail/30 bg-fail/5 p-3 text-[12px] text-fail">
             {error}

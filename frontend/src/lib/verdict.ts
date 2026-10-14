@@ -184,8 +184,9 @@ export const design = {
   },
 
   /**
-   * Condition number of the design. The invariant that governs how far beta'
-   * Sigma beta can blow up, so it means the same thing on either panel.
+   * Condition number of the design, on standardised regressors - collinearity
+   * only. Computed on the raw columns it mostly measured how far apart the factor
+   * volatilities are, so it means the same thing on either panel only now.
    */
   conditionNumber: (v: number | null | undefined): Assessment => {
     const x = p(v);
@@ -286,6 +287,23 @@ export const backtest = {
     return { tone: "warn", reason: "level only — little timing ability" };
   },
 
+  /**
+   * The model against the security's own EWMA volatility - the naive forecast a
+   * factor model has to beat to earn its factors. Signed Diebold-Mariano: losing
+   * significantly is red, because it is the one comparison that says the factors
+   * are costing accuracy; a tie is plain.
+   */
+  benchmark: (t: number | null | undefined, pv: number | null | undefined): Assessment => {
+    const x = p(t), q = p(pv);
+    if (x === null || q === null) return { tone: "neutral", reason: "not computed" };
+    if (q < SIG) {
+      return x < 0
+        ? { tone: "good", reason: "beats the security's own EWMA volatility" }
+        : { tone: "bad", reason: "loses to the security's own EWMA volatility" };
+    }
+    return { tone: "neutral", reason: "indistinguishable from own EWMA" };
+  },
+
   /** Kupiec: is the *number* of VaR breaches right? */
   kupiec: (v: number | null | undefined): Assessment => {
     const x = p(v);
@@ -328,3 +346,25 @@ export function bySign(v: number | null | undefined): Tone {
   if (v < 0) return "bad";
   return "neutral";
 }
+
+
+// ---------------------------------------------------------------------------
+// the model agent
+// ---------------------------------------------------------------------------
+
+export const agent = {
+  /** The verdict on the held-out test span. Caveats are amber: usable, read them. */
+  verdict: (v: string | null | undefined): Assessment => {
+    if (v === "PASS") return { tone: "good", reason: "passes every gate on the held-out span" };
+    if (v === "PASS_WITH_CAVEATS") return { tone: "warn", reason: "usable - read the flagged gates" };
+    if (v === "FAIL") return { tone: "bad", reason: "not fit to forecast with" };
+    if (v === "INSUFFICIENT_DATA") return { tone: "neutral", reason: "too little history to judge" };
+    return { tone: "neutral", reason: "no verdict yet" };
+  },
+
+  /** One gate: a hard failure is red, a calibration flag amber. */
+  gate: (status: string): Assessment =>
+    status === "pass" ? { tone: "good", reason: "pass" }
+    : status === "flag" ? { tone: "warn", reason: "caveat" }
+    : { tone: "bad", reason: "fail" },
+};

@@ -34,6 +34,10 @@ _CORE_MODULES: list[tuple[str, str]] = [
     ("backend.core.regression", "Factor-loading estimation"),
     ("backend.core.covariance", "Factor covariance and specific risk"),
     ("backend.core.risk", "Out-of-sample validation of the risk forecast"),
+    ("backend.core.selection", "Choosing among fitted models, and the verdict"),
+    ("backend.agent.graph", "The model agent"),
+    ("backend.agent.evaluate", "How the model agent scores a candidate"),
+    ("backend.core.portfolio", "Portfolio-level validation: does the risk aggregate?"),
     ("backend.core.distribution", "Density estimation for return distributions"),
 ]
 
@@ -97,10 +101,19 @@ THE PAGES
   instruments underneath it, before the model touches them.
 - Covariance & PCA: the factor correlation matrix, its eigen-diagnostics, and
   rolling pairwise correlation, on either panel.
-- Loadings Lab: rolling factor betas for one security, under a chosen estimation
-  window, roll-forward step, estimator and panel.
+- Loadings Lab: the model agent and the betas it chose for one security. The agent
+  searches estimation and risk specifications on a validation span (a language
+  model proposing candidates, code fitting and scoring them), keeps the model
+  confidence set, takes its simplest member to a held-out test span once and gives
+  a verdict. The hand-set controls (window, step, estimator, panel, ...) remain
+  under "Expert override".
 - Risk Lens: predicted versus realised risk for one security, with the full
-  backtest — bias statistic, Mincer-Zarnowitz, and VaR coverage.
+  backtest — bias statistic, Mincer-Zarnowitz, and VaR coverage. Its Portfolio
+  view runs the model on a portfolio of stocks and funds (pre-defined, sector,
+  fund portfolios, or built by hand with funds filtered to broad market
+  representatives): each holding fitted once on its asset-class template, the
+  forecast backtested on the portfolio's own returns, risk decomposed by holding
+  and factor block, and the tracking error against a benchmark fund.
 - Operations: the refresh chain stage by stage, what each stage reads and
   writes, and the layer-by-layer state of the warehouse.
 - Data Health: staleness per input, dead instruments, pipeline runs, diagnostic
@@ -132,6 +145,12 @@ two months and cannot feed a daily model. They are kept only to confirm the
 in-house constructions measure what their names claim: eq_global against Mkt-RF
 correlates 0.96, eq_size against SMB 0.93, sty_momentum against Mom 0.62, and
 value against momentum reproduces their well-known negative correlation.
+
+Every risk forecast is compared with the security's own EWMA volatility and a
+one-factor CAPM, by QLIKE loss and a Diebold-Mariano test. A calibrated forecast
+that is significantly worse than the security's own volatility has not earned its
+factors; the October 2026 methodology review found that had been the case for
+five of six single stocks since 2014, before its fixes.
 
 Ill-conditioned windows are excluded from risk scoring. With forty factors on a
 252-day window, a period where few factors yet existed leaves the design

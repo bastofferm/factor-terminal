@@ -20,6 +20,9 @@ statsmodels==0.14.4     # adfuller, kpss, acorr_ljungbox, het_arch, OLS with HAC
 arch==7.2.0             # unitroot.{ADF,KPSS,PhillipsPerron,ZivotAndrews,VarianceRatio}
 scikit-learn==1.6.0     # Ridge/ElasticNet CV, hierarchical clustering for heatmap order
 
+# --- the model agent ---
+langgraph==1.2.12       # the estimate -> validate -> re-estimate state machine
+
 # --- ingestion ---
 yfinance==1.5.1          # 0.2.x no longer works against Yahoo's current API
 httpx==0.28.1

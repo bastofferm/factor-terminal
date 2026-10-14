@@ -202,17 +202,21 @@ def mincer_zarnowitz(predicted: np.ndarray, realized: np.ndarray,
 # ---------------------------------------------------------------------------
 
 def value_at_risk(predicted_vol_ann: np.ndarray, level: float = 0.95,
-                  distribution: str = "normal", df: float = 5.0) -> np.ndarray:
+                  distribution: str = "normal",
+                  df: float | np.ndarray = 5.0) -> np.ndarray:
     """One-day VaR as a positive loss threshold.
 
     The Student-t option exists because daily returns are fat-tailed: a normal VaR
     at 99% is systematically breached too often, which the Kupiec test will show.
     The t quantile is rescaled to unit variance so the two options are comparable.
+    `df` may be an array aligned with the forecasts, so a degrees-of-freedom
+    estimate that is itself updated through time can be used without lookahead.
     """
     sigma_daily = np.asarray(predicted_vol_ann, dtype=float) / np.sqrt(TRADING_DAYS)
     if distribution == "normal":
         q = stats.norm.ppf(1.0 - level)
     elif distribution == "t":
+        df = np.asarray(df, dtype=float)
         q = stats.t.ppf(1.0 - level, df) / np.sqrt(df / (df - 2.0))
     else:
         raise ValueError(f"unknown distribution {distribution!r}")
@@ -301,10 +305,11 @@ def christoffersen(breaches: np.ndarray, level: float) -> tuple[float, float]:
 
 
 def coverage_test(returns: np.ndarray, predicted_vol_ann: np.ndarray,
-                  level: float = 0.95, distribution: str = "normal") -> CoverageTest:
+                  level: float = 0.95, distribution: str = "normal",
+                  df: float | np.ndarray = 5.0) -> CoverageTest:
     """Count VaR breaches and run both coverage tests."""
     r = np.asarray(returns, dtype=float)
-    var = value_at_risk(predicted_vol_ann, level, distribution)
+    var = value_at_risk(predicted_vol_ann, level, distribution, df)
     ok = np.isfinite(r) & np.isfinite(var) & (var > 0)
 
     out = CoverageTest(level=level, n=int(ok.sum()))
@@ -317,3 +322,134 @@ def coverage_test(returns: np.ndarray, predicted_vol_ann: np.ndarray,
     out.kupiec_stat, out.kupiec_p = kupiec_pof(out.exceptions, out.n, level)
     out.christoffersen_stat, out.christoffersen_p = christoffersen(breaches, level)
     return out
+
+
+# ---------------------------------------------------------------------------
+# comparing forecasts: loss, benchmarks, and whether a difference is real
+# ---------------------------------------------------------------------------
+
+def overlap_hac_lags(n: int, horizon: int, step: int) -> int:
+    """HAC lags for a statistic built on forecasts whose outcome windows overlap.
+
+    A forecast every `step` days scored against the next `horizon` days shares
+    horizon/step - 1 neighbours' outcomes, which induces a moving-average error of
+    that order. Newey-West's automatic rule knows nothing about it: with a daily
+    step and a 21-day horizon it picked five lags for a twenty-lag overlap and
+    understated every standard error. The larger of the two is used.
+    """
+    overlap = int(np.ceil(max(int(horizon), 1) / max(int(step), 1))) - 1
+    from backend.core.regression import newey_west_lags
+    return max(newey_west_lags(n), overlap)
+
+
+def qlike(predicted_vol: np.ndarray, realized_vol: np.ndarray) -> np.ndarray:
+    """Per-observation QLIKE loss of a volatility forecast, on variances.
+
+        L = x - ln(x) - 1,   x = realised^2 / predicted^2
+
+    Zero when the forecast is exact and positive otherwise. It is the loss Patton
+    (2011) showed ranks variance forecasts consistently even when the realised
+    variance it is scored against is a noisy proxy - which a 21-day sample
+    variance is - and, unlike squared error, it is not dominated by the handful of
+    crisis months whose variance dwarfs everything else. NaN where either side is
+    missing or non-positive.
+    """
+    p = np.asarray(predicted_vol, dtype=float)
+    a = np.asarray(realized_vol, dtype=float)
+    out = np.full(np.broadcast(p, a).shape, np.nan)
+    ok = np.isfinite(p) & np.isfinite(a) & (p > 0) & (a > 0)
+    x = (a[ok] / p[ok]) ** 2
+    out[ok] = x - np.log(x) - 1.0
+    return out
+
+
+@dataclass
+class DieboldMariano:
+    """Is forecast A's loss different from forecast B's, beyond noise?"""
+
+    n: int = 0
+    mean_diff: float = np.nan      # mean(L_a - L_b); negative means A is better
+    t_stat: float = np.nan
+    p_value: float = np.nan        # two-sided
+    lags: int = 0
+
+
+def diebold_mariano(loss_a: np.ndarray, loss_b: np.ndarray,
+                    lags: int | None = None) -> DieboldMariano:
+    """Diebold-Mariano test of equal predictive accuracy.
+
+    The loss differential is serially correlated whenever the outcome windows
+    overlap, so its variance is the Bartlett long-run variance, not the sample
+    variance. The statistic is compared with a normal; p is two-sided. Rows where
+    either loss is missing are dropped pairwise.
+    """
+    d = np.asarray(loss_a, dtype=float) - np.asarray(loss_b, dtype=float)
+    d = d[np.isfinite(d)]
+    out = DieboldMariano(n=int(d.size))
+    if d.size < 10:
+        return out
+    from backend.core.regression import newey_west_lags
+    L = newey_west_lags(d.size) if lags is None else int(lags)
+    dc = d - d.mean()
+    lrv = float(dc @ dc) / d.size
+    for k in range(1, min(L, d.size - 1) + 1):
+        lrv += 2.0 * (1.0 - k / (L + 1.0)) * float(dc[k:] @ dc[:-k]) / d.size
+    out.mean_diff, out.lags = float(d.mean()), L
+    if lrv <= 0:
+        # Identical losses: no evidence either way, which is p = 1, not an error.
+        out.t_stat, out.p_value = 0.0, 1.0
+        return out
+    out.t_stat = float(d.mean() / np.sqrt(lrv / d.size))
+    out.p_value = float(2.0 * (1.0 - stats.norm.cdf(abs(out.t_stat))))
+    return out
+
+
+def ewma_volatility(returns: np.ndarray, halflife: float, min_obs: int = 60,
+                    annualize: bool = True) -> np.ndarray:
+    """Causal zero-mean EWMA volatility: element t uses returns up to and including t.
+
+    The naive benchmark every factor forecast has to beat. RiskMetrics drops the
+    mean because over a day it is noise; the recursion starts from the average
+    square of the first `min_obs` returns and reports NaN until then, so there is
+    no burn-in value pretending to be a forecast. Missing returns leave the
+    estimate unchanged rather than decaying it toward zero.
+    """
+    r = np.asarray(returns, dtype=float)
+    n = r.size
+    out = np.full(n, np.nan)
+    lam = 0.5 ** (1.0 / float(halflife))
+    finite = np.flatnonzero(np.isfinite(r))
+    if finite.size < min_obs:
+        return out
+    start = finite[min_obs - 1]
+    var = float(np.mean(r[finite[:min_obs]] ** 2))
+    out[start] = var
+    for t in range(start + 1, n):
+        if np.isfinite(r[t]):
+            var = lam * var + (1.0 - lam) * r[t] ** 2
+        out[t] = var
+    scale = TRADING_DAYS if annualize else 1.0
+    return np.sqrt(out * scale)
+
+
+def estimate_t_df(z: np.ndarray, lo: float = 3.0, hi: float = 30.0) -> float:
+    """Maximum-likelihood degrees of freedom of a unit-variance Student t.
+
+    `z` should be returns divided by their own volatility forecast, so the fitted
+    tail is what remains after the volatility timing has been removed. Bounded
+    below at 3, where the variance still exists, and above at 30, beyond which the
+    t is indistinguishable from the normal on any sample this model sees. Returns
+    NaN with fewer than 100 observations.
+    """
+    x = np.asarray(z, dtype=float)
+    x = x[np.isfinite(x)]
+    if x.size < 100:
+        return np.nan
+    from scipy.optimize import minimize_scalar
+
+    def nll(nu: float) -> float:
+        s = np.sqrt((nu - 2.0) / nu)
+        return -float(np.sum(stats.t.logpdf(x / s, nu) - np.log(s)))
+
+    res = minimize_scalar(nll, bounds=(lo, hi), method="bounded")
+    return float(res.x)

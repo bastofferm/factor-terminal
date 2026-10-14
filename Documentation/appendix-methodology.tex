@@ -160,6 +160,30 @@ than penalised. A short window over such a factor holds few releases, so it warn
 instead of failing, with the reason directing the reader to the full-history
 diagnostic where power is adequate.
 
+A release factor is dated by its \emph{publication}, not by the period it
+describes. FRED files an NFCI reading under the Friday ending its reference week;
+the Chicago Fed publishes it the following Wednesday. The series is therefore read
+from ALFRED as first releases, each placed on the day it was published and rolled
+to the next trading day over a holiday; observations older than the first vintage
+are placed five days after their reference date. On the Friday dating the factor's
+changes correlated $-0.33$ with the five days of equity returns before
+publication; on the publication dating, $-0.11$.
+
+\subsubsection{Volatility surprise}
+
+A volatility factor without a traded series (\code{vol\_rates}) is
+
+\begin{empheq}[box=\eqbox]{equation}
+f_t \;=\; \frac{\lvert r_t\rvert}{s_{t-1}} - \sqrt{2/\pi},
+\qquad
+s_t^2 = \lambda s_{t-1}^2 + (1-\lambda)\,r_t^2,\quad \lambda = 0.5^{1/21},
+\end{empheq}
+
+zero in expectation when the forecast is right. The daily change in a 21-day
+rolling volatility, which it replaced, moves by
+$(r_t^2 - r_{t-21}^2)/21$ to first order: half of it is the squared return leaving
+the window, an echo with autocorrelation $-0.44$ at lag 21.
+
 % ---------------------------------------------------------------------
 \subsection{Regression}
 \label{app:regression}
@@ -399,14 +423,40 @@ repair is recorded on the result rather than applied silently.
 
 \begin{empheq}[box=\eqbox]{equation}
 \sigma^2_\varepsilon \;=\; \max\!\left\{\sigma^2_{\mathrm{floor}},\;
-(1-k)\,\mathrm{EWMA}_H\!\left[\varepsilon_t^2\right] \cdot 252 \;+\; k\,\sigma^2_{\mathrm{peer}}\right\},
+\hat\sigma^2_\varepsilon\right\},
 \end{empheq}
 
-with $H = 60$ days, $k = 0.25$, and $\sigma_{\mathrm{floor}} = 2\%$ annualised. The
-peer variance is the cross-sectional median residual volatility across every
-instrument estimated under the same specification, squared. Both the raw and the
+with $\sigma_{\mathrm{floor}} = 2\%$ annualised. $\hat\sigma^2_\varepsilon$ is the
+loading window's residual variance (degrees-of-freedom corrected) or
+$\mathrm{EWMA}_H\!\left[e_t^2 - f_t^{\prime}Vf_t\right]\cdot 252$ over the out-of-sample
+residuals $e_t$ of the betas in force, the correction removing the beta estimation
+noise each residual contains. A shrinkage toward the median of every specification's
+windows --- past and future, over unrelated securities --- was removed in October 2026. Both the raw and the
 floored values are returned, along with a flag recording whether the floor bound,
 so that a floored number is never mistaken for a measured one.
+
+\subsubsection{Lead-lag covariance}
+
+Markets closing at different times put one day's common shock into two days'
+returns. The variance of an $h$-day sum is exactly
+$h\bigl[\Gamma_0 + \sum_{l=1}^{h-1}(1 - l/h)(\Gamma_l + \Gamma_l^{\prime})\bigr]$,
+$\Gamma_l = \mathrm{E}[(f_t-\mu)(f_{t-l}-\mu)^{\prime}]$. The $h$-day factor
+covariance, per day, is
+
+\begin{empheq}[box=\eqbox]{equation}
+\Sigma_F^{(h)} \;=\; \Sigma_F \;+\; \sum_{l=1}^{L}\Bigl(1 - \tfrac{l}{h}\Bigr)
+\bigl(\hat\Gamma_l + \hat\Gamma_l^{\prime}\bigr),
+\end{empheq}
+
+with $\hat\Gamma_l$ weighted as the method weights its own sample (EWMA weights by
+the age of $t$, equal weights, or the blend's mixture), estimated only from pairs
+of complete adjacent days, and the sum repaired to positive semi-definite because
+truncation at $L$ loses the guarantee of the full Bartlett sum. $\Sigma_F$ alone
+remains the covariance of a \emph{daily} return and VaR is read from it. For a
+Dimson design the $h$-day forecast uses the collapsed beta
+$\sum_l b_l$, whose cross-lag terms belong to a multi-day return. $L$ is chosen by
+the model agent after its search, as the fewest lags whose validation $h$-day loss
+is within one standard error of the best.
 
 \subsubsection{Assembly and attribution}
 
@@ -433,6 +483,27 @@ window ending at or before $t$ and a covariance estimated on returns up to $t$. 
 forward window is constructed by an explicit shift rather than by a rolling operation
 with a default alignment, because an off-by-one in this direction is lookahead and
 produces a flatteringly good result.
+
+\subsubsection{Portfolio aggregation}
+
+For portfolio weights $w$ over stocks with betas $B_t$ (zero where a stock has no
+exposure), held from each stock's latest window ending at or before $t$,
+
+\begin{empheq}[box=\eqbox]{equation}
+\hat\sigma^2_{p,t+1} \;=\; w^{\prime}B_t\,\Sigma_{F,t}\,B_t^{\prime}w
+\;-\; \sum_i w_i^2\,\mathrm{tr}\bigl(\Sigma_{F,t}V_{i,t}\bigr)
+\;+\; \sum_i w_i^2\,\hat\sigma^2_{\varepsilon,i,t},
+\end{empheq}
+
+with $\Sigma_{F,t}$ a causal EWMA over pairs of observed factors, so a factor that
+starts late enters each pair from its first common day. Each portfolio is scored
+like a security: the standard deviation of $r_{p,t+1}/\hat\sigma_{p,t}$, daily
+QLIKE against the portfolio's own EWMA volatility, Kupiec at 99\% with a normal and
+with a Student $t$ fitted every $h$ days to the trailing 756 standardised returns,
+and the bias statistic on non-overlapping $h$-day returns. The out-of-sample
+residuals $e_{i,t+1} = r_{i,t+1} - b_{i,t}^{\prime}f_{t+1}$ are summarised by
+their mean pairwise correlation within and across sectors and by the principal
+components of the standardised residual panel.
 
 \subsubsection{Bias statistics}
 

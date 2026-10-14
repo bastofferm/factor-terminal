@@ -30,6 +30,7 @@ export const BLOCKS: Record<string, BlockStyle> = {
   volatility: { id: "volatility", label: "Volatility",  colour: "#8C3A5E", tint: "#8C3A5E14" },
   liquidity:  { id: "liquidity",  label: "Liquidity",   colour: "#3E7A8C", tint: "#3E7A8C14" },
   arp:        { id: "arp",        label: "Alt. Premia", colour: "#5B7A3A", tint: "#5B7A3A14" },
+  sector:     { id: "sector",     label: "Sector",      colour: "#4A6E9E", tint: "#4A6E9E14" },
 };
 
 const FALLBACK: BlockStyle = {
@@ -47,7 +48,7 @@ export function blockColour(blockId: string | null | undefined): string {
 /** Block order for anything that groups by block, matching ref_factor_block.sort_order. */
 export const BLOCK_ORDER = [
   "equity", "style", "rates", "credit", "fx",
-  "commodity", "volatility", "liquidity", "arp",
+  "commodity", "volatility", "liquidity", "arp", "sector",
 ];
 
 /**

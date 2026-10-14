@@ -43,6 +43,10 @@ class Regression:
     vif: np.ndarray = field(default_factory=lambda: np.array([]))
 
     n_obs: int = 0
+    edf: float = np.nan
+    """Effective number of slopes: k for least squares and Huber, the trace of the
+    hat matrix (less the intercept) for ridge. What 'simpler' means when models
+    are compared."""
     r2: float = np.nan
     adj_r2: float = np.nan
     f_stat: float = np.nan
@@ -56,6 +60,14 @@ class Regression:
     arch_lm_resid_p: float = np.nan
 
     residuals: np.ndarray = field(default_factory=lambda: np.array([]))
+
+    cov_beta: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)))
+    """HAC covariance of the slopes, in the units of the betas themselves.
+
+    Kept because a risk forecast built from noisy betas is biased upward:
+    E[b_hat' S b_hat] = b' S b + tr(S V). Removing that term needs V, not only
+    its diagonal, so the whole matrix travels with the fit.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -72,15 +84,19 @@ def newey_west_lags(n_obs: int) -> int:
     return int(np.floor(4.0 * (max(n_obs, 1) / 100.0) ** (2.0 / 9.0)))
 
 
-def newey_west_cov(X: np.ndarray, resid: np.ndarray, lags: int) -> np.ndarray:
+def newey_west_cov(X: np.ndarray, resid: np.ndarray, lags: int,
+                   penalty: np.ndarray | None = None) -> np.ndarray:
     """HAC sandwich covariance with Bartlett (triangular) weights.
 
-        V = (X'X)^-1 [S0 + sum_l w_l (Gamma_l + Gamma_l')] (X'X)^-1
+        V = (X'X + P)^-1 [S0 + sum_l w_l (Gamma_l + Gamma_l')] (X'X + P)^-1
 
     Bartlett weights guarantee a positive semi-definite result, which a truncated
-    (unweighted) kernel does not.
+    (unweighted) kernel does not. `penalty` is the ridge matrix P; ridge shrinks
+    the sampling variance of the slopes as well as their level, and the bread has
+    to say so or the variance is that of the unpenalised fit.
     """
-    xtx_inv = np.linalg.pinv(X.T @ X)
+    xtx = X.T @ X
+    xtx_inv = np.linalg.pinv(xtx if penalty is None else xtx + penalty)
     scores = resid[:, None] * X
     S = scores.T @ scores
     for lag in range(1, max(lags, 0) + 1):
@@ -177,10 +193,12 @@ def fit(
         return coef
 
     coef = _weighted_solve(w)
+    w_final = w
     if estimator == "huber":
         for _ in range(HUBER_ITERATIONS):
             resid = y - design @ coef
-            coef = _weighted_solve(w * _huber_weights(resid))
+            w_final = w * _huber_weights(resid)
+            coef = _weighted_solve(w_final)
 
     resid = y - design @ coef
     out.residuals = resid
@@ -188,8 +206,29 @@ def fit(
     out.betas = coef[1:].copy()
 
     # --- inference -------------------------------------------------------
+    # The sandwich has to be built on the problem that was actually solved. A
+    # weighted fit is least squares on sqrt(w)-scaled rows, so the bread is X'WX
+    # and the scores are w * e * x. Handing the unweighted design to
+    # newey_west_cov instead gave EWMA and Huber specs the standard errors of a
+    # regression nobody ran. With unit weights the two coincide.
     lags = newey_west_lags(n) if hac_lags is None else int(hac_lags)
-    V = newey_west_cov(design, resid, lags)
+    sw = np.sqrt(w_final)
+    Xw = design * sw[:, None]
+    P = None
+    if ridge_lambda > 0:
+        sd = np.std(X, axis=0, ddof=1)
+        sd = np.where(sd > 0, sd, 1.0)
+        P = np.diag(np.concatenate([[0.0], ridge_lambda * sd**2])) * n
+    V = newey_west_cov(Xw, resid * sw, lags, penalty=P)
+    out.cov_beta = V[1:, 1:].copy()
+
+    out.edf = float(k)
+    if P is not None:
+        try:
+            H = Xw.T @ Xw
+            out.edf = float(np.trace(np.linalg.solve(H + P, H))) - 1.0
+        except np.linalg.LinAlgError:
+            pass
     se_all = np.sqrt(np.maximum(np.diag(V), 0.0))
     out.se_alpha = float(se_all[0]) * (TRADING_DAYS if annualize_alpha else 1.0)
     out.se = se_all[1:]
@@ -216,12 +255,7 @@ def fit(
     dr = np.diff(resid)
     out.durbin_watson = float(np.sum(dr**2) / ss_res) if ss_res > 0 else np.nan
 
-    try:
-        Xc = X - X.mean(axis=0)
-        sv = np.linalg.svd(Xc, compute_uv=False)
-        out.condition_number = float(sv[0] / sv[-1]) if sv[-1] > 0 else np.inf
-    except np.linalg.LinAlgError:
-        out.condition_number = np.nan
+    out.condition_number = condition_number(X)
 
     out.vif = _vif(X)
     finite_vif = out.vif[np.isfinite(out.vif)]
@@ -237,6 +271,37 @@ def fit(
             pass
 
     return out
+
+
+def condition_number(X: np.ndarray) -> float:
+    """Condition number of the design, on standardised regressors.
+
+    Columns are centred and divided by their own standard deviation before the
+    singular values are taken, so the number measures collinearity and nothing
+    else. On the raw columns it did not: the factors run from about 1.4% to 68%
+    annualised volatility, and an exactly orthogonal design with that spread of
+    scales already has a condition number near 50. Measured on AAPL's windows the
+    unscaled figure correlated 0.86 with the ratio of the largest to the smallest
+    factor volatility and only 0.3 with the standardised one - it was reading
+    units. It also moved whenever a factor was rescaled, which
+    `factor_defs.STANDARDIZED_TARGET_VOL` promises is a units convention and
+    nothing more.
+
+    A constant column contributes a zero singular value and is reported as an
+    infinite condition number: the design really is singular then.
+    """
+    X = np.atleast_2d(np.asarray(X, dtype=float))
+    if X.shape[0] < 2 or X.shape[1] == 0:
+        return np.nan
+    Xc = X - X.mean(axis=0)
+    sd = Xc.std(axis=0, ddof=1)
+    if np.any(sd <= 0):
+        return np.inf
+    try:
+        sv = np.linalg.svd(Xc / sd, compute_uv=False)
+    except np.linalg.LinAlgError:
+        return np.nan
+    return float(sv[0] / sv[-1]) if sv[-1] > 0 else np.inf
 
 
 def _vif(X: np.ndarray) -> np.ndarray:
@@ -322,27 +387,54 @@ def ewma_weights(n: int, halflife: float) -> np.ndarray:
     return 0.5 ** (age / float(halflife))
 
 
-def dimson_design(X: np.ndarray, lags: int) -> np.ndarray:
+def dimson_design(X: np.ndarray, lags: int,
+                  columns: Sequence[int] | None = None) -> np.ndarray:
     """Stack contemporaneous and lagged factor returns.
 
     A fund that prices before the US close, or holds illiquid
     assets, reacts to a factor with a delay. The Dimson/Scholes-Williams correction
     sums the contemporaneous and lagged coefficients to recover the true beta.
     Early rows become NaN and are dropped by `fit`.
+
+    `columns` lags only the named factors; the lagged blocks follow the
+    contemporaneous one in the order given. Lagging all forty doubles the slopes
+    per lag, and every extra slope adds estimation noise to beta' S beta. A
+    Tokyo-close security needs the lag on the equity and FX factors that move after
+    it closes, not on a weekly financial-conditions release.
     """
     X = np.atleast_2d(np.asarray(X, dtype=float))
     if lags <= 0:
         return X
+    cols = list(range(X.shape[1])) if columns is None else list(columns)
     blocks = [X]
     for lag in range(1, lags + 1):
-        shifted = np.full_like(X, np.nan)
-        shifted[lag:] = X[:-lag]
+        shifted = np.full((X.shape[0], len(cols)), np.nan)
+        shifted[lag:] = X[:-lag][:, cols]
         blocks.append(shifted)
     return np.column_stack(blocks)
 
 
+def dimson_aggregator(k: int, lags: int,
+                      columns: Sequence[int] | None = None) -> np.ndarray:
+    """The k x p matrix that sums each factor's contemporaneous and lagged slopes.
+
+    Row j picks factor j's contemporaneous coefficient and, when j is lagged, its
+    coefficient in every lag block. The summed betas are A @ b and their covariance
+    is A V A', which keeps the negative correlation between neighbouring lag
+    coefficients rather than adding variances as if they were independent.
+    """
+    cols = list(range(k)) if columns is None else list(columns)
+    A = np.zeros((k, k + lags * len(cols)))
+    A[np.arange(k), np.arange(k)] = 1.0
+    for block in range(lags):
+        for pos, j in enumerate(cols):
+            A[j, k + block * len(cols) + pos] = 1.0
+    return A
+
+
 def collapse_dimson(betas: np.ndarray, se: np.ndarray, k: int, lags: int,
-                    cov: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+                    cov: np.ndarray | None = None,
+                    columns: Sequence[int] | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Sum a Dimson design's contemporaneous and lagged betas back to one per factor.
 
     The standard error of the sum needs the covariance between the lag coefficients,
@@ -352,12 +444,12 @@ def collapse_dimson(betas: np.ndarray, se: np.ndarray, k: int, lags: int,
     """
     if lags <= 0:
         return betas, se
-    idx = [[j + block * k for block in range(lags + 1)] for j in range(k)]
-    summed = np.array([betas[i].sum() for i in idx])
+    A = dimson_aggregator(k, lags, columns)
+    summed = A @ np.asarray(betas, dtype=float)
     if cov is None:
-        summed_se = np.array([np.sqrt(np.sum(se[i] ** 2)) for i in idx])
+        summed_se = np.sqrt(A @ (np.asarray(se, dtype=float) ** 2))
     else:
-        summed_se = np.array([np.sqrt(max(cov[np.ix_(i, i)].sum(), 0.0)) for i in idx])
+        summed_se = np.sqrt(np.maximum(np.diag(A @ cov @ A.T), 0.0))
     return summed, summed_se
 
 

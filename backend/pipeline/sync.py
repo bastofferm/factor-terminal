@@ -138,6 +138,10 @@ def seed_level_series(cur: Any) -> int:
         payload.append((f"FRED:{s['series_id']}", s["name"], s["category"],
                         "percent", s["transform"], None, None))
 
+    for s in seed.RELEASE_TIMED_SERIES:
+        payload.append((f"FRED:{s['series_id']}{seed.RELEASE_SUFFIX}", s["name"],
+                        s["category"], "index", s["transform"], None, None))
+
     from psycopg2.extras import execute_values
     execute_values(
         cur,

@@ -449,8 +449,9 @@ _METHOD_PROSE = {
                    "instruments are held long against the weakest.",
     "variance_premium": "Implied variance minus subsequently realised variance, "
                         "the premium a variance seller earns on average.",
-    "realized_vol_change": "The change in realised volatility, differenced because "
-                           "the level itself is not stationary.",
+    "abs_return_surprise": "A volatility shock: the day's absolute return over the "
+                           "previous day's volatility forecast, less its normal "
+                           "mean, so it is zero when volatility is as expected.",
 }
 
 
@@ -468,7 +469,7 @@ def _walk_inputs(node, out: list[str]) -> None:
             # that are quoted the other way round, so its values are labels like
             # "JPY" and not instruments. Collecting them made fx_carry claim two
             # inputs it does not have.
-            if key in ("shape", "transform", "window", "lookback", "sparse",
+            if key in ("shape", "transform", "window", "lookback", "sparse", "halflife",
                        "inverted", "sign", "scale_to_vol"):
                 continue
             _walk_inputs(v, out)

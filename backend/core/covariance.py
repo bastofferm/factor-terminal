@@ -248,6 +248,91 @@ def estimate(
 
 
 # ---------------------------------------------------------------------------
+# asynchronous closes: the lead-lag term
+# ---------------------------------------------------------------------------
+
+def lagged_autocovariance(X: np.ndarray, lag: int,
+                          halflife: float | None = None) -> np.ndarray:
+    """Gamma_l = E[(x_t - mu)(x_{t-l} - mu)'], from the rows where both days are complete.
+
+    `X` keeps its missing values: dropping a row would make two days a week apart
+    look adjacent. Equal weights, or EWMA weights by the age of day t.
+    """
+    X = np.asarray(X, dtype=float)
+    n, k = X.shape
+    if lag <= 0 or lag >= n:
+        return np.zeros((k, k))
+    complete = np.all(np.isfinite(X), axis=1)
+    if complete.sum() < 2:
+        return np.zeros((k, k))
+    age = np.arange(n - 1, -1, -1, dtype=float)
+    w_all = np.ones(n) if halflife is None else 0.5 ** (age / float(halflife))
+    mu = (w_all[complete] @ X[complete]) / w_all[complete].sum()
+    A, B = X[lag:] - mu, X[:-lag] - mu
+    ok = complete[lag:] & complete[:-lag]
+    if ok.sum() < 2:
+        return np.zeros((k, k))
+    w = w_all[lag:][ok]
+    w = w / w.sum()
+    return (A[ok] * w[:, None]).T @ B[ok]
+
+
+def lead_lag_term(X: np.ndarray, lags: int, horizon: int, method: str = "blend",
+                  halflife: float = 60.0, ewma_weight: float = 0.6,
+                  annualize: bool = True) -> np.ndarray:
+    """The cross-day covariance an h-day forecast needs and a daily one does not.
+
+    Markets that close at different times put one day's common shock into two
+    days' returns: a move in New York after Tokyo has closed reaches a Japanese
+    curve, a London ETF or a Yahoo FX fix the next day. Daily covariances then
+    understate the co-movement, and the variance of an h-day sum is
+
+        Var(x_1 + ... + x_h) = h * [Gamma_0 + sum_{l=1}^{h-1} (1 - l/h)(Gamma_l + Gamma_l')]
+
+    exactly. This returns the bracketed sum less Gamma_0, truncated at `lags`:
+    beyond a few days the cross-day covariance of daily factor returns is noise,
+    and the truncation is what the lag count is chosen for. The weights are the
+    Bartlett weights of the horizon itself, not of the lag count - with lags=1
+    and h=21 the first lag carries 20/21, because that is how much of it an
+    h-day sum contains.
+
+    The lagged covariances are weighted as the covariance method weights its own
+    sample - EWMA for 'ewma', equal for 'sample' and 'ledoit_wolf', the blend's
+    mix for 'blend' - so the term moves with the matrix it is added to. It also
+    carries each factor's own autocorrelation on the diagonal, which is the same
+    correction for a series that is stale rather than late.
+    """
+    X = np.asarray(X, dtype=float)
+    k = X.shape[1]
+    term = np.zeros((k, k))
+    lags = int(min(lags, horizon - 1))
+    if lags <= 0:
+        return term
+    if method == "ewma":
+        mix = [(1.0, halflife)]
+    elif method == "blend":
+        a = float(np.clip(ewma_weight, 0.0, 1.0))
+        mix = [(a, halflife), (1.0 - a, None)]
+    else:
+        mix = [(1.0, None)]
+    for lag in range(1, lags + 1):
+        g = sum(wt * lagged_autocovariance(X, lag, hl) for wt, hl in mix if wt > 0)
+        term += (1.0 - lag / float(horizon)) * (g + g.T)
+    return term * (TRADING_DAYS if annualize else 1.0)
+
+
+def horizon_covariance(daily_cov: np.ndarray, term: np.ndarray) -> np.ndarray:
+    """Sigma_F for an h-day forecast, per day: the daily matrix plus the lead-lag
+    term, repaired to positive semi-definite. Truncating the lag sum gives up the
+    guarantee the full Bartlett sum has, so the repair is needed, not decorative."""
+    C = np.asarray(daily_cov, dtype=float) + np.asarray(term, dtype=float)
+    if not np.all(np.isfinite(C)):
+        return np.asarray(daily_cov, dtype=float)
+    repaired, _ = nearest_psd(C)
+    return repaired
+
+
+# ---------------------------------------------------------------------------
 # specific risk
 # ---------------------------------------------------------------------------
 
@@ -303,13 +388,35 @@ def asset_covariance(B: np.ndarray, factor_cov: np.ndarray,
     return systematic + np.diag(np.asarray(specific_var, dtype=float))
 
 
+def beta_noise_variance(factor_cov: np.ndarray, beta_cov: np.ndarray) -> float:
+    """tr(Sigma V): how much estimation noise in the betas adds to b' Sigma b.
+
+    For an unbiased beta estimate with covariance V, E[b_hat' S b_hat] =
+    b' S b + tr(S V). The second term is not risk the security carries; it is the
+    sampling error of the loadings, and with forty factors on a 252-day window it
+    is about k/n of the specific variance. Measured on five single stocks it was
+    9-16% of their systematic variance, roughly a third of the model's average
+    over-forecast. `beta_cov` is in the units of the betas, `factor_cov` in the
+    units of the forecast, so the result is in the units of the forecast.
+    """
+    C = np.asarray(factor_cov, dtype=float)
+    V = np.asarray(beta_cov, dtype=float)
+    if C.shape != V.shape or not np.all(np.isfinite(V)):
+        return 0.0
+    return max(float(np.sum(C * V.T)), 0.0)
+
+
 def predicted_volatility(beta: np.ndarray, factor_cov: np.ndarray,
-                         specific_var: float) -> tuple[float, float, float]:
+                         specific_var: float,
+                         beta_cov: np.ndarray | None = None) -> tuple[float, float, float]:
     """Ex-ante volatility of one instrument.
 
     Returns (total, systematic, specific), all annualised. Kept separate because the
     split between factor and specific risk is the first thing an analyst checks when
     a forecast looks wrong.
+
+    With `beta_cov` the systematic variance is debiased by `beta_noise_variance`
+    and floored at zero; `beta_cov` must be aligned with `beta`.
     """
     b = np.asarray(beta, dtype=float).ravel()
     ok = np.isfinite(b) & np.all(np.isfinite(factor_cov), axis=1)
@@ -318,6 +425,8 @@ def predicted_volatility(beta: np.ndarray, factor_cov: np.ndarray,
     b, C = b[ok], factor_cov[np.ix_(ok, ok)]
 
     systematic_var = float(b @ C @ b)
+    if beta_cov is not None:
+        systematic_var -= beta_noise_variance(C, np.asarray(beta_cov)[np.ix_(ok, ok)])
     systematic_var = max(systematic_var, 0.0)
     total_var = systematic_var + max(float(specific_var), 0.0)
     return float(np.sqrt(total_var)), float(np.sqrt(systematic_var)), \
