@@ -5,6 +5,13 @@ estimation window. A series can be perfectly well behaved across twenty years an
 broken over the last six months, and it is the recent window that governs whether
 today's risk number can be trusted.
 
+Before the battery, three integrity checks on the factor universe's inputs, each
+recorded as a `check:*` item so a violation shows on the data health page:
+
+- check:returns   every stored ret_log equals ln(adj_close / previous adj_close)
+- check:gaps      no instrument misses a session of its exchange in the window
+- check:calendar  no NYSE session in the window fell short of the calendar quorum
+
     python -m backend.pipeline.run_diagnostics [--window 252] [--kind factor|instrument|all]
 """
 
@@ -12,12 +19,15 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Sequence
 
 import pandas as pd
 
 from backend.core import stationarity as st
+from backend.pipeline import calendars
+from backend.pipeline.build_factors import calendar_counts, dropped_sessions
 from backend.pipeline.dbsync import (
     bulk_insert, connect, etl_run, mark_item_done, mark_items, prune_items, run_failed,
 )
@@ -96,6 +106,131 @@ def load_series(cur: Any, kind: str) -> dict[str, pd.Series]:
     return {k: g.set_index("date")["value"] for k, g in df.groupby("key")}
 
 
+# ---------------------------------------------------------------------------
+# integrity checks
+# ---------------------------------------------------------------------------
+
+# Both sides are the double-precision log of the same ratio; anything above
+# rounding is a return measured against some other price.
+RETURN_TOLERANCE = 1e-9
+
+FACTOR_UNIVERSE = ("i.role IN ('factor_input', 'both') "
+                   "AND COALESCE(i.asset_class, '') <> 'Crypto'")
+
+RETURN_CHECK = f"""
+WITH s AS (
+    SELECT r.instrument_id, r.date, r.source, r.ret_log, r.adj_close,
+           lag(r.adj_close) OVER w AS prev_adj,
+           lag(r.source)    OVER w AS prev_source
+    FROM fact_input_return r JOIN ref_instrument i USING (instrument_id)
+    WHERE {FACTOR_UNIVERSE} AND r.adj_close IS NOT NULL
+    WINDOW w AS (PARTITION BY r.instrument_id ORDER BY r.date)
+), due AS (
+    SELECT * FROM s
+    WHERE prev_source = source AND prev_adj > 0 AND adj_close > 0 AND ret_log IS NOT NULL
+), bad AS (
+    SELECT instrument_id, date, ret_log, ln(adj_close / prev_adj) AS expected
+    FROM due
+    WHERE abs(ret_log - ln(adj_close / prev_adj)) > %s
+)
+-- One row per violation, or a single empty row: the count of checked rows rides along.
+SELECT b.instrument_id, b.date, b.ret_log, b.expected, n.checked
+FROM (SELECT count(*) AS checked FROM due) n LEFT JOIN bad b ON TRUE
+ORDER BY b.date, b.instrument_id
+"""
+
+CHECK_KEYS = ["check:returns", "check:gaps", "check:calendar"]
+
+
+@dataclass
+class Check:
+    key: str
+    checked: int = 0
+    violations: list[str] = field(default_factory=list)
+
+    def summary(self, show: int = 12) -> str | None:
+        if not self.violations:
+            return None
+        more = len(self.violations) - show
+        return "; ".join(self.violations[:show]) + (f"; +{more} more" if more > 0 else "")
+
+
+def check_returns(cur: Any, tolerance: float = RETURN_TOLERANCE) -> Check:
+    """ret_log = ln(adj_t / adj_prev) over each stored series.
+
+    The predecessor is the previous stored day from the same source; across a
+    source boundary there is no return to check. 214 rows failed this on
+    2026-09-28: returns measured from a stored intraday price. A NULL return is
+    a missing observation rather than a wrong one, and check_gaps counts it.
+    """
+    cur.execute(RETURN_CHECK, (tolerance,))
+    rows = cur.fetchall()
+    c = Check("check:returns", checked=rows[0][4] if rows else 0)
+    for inst, d, stored, expected, _ in rows:
+        if d is None:
+            continue
+        got = "NULL" if stored is None else f"{stored:.6f}"
+        c.violations.append(f"{inst} {d} ret_log {got} vs {expected:.6f}")
+    return c
+
+
+def window_start(as_of: date, window: int) -> date:
+    """First NYSE session of the trailing `window` sessions ending at as_of."""
+    span = calendars.sessions(date(as_of.year - (window // 200 + 2), 1, 1), as_of)
+    return span[-window] if len(span) >= window else span[0]
+
+
+def check_gaps(cur: Any, since: date) -> Check:
+    """No weekday without a row unless the instrument's exchange was closed.
+
+    A day counts as present when it has a return: the factor panel reads only
+    those, so a row whose return is NULL is as missing as no row. Measured between
+    each instrument's first and last return in the window, so a series that
+    stopped is the liveness gate's business, not a gap. IGLT.L was missing 21.09.,
+    24.09. and 07.10.2026 although Yahoo has those days.
+    """
+    cur.execute(
+        f"""
+        SELECT r.instrument_id, r.date
+        FROM fact_input_return r JOIN ref_instrument i USING (instrument_id)
+        WHERE {FACTOR_UNIVERSE} AND r.ret_log IS NOT NULL AND r.date >= %s
+        ORDER BY 1, 2
+        """,
+        (since,),
+    )
+    have: dict[str, set[date]] = {}
+    for inst, d in cur.fetchall():
+        have.setdefault(inst, set()).add(d)
+    c = Check("check:gaps", checked=len(have))
+    for inst, days in sorted(have.items()):
+        expected = calendars.sessions(min(days), max(days), calendars.calendar_for(inst))
+        missing = [d for d in expected if d not in days]
+        if missing:
+            c.violations.append(f"{inst} missing {', '.join(map(str, missing[:5]))}"
+                                + (f" +{len(missing) - 5}" if len(missing) > 5 else ""))
+    return c
+
+
+def check_calendar(cur: Any, since: date) -> Check:
+    """No NYSE session in the window dropped by the calendar quorum."""
+    counts = calendar_counts(cur)
+    c = Check("check:calendar", checked=sum(1 for d, _ in counts if d >= since))
+    for d, n, need in dropped_sessions(counts):
+        if d >= since:
+            c.violations.append(f"{d} {n} instruments reported, quorum {need}")
+    return c
+
+
+def integrity_checks(cur: Any, window: int) -> list[Check]:
+    cur.execute(f"SELECT max(r.date) FROM fact_input_return r "
+                f"JOIN ref_instrument i USING (instrument_id) WHERE {FACTOR_UNIVERSE}")
+    as_of = cur.fetchone()[0]
+    if as_of is None:
+        return []
+    since = window_start(as_of, window)
+    return [check_returns(cur), check_gaps(cur, since), check_calendar(cur, since)]
+
+
 def run(kinds: Sequence[str], window: int, quiet: bool = False) -> int:
     with connect() as conn, conn.cursor() as cur:
         sparse = sparse_factors(cur)
@@ -109,11 +244,23 @@ def run(kinds: Sequence[str], window: int, quiet: bool = False) -> int:
         return 1
 
     keys = [f"{kind}:{key}" for key, kind in series]
-    prune_items(JOB, keys)
+    prune_items(JOB, CHECK_KEYS + keys)
 
     summary: dict[str, int] = {}
     with etl_run(JOB, scope={"window": window, "kinds": list(kinds)}) as run_id:
-        mark_items(run_id, JOB, keys)
+        mark_items(run_id, JOB, CHECK_KEYS + keys)
+        with connect() as conn, conn.cursor() as cur:
+            checks = integrity_checks(cur, window)
+        for c in checks:
+            detail = c.summary()
+            mark_item_done(run_id, JOB, c.key, "failed" if detail else "succeeded",
+                           rows_in=c.checked, rows_out=len(c.violations), error=detail)
+            if detail:
+                print(f"  FAIL  {c.key}: {len(c.violations)} violation(s): {detail[:300]}",
+                      file=sys.stderr)
+            elif not quiet:
+                print(f"  ok    {c.key} ({c.checked} checked)")
+
         for (key, kind), s in series.items():
             item = f"{kind}:{key}"
             try:
