@@ -354,3 +354,109 @@ in `ref_level_series` als `reference_dated` markieren und für Faktoren sperren.
    SNB-Satz beschaffen.
 7. **Regressionstests:** FX-Lead-Lag gegen ETF, `ret_log = ln(adj/adj_prev)`, kein
    gespeicherter Balken vor Börsenschluss, keine Werktagslücke ohne Feiertag.
+
+---
+
+## Nachtrag 15.10.2026: Befunde 1 und 2 behoben
+
+**Entscheidung: Die FX-Beine kommen aus den NY-gelisteten CurrencyShares-Trusts**
+(`FXE`, `FXY`, `FXB`, `FXF`, `FXC`, `FXA`, Tabelle `seed.FX_SPOT`). Die Yahoo-Werte
+werden nicht umdatiert. Gemessen wurde das an einer dritten synchronen Reihe, die aus
+keiner der beiden Quellen gebaut ist: Der Dollarindex `DX-Y.NYB` lässt sich aus den
+Beinen EUR, JPY, GBP, CAD und CHF rekonstruieren.
+
+| R² der DXY-Rekonstruktion | Trusts | Yahoo umdatiert | Yahoo wie gespeichert |
+|---|---|---|---|
+| 2011–2026 | **0,94** | 0,83 | 0,01 |
+| 2007-03 bis 2010-07 | **0,90** | 0,75 | 0,74 |
+
+Weitere Gründe für die Trusts:
+
+- Der Bruch liegt exakt auf dem **04.08.2010**. An diesem Tag hat jedes `=X`-Paar
+  eine doppelte Notiz mit einer Rendite von genau null.
+- Auch vor dem Bruch ist Yahoo nur im Mittel synchron. Es gibt Ausreißer, etwa
+  USDJPY mit +16,9 % und −16,3 % am 08./09.12.2008, Spitze und Rückkehr. In manchen
+  Monaten von 2008 korreliert Yahoo nur mit 0,3 bis 0,5 mit dem Trust.
+- Für JPY gibt es 1.237 Zeilen außerhalb des Kalenders.
+- `FXY` hat keine Zeile außerhalb des Kalenders und keinen fehlenden Kalendertag.
+
+Ein Trust liefert Spot plus Einlagenzins minus Gebühr. Die Abweichung vom Spot beträgt
+pro Jahr zwischen −1,3 % (EUR 2021) und +3,2 % (GBP 2023–25). Sie würde in `fx_carry`
+und im umgerechneten Gilt Carry doppelt zählen. Deshalb gilt
+s_t = r_t^Trust − a_t. Dabei ist a_t die Drift des Trusts über den Yahoo-Spot im
+nachlaufenden Jahr bis t−1 (`build_factors.fx_spot_return`). Über ein Jahr verschiebt
+der Tagesversatz von Yahoo diese Drift nur um Bruchteile eines Basispunkts. Der
+Restfehler gegen Spot liegt bei 0,2 bis 0,35 % pro Jahr. Vor dem 04.08.2010 und
+solange ein Trust noch keine Drift hat, wird die Yahoo-Spotänderung verwendet.
+
+**Geändert:**
+
+- `fx_jpy` heißt jetzt Methode `fx_spot`.
+- `fx_carry` hat die Eingabe `fx: [EUR, JPY, CHF]`.
+- `Panels.in_base_ccy` und damit `rt_uk` rechnen mit der NY-Schluss-Bewegung von
+  `FXB` um.
+- `load_panels` liest `fact_input_fx` nicht mehr. Die Spot-Niveaus kommen aus den
+  täglich aufgefrischten `=X`-Zeilen in `fact_input_return` und werden höchstens fünf
+  Handelstage vorwärts gefüllt (`align_spot`).
+- Der Liveness-Gate schreibt `ref_fx_coverage` (Migration 018, additiv) und warnt bei
+  veralteten Währungen. Stand heute sind alle sechs veraltet, JPY seit 25.06.
+- `sync_security` rechnet JP-Titel selbst mit derselben JPY-Bewegung zum NY-Schluss
+  um (`convert_to_base`). Die USD-Spalten des Warehouse sind ebenfalls einen Tag
+  versetzt: Ihr FX-Bein korreliert mit 0,95 mit dem alten `fx_jpy` und mit 0,89 mit dem
+  neuen vom Vortag. JP-USD-Renditen reichen jetzt bis zum 22.07. statt bis zum 22.06.
+- Die Regressionstests stehen in `backend/tests/test_fx_timing.py`. Jedes Bein muss
+  mit seinem Trust am selben Tag stärker korrelieren als am Vortag, mit dem
+  Dollarindex ebenso. Geprüft werden auch die gespeicherten Faktoren, die begrenzte
+  Füllung und die JP-Umrechnung.
+
+**Faktorebene vorher und nachher** (2011–2026, Rohfaktoren, sofern nicht anders
+angegeben):
+
+| | vorher | nachher |
+|---|---|---|
+| `fx_jpy` gegen `FXY`, selber Tag / Vortag | 0,06 / 0,90 | 1,00 / −0,02 |
+| `fx_jpy` gegen `eq_global`, selber Tag / Vortag | +0,02 / −0,12 | **−0,14** / +0,06 |
+| `fx_jpy` (orth.) gegen `fx_usd` vom Vortag | −0,47 | 0,005 |
+| `fx_carry` (orth.) gegen `fx_usd` vom Vortag | +0,40 | −0,03 |
+| `rt_uk` gegen `IGLT.L` lokal, 10.07. bis 06.10. | 1,0000 | 0,81 |
+| Std.-Abw. des GBP-Beins von `rt_uk`, ab 10.07. | 0,000004 | 0,0033 |
+
+Die Risk-off-Bindung des Yen ist jetzt in der täglichen Kovarianz sichtbar. Der
+USD-Anteil, den die Orthogonalisierung nicht entfernt hatte, ist verschwunden. Nur
+diese drei Faktoren haben sich geändert.
+
+**Hold-out gegen das eigene EWMA** (`portfolio_risk`-Spezifikation: OLS über 252 Tage,
+Kovarianz mit 42 Tagen Halbwertszeit, Fits neu im Speicher gerechnet; QLIKE, kleiner ist
+besser; „Tail“ ist der Zeitraum ab 07/2023):
+
+| Fall | ΔQLIKE gesamt | ΔQLIKE Tail | DM-t gegen eigenes EWMA, vorher → nachher |
+|---|---|---|---|
+| 60/40, All-Weather, Global Multi-Asset | ±0,0003 | ±0,0003 | unverändert |
+| Währungsfonds (UUP, UDN, FXA, FXC) | **−0,0024** | −0,0001 | 3,72 → 3,15 |
+| FXA / FXC / UDN einzeln | −0,0035 / −0,0074 / −0,0011 | −0,0009 / −0,0027 / −0,0028 | sinkt in allen drei |
+| Auslandsanleihen (BWX, IGOV, BNDX) | +0,0017 | +0,0007 | 1,86 → 1,86 |
+| BNDX einzeln | +0,0030 | −0,0019 | 3,22 → 3,35 |
+| JP-Titel, 8 gleichgewichtet, NY-Schluss-Umrechnung | +0,036 | **−0,014** | 2,84 → 3,12 |
+
+Die Währungsfonds verlieren weiter gegen ihr eigenes EWMA, aber deutlich weniger. Bei
+den Multi-Asset-Portfolios bewegt sich praktisch nichts, weil FX-Faktoren dort nur über
+`rt_uk` im Rentenblock eingehen. Bei den Auslandsanleihen ist die Wirkung klein und
+uneinheitlich.
+
+Die JP-Titel sind gemischt: Über die ganze Strecke ist das Ergebnis schlechter, auf dem
+Hold-out-Tail besser. Der wahrscheinliche Grund ist ein Nebeneffekt des alten,
+versetzten `fx_jpy`. Für eine Aktie, die in Tokio schließt, wirkte er wie ein
+verzögerter Faktor, denn er korrelierte mit −0,12 mit dem `eq_global` des Vortags, und
+genau darauf reagiert der Tokioter Kurs. Das saubere Werkzeug dafür sind Dimson-Lags.
+Die Portfolio-Validierung kennt sie nicht, weil sie kollabierte Betas verwendet.
+
+**Offen:**
+
+1. JP-Portfolios mit Dimson-Lags auf Portfolioebene testen.
+2. `fact_input_fx` und den Warehouse-FX-Job wieder in Gang bringen. Der Gate meldet das
+   jetzt, die Faktoren hängen nicht mehr daran.
+3. An UK-Feiertagen fehlt die Rendite von `IGLT.L`, und die GBP-Bewegung dieses Tages
+   fällt aus `rt_uk` heraus. Die Gilt-Rendite des Folgetags umfasst zwei Tage, das
+   FX-Bein nur einen. Ähnlich wie in Befund 7 sollte über die Lücke summiert werden.
+4. Gespeicherte Portfolio-Fits (`ensure_fit`) werden nach dem Spec gecacht und nach
+   einem Faktor-Neubau nicht neu geschätzt.

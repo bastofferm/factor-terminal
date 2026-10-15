@@ -607,15 +607,20 @@ with $g_1$ = \code{rt\_us\_level}, each taken as its own \emph{orthogonalised} s
 \subsubsection{\code{rt\_uk} --- UK Gilts}
 Hierarchy level 0. Method \code{single}.
 
-\begin{quote}\small No daily gilt curve exists anywhere in the warehouse, so this is an ETF total return converted to base currency rather than a curve factor.\end{quote}
+\begin{quote}\small No daily gilt curve exists anywhere in the warehouse, so this is an ETF total return converted to base currency rather than a curve factor. The GBP leg is the NY-close spot move from FXB: the warehouse FX table it used to come from stopped on 2026-07-09 and was a day late anyway.\end{quote}
 
 \noindent\textbf{Construction}
 
-\eqn{f_t = \bigl(x^{\text{IGLT.L}}_t + \Delta \ln e^{\text{GBP}}_t\bigr)}
+\eqn{s^{\text{GBP}}_t = r^{\text{FXB}}_t - a^{\text{GBP}}_t, \qquad a^{\text{GBP}}_t = \frac{1}{252}\Bigl[\ln\frac{P^{\text{FXB}}_{t-1}}{P^{\text{FXB}}_{t-253}} - \ln\frac{S^{\text{GBP}}_{t-1}}{S^{\text{GBP}}_{t-253}}\Bigr]}
+
+\eqn{f_t = \bigl(x^{\text{IGLT.L}}_t + s^{\text{GBP}}_t\bigr)}
 
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
   \item Subtract the overnight rate: $x_t = r_t - c_{t-1}$. IGLT.L is a funded long position, so its return has to be measured over cash.
-  \item Convert to the base currency by adding the log change in GBP/USD. In logs the conversion is a sum, with no cross term.
+  \item Convert to the base currency by adding the NY-close log change in USD per GBP. In logs the conversion is a sum, with no cross term, and marking at the NY close is what a dollar holder's position is worth on the model's clock.
+  \item Take the GBP spot move from FXB, which closes in New York with every other factor input. Yahoo's GBPUSD=X close is the rate at London midnight starting the day, and since 2010-08-04 that is the NY move of the day before.
+  \item Strip the trust's deposit income less its fee: $a^{\text{GBP}}_t$ is its drift over spot across the trailing 252 days, ending at $t-1$. Over a year Yahoo's one-day lag moves that drift by a fraction of a basis point.
+  \item Before 2010-08-04, while Yahoo was still on the NY clock, its spot change stands in where the trust has no drift yet: $s^{\text{GBP}}_t = \Delta \ln S^{\text{GBP}}_t$.
 \end{enumerate}
 
 \begin{center}\small
@@ -625,7 +630,8 @@ Symbol & Source & Meaning \\
 \midrule
 $r^{\text{IGLT.L}}_t$ & \code{IGLT.L} & instrument return: log total return of IGLT.L \\
 $c_t$ & \code{FRED:DFF} & daily cash rate: $\text{FRED:DFF}_t / 100 / 252$, lagged one day because the overnight rate earned on day t is set at $t-1$ \\
-$e^{\text{GBP}}_t$ & \code{GBP} & USD per unit of GBP; its log change converts the local return into the base currency, which is exact in logs \\
+$r^{\text{FXB}}_t$ & \code{FXB} & the NY-listed trust holding GBP, which supplies the timing; P is its cumulated total return: log total return of FXB \\
+$S^{\text{GBP}}_t$ & \code{GBPUSD=X} & USD per GBP, Yahoo's GBPUSD=X close; used only for the trust's drift, because Yahoo dates it by London midnight and so runs a day behind the NY close \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -868,17 +874,21 @@ $r^{\text{DX-Y.NYB}}_t$ & \code{DX-Y.NYB} & instrument return: log total return 
 Nothing sits above this factor in the hierarchy, so the raw and orthogonalised panels hold the same series.
 
 \subsubsection{\code{fx\_jpy} --- JPY (ex-USD)}
-Hierarchy level 1. Method \code{single}.
+Hierarchy level 1. Method \code{fx\_spot}.
 
-\begin{quote}\small Sign flipped so a positive value means a stronger yen, the usual risk-off direction.\end{quote}
+\begin{quote}\small USD per yen, so a positive value is a stronger yen, the usual risk-off direction. NY-close timing from FXY: Yahoo's USDJPY=X is a day late since August 2010, and on it this factor correlated +0.01 with eq\_global on the same day and -0.15 on the next.\end{quote}
 
 \noindent\textbf{Construction}
 
-\eqn{f_t = -1\,r^{\text{USDJPY=X}}_t}
+\eqn{s^{\text{JPY}}_t = r^{\text{FXY}}_t - a^{\text{JPY}}_t, \qquad a^{\text{JPY}}_t = \frac{1}{252}\Bigl[\ln\frac{P^{\text{FXY}}_{t-1}}{P^{\text{FXY}}_{t-253}} - \ln\frac{S^{\text{JPY}}_{t-1}}{S^{\text{JPY}}_{t-253}}\Bigr]}
+
+\eqn{f_t = s^{\text{JPY}}_t}
 
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
-  \item No cash leg: this is not a funded position, so there is nothing to fund.
-  \item Multiply by -1 so the factor points in the stated direction.
+  \item Take the JPY spot move from FXY, which closes in New York with every other factor input. Yahoo's USDJPY=X close is the rate at London midnight starting the day, and since 2010-08-04 that is the NY move of the day before.
+  \item Strip the trust's deposit income less its fee: $a^{\text{JPY}}_t$ is its drift over spot across the trailing 252 days, ending at $t-1$. Over a year Yahoo's one-day lag moves that drift by a fraction of a basis point.
+  \item Before 2010-08-04, while Yahoo was still on the NY clock, its spot change stands in where the trust has no drift yet: $s^{\text{JPY}}_t = \Delta \ln S^{\text{JPY}}_t$.
+  \item No cash leg: a spot move is not a funded position.
 \end{enumerate}
 
 \begin{center}\small
@@ -886,7 +896,8 @@ Hierarchy level 1. Method \code{single}.
 \toprule
 Symbol & Source & Meaning \\
 \midrule
-$r^{\text{USDJPY=X}}_t$ & \code{USDJPY=X} & instrument return: log total return of USDJPY=X \\
+$r^{\text{FXY}}_t$ & \code{FXY} & the NY-listed trust holding JPY, which supplies the timing; P is its cumulated total return: log total return of FXY \\
+$S^{\text{JPY}}_t$ & \code{USDJPY=X} & USD per JPY, Yahoo's USDJPY=X close inverted; used only for the trust's drift, because Yahoo dates it by London midnight and so runs a day behind the NY close \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -936,11 +947,14 @@ Hierarchy level 1. Method \code{fx\_carry}.
 
 \noindent\textbf{Construction}
 
+\eqn{s_{j,t} = r^{T_j}_t - a_{j,t}, \qquad a_{j,t} = \frac{1}{252}\Bigl[\ln\frac{P^{T_j}_{t-1}}{P^{T_j}_{t-253}} - \ln\frac{S_{j,t-1}}{S_{j,t-253}}\Bigr]}
+
 \eqn{\kappa_{j,t} = \frac{i_{j,t-1} - i_{\text{USD},t-1}}{100 \cdot 252}, \qquad p_{j,t} = \operatorname{sign}(\kappa_{j,t})}
 
-\eqn{f_t = \frac{1}{3}\sum_j p_{j,t}\bigl(s_j\,r^{X_j}_t + \kappa_{j,t}\bigr)}
+\eqn{f_t = \frac{1}{3}\sum_j p_{j,t}\bigl(s_{j,t} + \kappa_{j,t}\bigr)}
 
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item Each spot leg $s_{j,t}$ is the NY-close move of its currency against the dollar: the trust's return less its own deposit income, which is its drift $a_{j,t}$ over Yahoo spot across the trailing 252 days. Without that the carry below would be counted twice. Before 2010-08-04, where a trust has no drift yet, Yahoo's spot change stands in.
   \item Carry is approximated from policy-rate differentials (CHF, EUR, JPY against USD) because the warehouse holds no forward points. Covered interest parity says the forward discount equals the rate differential, so this stands in for it.
   \item The differential is lagged one day: the carry earned over day t is fixed by the rates set at $t-1$.
   \item Each leg is held long when it yields more than the dollar and short when it yields less, and the basket is the equally weighted average of the legs.
@@ -952,11 +966,14 @@ Hierarchy level 1. Method \code{fx\_carry}.
 \toprule
 Symbol & Source & Meaning \\
 \midrule
-$r^{\text{USDCHF=X}}_t$ & \code{USDCHF=X} & CHF spot leg, sign flipped so the quoted pair reads as long the foreign currency against the dollar: log total return of USDCHF=X \\
+$r^{\text{FXF}}_t$ & \code{FXF} & CHF spot leg T\_j: the NY-listed trust holding CHF, long the currency against the dollar; P is its cumulated total return: log total return of FXF \\
+$S_{\text{CHF}}$ & \code{USDCHF=X} & USD per CHF, Yahoo's USDCHF=X close inverted; enters only the trust's drift a\_jt \\
 $\text{SNB:POLICY\_RATE}$ & \code{SNB:POLICY\_RATE} & CHF policy rate $i_{\text{CHF}}$, annualised percent \\
-$r^{\text{EURUSD=X}}_t$ & \code{EURUSD=X} & EUR spot leg: log total return of EURUSD=X \\
+$r^{\text{FXE}}_t$ & \code{FXE} & EUR spot leg T\_j: the NY-listed trust holding EUR, long the currency against the dollar; P is its cumulated total return: log total return of FXE \\
+$S_{\text{EUR}}$ & \code{EURUSD=X} & USD per EUR, Yahoo's EURUSD=X close; enters only the trust's drift a\_jt \\
 $\text{ECB:DFR}$ & \code{ECB:DFR} & EUR policy rate $i_{\text{EUR}}$, annualised percent \\
-$r^{\text{USDJPY=X}}_t$ & \code{USDJPY=X} & JPY spot leg, sign flipped so the quoted pair reads as long the foreign currency against the dollar: log total return of USDJPY=X \\
+$r^{\text{FXY}}_t$ & \code{FXY} & JPY spot leg T\_j: the NY-listed trust holding JPY, long the currency against the dollar; P is its cumulated total return: log total return of FXY \\
+$S_{\text{JPY}}$ & \code{USDJPY=X} & USD per JPY, Yahoo's USDJPY=X close inverted; enters only the trust's drift a\_jt \\
 $\text{BOJ:IR01\_OCRT}$ & \code{BOJ:IR01\_OCRT} & JPY policy rate $i_{\text{JPY}}$, annualised percent \\
 $\text{FRED:DFF}$ & \code{FRED:DFF} & USD policy rate, the funding leg \\
 \bottomrule
