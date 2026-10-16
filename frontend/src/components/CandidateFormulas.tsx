@@ -102,6 +102,12 @@ export function riskLines(e: Record<string, any>, r: Record<string, any>, K: num
   if (L > 0) {
     out.push(String.raw`\hat\sigma^2_{${horizon}\text{d}} = \hat\beta^{\prime}\left[\hat\Sigma_t + \sum_{l=1}^{${L}} \left(1 - \frac{l}{${horizon}}\right)\left(\hat\Gamma_l + \hat\Gamma_l^{\prime}\right)\right]\hat\beta + \hat\sigma^2_{\varepsilon,t}, \qquad \hat\Gamma_l = \widehat{\operatorname{cov}}\left(f_t, f_{t-l}\right)`);
   }
+  const hr = Number(r.revert_halflife ?? 0);
+  if (hr > 0) {
+    const phi = Math.pow(0.5, 1 / hr);
+    const g = (1 - Math.pow(phi, horizon)) / (horizon * (1 - phi));
+    out.push(String.raw`\hat\Sigma^{(${horizon}\text{d})}_t = \hat\Sigma^{\mathrm{LW}}_t + g\,\left(\hat\Sigma_t - \hat\Sigma^{\mathrm{LW}}_t\right), \qquad g = \frac{1 - \phi^{${horizon}}}{${horizon}\,(1 - \phi)} = ${g.toFixed(2)}, \quad \phi = 0.5^{1/${hr}}`);
+  }
   return out;
 }
 

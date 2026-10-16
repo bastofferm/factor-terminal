@@ -569,8 +569,14 @@ stored, so a holding is estimated once. With x = B′w, the forecast for day t+1
 
   σ̂²_p = x′Σ̂_F x − Σᵢ wᵢ² tr(Σ̂_F Vᵢ) + Σᵢ wᵢ² σ̂²_ε,i
 
-with Σ̂_F a causal EWMA (half-life 42 days by default) and specific variances
-tracked from out-of-sample residuals. Its accuracy is measured with the portfolio
+with Σ̂_F a causal mix of 5-, 63- and 252-day EWMAs weighted 0.8, 0.1 and 0.1
+by default, or a single half-life, and specific variances tracked from
+out-of-sample residuals. The h-day forecast reverts toward the 252-day level,
+LR + g(spot − LR) with g = (1 − φ^h)/(h(1 − φ)) and φ = 0.5^(1/63), since a
+shock rarely lasts the whole horizon. The chart pairs each forecast with a
+measure of what it forecasts, behind a toggle: the h-day forecast against the
+realised volatility of the next h days, or the next-day forecast against the
+five days centred on the day it is for. Its accuracy is measured with the portfolio
 scores of §9: on the portfolio's own returns, against its own EWMA volatility.
 Risk is decomposed by Euler contributions, by holding and by factor block. Against
 a benchmark fund the same forecast on the active weights gives the tracking error.

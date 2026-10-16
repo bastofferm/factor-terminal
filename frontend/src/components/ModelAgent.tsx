@@ -45,6 +45,7 @@ export function candidateSummary(c: Pick<AgentCandidate, "estimation" | "risk">)
   if (r.refresh === "daily") risk.push("daily");
   if (r.var_dist === "t") risk.push("t-VaR");
   if (r.nw_lags) risk.push(`lead-lag${r.nw_lags}`);
+  if (r.revert_halflife) risk.push(`revert${r.revert_halflife}`);
   return `${bits.join(" ")} | ${risk.join(" ")}`;
 }
 
@@ -255,6 +256,12 @@ export function ModelAgent({
                       h-day loss.</>
                   : <>No lead-lag adjustment: on the validation span&apos;s h-day returns
                       no lag count beat none by more than one standard error.</>}
+                {run.risk_spec.risk.revert_halflife
+                  ? <> It reverts toward the long-run covariance, a shock decaying with
+                      a {run.risk_spec.risk.revert_halflife}-day half-life, chosen the
+                      same way.</>
+                  : <> It does not revert toward the long run: no reversion beat none by
+                      more than one standard error.</>}
                 {run.profile?.sector_factor && (
                   run.risk_spec.estimation?.sector === "own"
                     ? <> Uses its sector factor, {run.profile.sector_factor}.</>

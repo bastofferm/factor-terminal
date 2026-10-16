@@ -150,8 +150,8 @@ def pool_candidates(own_chosen: list[tuple[dict, dict]], peer_chosen: list[tuple
     of its own earlier confidence sets by loss. Every one is re-scored on this
     run's validation span - nothing is carried over but the specification.
 
-    The lead-lag count is dropped: the search does not choose it, the stage
-    after it does.
+    The lead-lag count and the h-day reversion are dropped: the search does not
+    choose them, the stage after it does.
     """
     from backend.agent import space as sp
 
@@ -164,6 +164,7 @@ def pool_candidates(own_chosen: list[tuple[dict, dict]], peer_chosen: list[tuple
         try:
             risk = dict(risk_json or {})
             risk.pop("nw_lags", None)
+            risk.pop("revert_halflife", None)
             c = sp.Candidate(estimation=sp.EstimationChoice(**(est_json or {})),
                              risk=sp.RiskChoice(**risk))
         except Exception:

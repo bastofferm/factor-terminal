@@ -33,7 +33,8 @@ class PortfolioRequest(BaseModel):
     holdings: list[Holding] = Field(min_length=1, max_length=120)
     benchmark: str | None = None
     horizon_days: int = Field(default=21, ge=5, le=63)
-    cov_halflife: float = Field(default=42.0, ge=10, le=252)
+    # None: the calibrated multi-speed covariance; a number: one EWMA half-life.
+    cov_halflife: float | None = Field(default=None, ge=5, le=252)
 
 
 def _prune() -> None:

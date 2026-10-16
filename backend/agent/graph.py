@@ -195,32 +195,47 @@ def _seed(profile: dict) -> list[tuple[sp.Candidate, str]]:
     return seeds
 
 
-# The one-standard-error rule for the lead-lag lag count: the fewest lags whose
-# validation h-day loss is within one standard error of the best count's.
-def choose_nw_lags(losses: dict[int, pd.Series]) -> tuple[int, dict]:
-    """Pick the lag count from validation h-day losses, one series per count.
+# The one-standard-error rule for the h-day settings: the simplest value whose
+# validation h-day loss is within one standard error of the best value's.
+def choose_simplest(losses: dict[int, pd.Series],
+                    order: list[int] | None = None) -> tuple[int, dict]:
+    """Pick a setting from validation h-day losses, one series per value.
 
-    The counts are compared on their common dates through the paired difference
-    to the best, so the noise the counts share - the h-day returns themselves -
-    cancels. Returns (chosen count, {count: (mean loss, mean difference to the
-    best, its standard error)}).
+    `order` runs from simplest to most elaborate; by default ascending, which is
+    right for a lag count. The values are compared on their common dates through
+    the paired difference to the best, so the noise they share - the h-day
+    returns themselves - cancels. Returns (chosen value, {value: (mean loss, mean
+    difference to the best, its standard error)}); the first of `order` when
+    there is too little to compare.
     """
     M = pd.concat({k: v for k, v in losses.items()}, axis=1).dropna()
-    if M.empty or M.shape[0] < 3:
-        return 0, {}
+    keys = [k for k in (order or sorted(M.columns)) if k in M.columns]
+    if M.empty or M.shape[0] < 3 or not keys:
+        return (order or [0])[0], {}
     means = M.mean()
     best = int(means.idxmin())
     table: dict[int, tuple] = {}
     chosen = best
-    for k in sorted(M.columns):
+    for k in keys:
         d = (M[k] - M[best]).to_numpy()
         se = float(np.std(d, ddof=1) / np.sqrt(len(d))) if len(d) > 1 else np.inf
         table[int(k)] = (float(means[k]), float(d.mean()), se)
-    for k in sorted(M.columns):
+    for k in keys:
         if table[int(k)][1] <= table[int(k)][2]:
             chosen = int(k)
             break
     return chosen, table
+
+
+def choose_nw_lags(losses: dict[int, pd.Series]) -> tuple[int, dict]:
+    """The fewest lead-lag lags within one standard error of the best count."""
+    return choose_simplest(losses)
+
+
+def choose_revert(losses: dict[int, pd.Series]) -> tuple[int, dict]:
+    """The weakest h-day mean reversion within one standard error of the best:
+    none first, then the longest shock half-life."""
+    return choose_simplest(losses, list(sp.REVERT_HALFLIVES))
 
 
 def _metrics_line(m: dict) -> str:
@@ -503,37 +518,59 @@ def build(rt: Runtime):
         return {"chosen": lead}
 
     def horizon_node(state: AgentState) -> dict:
-        """Choose the lead-lag lag count for the chosen model's h-day forecast.
+        """Choose the h-day settings of the chosen model: the lead-lag lag count,
+        then the mean reversion toward the long-run covariance.
 
-        The search could not: the count changes no daily forecast, so every
-        variant has the same selection loss. It is chosen here, still on the
-        validation span, by the h-day loss and the one-standard-error rule.
+        The search could not: neither changes a daily forecast, so every variant
+        has the same selection loss. They are chosen here, still on the
+        validation span, by the h-day loss and the one-standard-error rule - the
+        lags first, the reversion on top of the chosen lags.
         """
         lead = state.get("chosen")
         if lead is None:
             return {}
         base = rt.results[lead]
-        losses: dict[int, pd.Series] = {}
-        for nw in sp.NW_LAGS:
-            cand = sp.Candidate(estimation=base.candidate.estimation,
-                                risk=base.candidate.risk.model_copy(update={"nw_lags": nw}))
-            scored = base if nw == base.candidate.risk.nw_lags else rt.validation.score(cand)
-            if scored.error or scored.fc is None:
-                continue
-            hl = rr.horizon_losses(rt.validation.data.y, scored.fc, rt.horizon,
-                                   rt.validation.start, rt.validation.end)
-            losses[nw] = hl["loss"]
-        chosen, table = choose_nw_lags(losses)
-        final = sp.Candidate(estimation=base.candidate.estimation,
-                             risk=base.candidate.risk.model_copy(update={"nw_lags": chosen}))
-        rows = {str(k): {"loss": round(m, 5), "vs_best": round(d, 5), "se": round(e, 5)}
-                for k, (m, d, e) in table.items()}
+
+        def sweep(field_: str, values, risk0) -> dict[int, pd.Series]:
+            losses: dict[int, pd.Series] = {}
+            for v in values:
+                cand = sp.Candidate(estimation=base.candidate.estimation,
+                                    risk=risk0.model_copy(update={field_: v}))
+                scored = (base if cand.key() == base.candidate.key()
+                          else rt.validation.score(cand))
+                if scored.error or scored.fc is None:
+                    continue
+                hl = rr.horizon_losses(rt.validation.data.y, scored.fc, rt.horizon,
+                                       rt.validation.start, rt.validation.end)
+                losses[v] = hl["loss"]
+            return losses
+
+        def table_rows(table: dict) -> dict:
+            return {str(k): {"loss": round(m, 5), "vs_best": round(d, 5), "se": round(e, 5)}
+                    for k, (m, d, e) in table.items()}
+
+        chosen, table = choose_nw_lags(sweep("nw_lags", sp.NW_LAGS, base.candidate.risk))
+        risk = base.candidate.risk.model_copy(update={"nw_lags": chosen})
+        rows = table_rows(table)
         rec.step("horizon",
                  "Lead-lag lags for the h-day forecast, by validation h-day loss: "
                  + ", ".join(f"{k}: {v['loss']:.4f}" for k, v in rows.items())
                  + f". Chosen: {chosen} - the fewest within one standard error of the best.",
                  {"losses": rows, "chosen": chosen})
-        return {"horizon": {"nw_lags": chosen, "losses": rows},
+
+        revert, rtable = choose_revert(sweep("revert_halflife", sp.REVERT_HALFLIVES, risk))
+        risk = risk.model_copy(update={"revert_halflife": revert})
+        rrows = table_rows(rtable)
+        rec.step("horizon",
+                 "Mean reversion of the h-day forecast toward the long-run covariance, "
+                 "by the half-life of a shock (0 = none), validation h-day loss: "
+                 + ", ".join(f"{k}: {v['loss']:.4f}" for k, v in rrows.items())
+                 + f". Chosen: {revert} - the weakest within one standard error of the best.",
+                 {"losses": rrows, "chosen": revert})
+
+        final = sp.Candidate(estimation=base.candidate.estimation, risk=risk)
+        return {"horizon": {"nw_lags": chosen, "losses": rows,
+                            "revert_halflife": revert, "revert_losses": rrows},
                 "final_candidate": final.model_dump(mode="json")}
 
     def final_test_node(state: AgentState) -> dict:

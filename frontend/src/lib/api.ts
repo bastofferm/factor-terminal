@@ -414,6 +414,10 @@ export interface RiskResult {
     sigma_specific_ann: number;
     factor_risk_share: number | null;
     sigma_realized_ann: number | null;
+    /** The day the one-day forecast is for: the trading day after as_of. */
+    next_date?: string | null;
+    /** Realised volatility of the five days centred on next_date. */
+    realized_centred_ann?: number | null;
     bias_ratio: number | null;
     var95_pred: number;
     var99_pred: number;
@@ -422,7 +426,8 @@ export interface RiskResult {
     is_reliable: boolean;
     unreliable_reason: string | null;
     /** The h-day forecast, per day annualised; differs from sigma_pred_ann only
-     *  with a lead-lag adjustment or a Dimson model, and only on grid dates. */
+     *  with a lead-lag adjustment, mean reversion or a Dimson model, and only on
+     *  grid dates. */
     sigma_horizon_ann?: number | null;
   }>;
   backtest: Record<string, number | string | null> | null;
@@ -579,17 +584,22 @@ export interface PortfolioResult {
   as_of: string;
   start: string;
   horizon: number;
-  cov_halflife: number;
+  /** null: the calibrated multi-speed covariance. */
+  cov_halflife: number | null;
+  /** The factor covariance in words, e.g. "0.8 x 5-day + 0.1 x 63-day + ... EWMA". */
+  covariance: string;
   n_holdings: number;
   net_weight: number;
   gross_weight: number;
   forecast: PortfolioDecomposition & {
+    /** The h-day forecast, annualised: the daily one reverted toward the long run. */
+    vol_horizon: number | null;
     var_95: number; var_99: number; var_95_t: number | null; var_99_t: number | null;
     t_df: number | null;
   };
   active: (Omit<PortfolioDecomposition, "vol" | "systematic_vol" | "specific_vol"> & {
     benchmark: string; benchmark_name: string; benchmark_vol: number;
-    tracking_error: number;
+    tracking_error: number; tracking_error_horizon: number | null;
   }) | null;
   holdings: Array<{
     instrument_id: string; name: string | null; kind: "stock" | "fund";
@@ -598,8 +608,15 @@ export interface PortfolioResult {
     beta_to_portfolio: number | null; factor_inputs: string[] | null;
   }>;
   backtest: Record<string, Record<string, number | boolean | null>>;
-  series: Record<string, { dates: string[]; predicted: (number | null)[];
-                           realised: (number | null)[] }>;
+  /** Two like-for-like pairs on one date axis. Daily: the next-day forecast for
+   *  dates[i] (made the day before) and the realised volatility of the five days
+   *  centred on dates[i]. h-day: the h-day forecast made on dates[i] and the
+   *  realised volatility of the h days after it. */
+  series: Record<string, { dates: string[];
+                           predicted: (number | null)[];
+                           realised_centred: (number | null)[];
+                           predicted_horizon: (number | null)[];
+                           realised_forward: (number | null)[] }>;
   model: Record<string, unknown>;
   warnings: string[];
 }

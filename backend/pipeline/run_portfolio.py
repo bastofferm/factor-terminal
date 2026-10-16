@@ -8,7 +8,7 @@ and scores those forecasts against what the portfolios did. It is the only test
 of the off-diagonal structure, which is what a factor model adds over a list of
 volatilities.
 
-Five configurations share everything but the part under test:
+Seven configurations share everything but the part under test:
 
     no sector             the equity factor template
     own sector            the template plus each stock's own GICS sector factor
@@ -16,6 +16,10 @@ Five configurations share everything but the part under test:
                           factor covariance (covariance.lead_lag_term)
     no sector, fast       the first two with a 21-day factor covariance
     own sector, fast      half-life in place of 42 days
+    own sector,           the factor covariance as a mix of 5-, 63- and 252-day
+      multi-speed         EWMAs (portfolio.mixed_cov_path)
+    own sector, multi-    the same, with the h-day forecast reverting toward the
+      speed, reverting    252-day level (covariance.reversion_weight)
 
 Every forecast is causal: betas from the latest window ending at or before the
 day, the factor covariance and specific risks through that day, scored on the
@@ -74,12 +78,43 @@ SPECIFIC_HALFLIFE = 63.0
 LEAD_LAGS = 2
 LEAD_LAG_WINDOW = 504
 
-# (name, own sector factor, lead-lag lags, factor covariance half-life)
-CONFIGS = (("no sector", False, 0, COV_HALFLIFE),
-           ("own sector", True, 0, COV_HALFLIFE),
-           ("own sector, lead-lag", True, LEAD_LAGS, COV_HALFLIFE),
-           ("no sector, fast", False, 0, FAST_COV_HALFLIFE),
-           ("own sector, fast", True, 0, FAST_COV_HALFLIFE))
+# One half-life has to trade reaction for stability; a mix of three does not.
+# Mostly a 5-day EWMA, so a shock shows within days, with a quarter and a year
+# underneath so a quiet week does not take the forecast to nothing. The h-day
+# forecast then reverts toward the 252-day level, a shock decaying with a 63-day
+# half-life: g = 0.90 of the distance kept at 21 days, 0.72 at 63. Chosen on fund
+# portfolios up to June 2020 and held out after (October 2026). On this universe,
+# 21-day horizon from 2017, it beats each portfolio's own EWMA day by day in 42 of
+# 43 long portfolios and spreads (the 42-day covariance: 4) and puts every random basket's
+# bias statistic in band; the 99% t-VaR passes Kupiec slightly less often for
+# cross-sector spreads and sector baskets.
+COV_MIX = ((0.8, 5.0), (0.1, 63.0), (0.1, 252.0))
+LONG_RUN_HALFLIFE = 252.0
+REVERT_HALFLIFE = 63.0
+
+# (name, own sector factor, lead-lag lags, factor covariance - a half-life or a
+# mix of (weight, half-life) - and the h-day reversion half-life, None for none)
+CONFIGS = (("no sector", False, 0, COV_HALFLIFE, None),
+           ("own sector", True, 0, COV_HALFLIFE, None),
+           ("own sector, lead-lag", True, LEAD_LAGS, COV_HALFLIFE, None),
+           ("no sector, fast", False, 0, FAST_COV_HALFLIFE, None),
+           ("own sector, fast", True, 0, FAST_COV_HALFLIFE, None),
+           ("own sector, multi-speed", True, 0, COV_MIX, None),
+           ("own sector, multi-speed, reverting", True, 0, COV_MIX, REVERT_HALFLIFE))
+
+
+def cov_mix(cov) -> tuple[tuple[float, float], ...]:
+    """A covariance setting as a mix: a bare half-life is a mix of one."""
+    if isinstance(cov, (int, float)):
+        return ((1.0, float(cov)),)
+    return tuple((float(w), float(h)) for w, h in cov)
+
+
+def describe_cov(cov) -> str:
+    mix = cov_mix(cov)
+    if len(mix) == 1:
+        return f"half-life {mix[0][1]:g} days"
+    return " + ".join(f"{w:g} x {h:g}-day" for w, h in mix) + " EWMA"
 
 
 def universe() -> dict[str, str]:
@@ -128,9 +163,10 @@ def fit_universe(ys: dict[str, pd.Series], F: pd.DataFrame, template: list[str],
 
 def assemble(ys: dict[str, pd.Series], F: pd.DataFrame, fits: dict[str, tuple],
              days: pd.DatetimeIndex, W: np.ndarray,
-             cov_halflife: float = COV_HALFLIFE,
+             cov_halflife=COV_HALFLIFE,
              specific_halflife: float = SPECIFIC_HALFLIFE,
-             nw: int = 0, horizon: int = 21) -> dict:
+             nw: int = 0, horizon: int = 21,
+             revert_halflife: float | None = None) -> dict:
     """Daily risk forecasts for the portfolios in the columns of W.
 
     For each day t: B_t from each holding's latest window ending at or before t,
@@ -140,23 +176,30 @@ def assemble(ys: dict[str, pd.Series], F: pd.DataFrame, fits: dict[str, tuple],
         sigma^2_p = x' Sigma_F x - sum_i w_i^2 tr(Sigma_F V_i) + sum_i w_i^2 s_i^2,
         x = B' w
 
-    `W` is holdings x portfolios, rows in sorted(ys) order. Returns the forecast
-    path (annualised), the h-day path when `nw` lead-lag lags are asked for, and
-    every component, so a caller can decompose the last day.
+    `cov_halflife` is a half-life or a mix of (weight, half-life) pairs (see
+    cov_mix). `W` is holdings x portfolios, rows in sorted(ys) order. Returns the
+    daily forecast path (annualised), the h-day path - the daily one unless `nw`
+    lead-lag lags or a `revert_halflife` are asked for - and every component, so
+    a caller can decompose the last day.
     """
     names = sorted(ys)
     U = sorted({f for L, _ in fits.values() for f in L.columns})
     K = len(U)
     T = len(days)
     pos_in_F = F.index.get_indexer(days)
-    path = pf.ewma_cov_path(F[U].to_numpy(dtype=float), cov_halflife)[pos_in_F]  # T x K x K
-    path = np.nan_to_num(path)
+    mix = cov_mix(cov_halflife)
+    FA = F[U].to_numpy(dtype=float)
+    path = np.nan_to_num(pf.mixed_cov_path(FA, mix)[pos_in_F])          # T x K x K
+    # The level the h-day forecast reverts toward.
+    long_path = (np.nan_to_num(pf.ewma_cov_path(FA, LONG_RUN_HALFLIFE)[pos_in_F])
+                 if revert_halflife else None)
     FU = F[U].reindex(days).to_numpy(dtype=float)
 
     # Per holding and day: the held betas aligned to U, the held beta covariance
     # aligned to U, and the specific variance.
     B = np.zeros((T, len(names), K))
     noise = np.zeros((T, len(names)))
+    noise_lr = np.zeros((T, len(names)))
     s2 = np.full((T, len(names)), np.nan)
     pred_next = np.full((T, len(names)), np.nan)
     for i, n in enumerate(names):
@@ -175,6 +218,8 @@ def assemble(ys: dict[str, pd.Series], F: pd.DataFrame, fits: dict[str, tuple],
         B[ok, i] = Lw0[held[ok]]
         # tr(Sigma V), the beta-noise term, day by day.
         noise[ok, i] = np.einsum("tkl,tlk->t", path[ok], Vw[held[ok]])
+        if long_path is not None:
+            noise_lr[ok, i] = np.einsum("tkl,tlk->t", long_path[ok], Vw[held[ok]])
         sv = rr.oos_specific_variance(ys[n], F.reindex(ys[n].index), L, covs,
                                       specific_halflife) / rk.TRADING_DAYS
         s2[:, i] = sv.reindex(days).clip(lower=rr.SPECIFIC_FLOOR_ANN**2 / rk.TRADING_DAYS)
@@ -190,16 +235,23 @@ def assemble(ys: dict[str, pd.Series], F: pd.DataFrame, fits: dict[str, tuple],
     usable = np.all(np.isfinite(s2), axis=1)
     sig[~usable] = np.nan
 
-    sig_h = np.full_like(sig, np.nan)
+    # The h-day forecast, per day: the daily variance, plus the cross-day factor
+    # covariance with `nw` lags, then pulled toward the long-run level.
+    var_h = np.maximum(sys_, 0.0) + spec
     if nw:
-        FA = F[U].to_numpy(dtype=float)
         for t in np.flatnonzero(usable):
             lo = max(0, pos_in_F[t] - LEAD_LAG_WINDOW + 1)
-            term = cv.lead_lag_term(FA[lo:pos_in_F[t] + 1], nw, horizon, "ewma",
-                                    cov_halflife, annualize=False)
+            term = sum(w * cv.lead_lag_term(FA[lo:pos_in_F[t] + 1], nw, horizon, "ewma",
+                                            hl, annualize=False) for w, hl in mix)
             Ch = cv.horizon_covariance(path[t], np.nan_to_num(term))
             sys_h = np.einsum("kp,kl,lp->p", X[t], Ch, X[t]) - noise[t] @ W2
-            sig_h[t] = np.sqrt((np.maximum(sys_h, 0.0) + spec[t]) * rk.TRADING_DAYS)
+            var_h[t] = np.maximum(sys_h, 0.0) + spec[t]
+    if long_path is not None:
+        sys_lr = np.einsum("tkp,tkl,tlp->tp", X, long_path, X) - noise_lr @ W2
+        var_h = cv.revert_to_long_run(var_h, np.maximum(sys_lr, 0.0) + spec,
+                                      revert_halflife, horizon)
+    sig_h = np.sqrt(np.maximum(var_h, 0.0) * rk.TRADING_DAYS)
+    sig_h[~usable] = np.nan
 
     Y = np.column_stack([ys[n].reindex(days).to_numpy(dtype=float) for n in names])
     return {"names": names, "factors": U, "days": days, "W": W, "B": B, "path": path,
@@ -210,12 +262,14 @@ def assemble(ys: dict[str, pd.Series], F: pd.DataFrame, fits: dict[str, tuple],
 def run_config(name: str, nw: int, ys: dict[str, pd.Series], F: pd.DataFrame,
                fits: dict[str, tuple], sector_of: dict[str, str], days: pd.DatetimeIndex,
                portfolios: list[pf.Portfolio], horizon: int,
-               cov_halflife: float = COV_HALFLIFE,
-               specific_halflife: float = SPECIFIC_HALFLIFE) -> tuple[list[dict], dict]:
+               cov_halflife=COV_HALFLIFE,
+               specific_halflife: float = SPECIFIC_HALFLIFE,
+               revert_halflife: float | None = None) -> tuple[list[dict], dict]:
     """Forecast and score every portfolio under one configuration."""
     names = sorted(ys)
     W = np.array([[p.weights.get(n, 0.0) for p in portfolios] for n in names])   # n x P
-    a = assemble(ys, F, fits, days, W, cov_halflife, specific_halflife, nw, horizon)
+    a = assemble(ys, F, fits, days, W, cov_halflife, specific_halflife, nw, horizon,
+                 revert_halflife)
     usable, Y = a["usable"], a["Y"]
     resid = pd.DataFrame(np.nan, index=days, columns=names)
     resid.iloc[1:] = Y[1:] - a["pred_next"][:-1]
@@ -226,7 +280,8 @@ def run_config(name: str, nw: int, ys: dict[str, pd.Series], F: pd.DataFrame,
     for j, p in enumerate(portfolios):
         r = pd.Series(R @ W[:, j], index=days)
         m = pf.score(r, pd.Series(a["sig"][:, j], index=days), horizon,
-                     pd.Series(a["sig_h"][:, j], index=days) if nw else None)
+                     pd.Series(a["sig_h"][:, j], index=days)
+                     if nw or revert_halflife else None)
         rows.append({"config": name, "portfolio": p.name, "family": p.family,
                      "n_names": p.n_names, **m})
     structure = pf.residual_structure(resid, sector_of)
@@ -260,13 +315,14 @@ def run(start: str = "2017-01-01", horizon: int = 21, write: bool = True,
     template = sp.resolve_factors(sp.EstimationChoice(factor_set="template"), core, blocks,
                                   "equity")
     fits: dict[bool, dict] = {}
-    for name, sector, nw, cov_hl in CONFIGS:
+    for name, sector, nw, cov_hl, revert in CONFIGS:
         if not quiet:
             print(f"  {name} ...", flush=True)
         if sector not in fits:
             fits[sector] = fit_universe(ys, F, template, sector_of, sector)
         rows, structure = run_config(name, nw, ys, F, fits[sector], sector_of, days,
-                                     portfolios, horizon, cov_halflife=cov_hl)
+                                     portfolios, horizon, cov_halflife=cov_hl,
+                                     revert_halflife=revert)
         out["rows"] += rows
         out["structure"][name] = structure
         out["summary"][name] = pf.summarise(rows)

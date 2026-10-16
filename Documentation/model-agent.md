@@ -141,12 +141,13 @@ it, never coerced.
 
 | Risk | Values |
 |---|---|
-| covariance | sample, EWMA, Ledoit-Wolf, blend; half-life 21, 42, 60, 126; EWMA weight 0.4-1.0; window 252, 504, 756 |
+| covariance | sample, EWMA, Ledoit-Wolf, blend; half-life 5, 10, 21, 42, 60, 126; EWMA weight 0.4-1.0; window 252, 504, 756 |
 | specific risk | the window's in-sample residual, or an EWMA of out-of-sample residuals (half-life 21, 63, 126) |
 | noise correction | subtract tr(ΣV) from β′Σβ, or not |
 | refresh | at each loading window, or daily with the betas held |
 | VaR | normal, or Student t with degrees of freedom fitted to the trailing returns standardised by their own EWMA volatility |
 | lead-lag | 0, 1, 2, 3 or 5 lags of cross-day factor covariance in the h-day forecast - chosen after the search, not by it (§2.2) |
+| h-day reversion | none, or a variance shock decaying with a half-life of 126, 63 or 21 days - chosen after the lead-lag count (§2.3) |
 
 The step is fixed at 21 days: every candidate is scored on the same grid.
 
@@ -207,6 +208,31 @@ the true h-day volatility 20% higher than the daily one, 60 of them gave bias
 statistics from 0.91 to 1.26 across seeds. The one-standard-error rule keeps the
 count at zero unless the h-day evidence is clear, which is the right default for
 an adjustment that only an asynchronous security needs.
+
+### 2.3 Mean reversion of the h-day forecast
+
+A forecast scaled by √h assumes today's volatility lasts the whole horizon. It
+rarely does: after a shock it falls, after a calm month it rises. If a variance
+shock decays as φ^j, φ = 0.5^(1/half-life), the h-day average of the expected
+daily variances is
+
+    LR + g (spot - LR),   g = (1 - φ^h) / (h (1 - φ))      (covariance.reversion_weight)
+
+one day ahead g = 1, so the daily forecast is untouched. In a candidate with
+`revert_halflife`, the h-day factor covariance moves toward the Ledoit-Wolf
+matrix of the same trailing window and an out-of-sample specific variance toward
+the window's in-sample one, before the lead-lag term is added. Like the lag count,
+it changes no daily forecast, so the search cannot rank it and the proposer may
+not ask for it. `graph.horizon_node` chooses it after the lags, on the validation
+span's h-day loss, by the same one-standard-error rule, weakest first: none, then
+126, 63 and 21 days.
+
+The 5- and 10-day covariance half-lives come from the same investigation (October
+2026). On fund portfolios a 42-day half-life took twelve trading days to double
+in February 2020 and four months to come halfway back. A blend that is 80% a
+5-day EWMA and 20% the long-run matrix reacts within days without collapsing in a
+quiet week, and the critic proposes it when a daily forecast with a 21-day or
+longer half-life still loses to the own EWMA.
 
 ### Three corrections the risk half needed
 

@@ -17,6 +17,7 @@ Pure functions over numpy arrays and pandas frames; no I/O.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -80,6 +81,24 @@ def ewma_cov_path(F: np.ndarray, halflife: float, min_obs: int = 60) -> np.ndarr
         N += mm
         with np.errstate(divide="ignore", invalid="ignore"):
             out[t] = np.where((N >= min_obs) & (W > 0), S / W, np.nan)
+    return out
+
+
+def mixed_cov_path(F: np.ndarray, mix: Sequence[tuple[float, float]],
+                   min_obs: int = 60) -> np.ndarray:
+    """sum_k w_k * ewma_cov_path(F, halflife_k): a covariance with several memories.
+
+    One half-life has to choose between reacting and staying stable. A 42-day
+    EWMA took twelve trading days to double in February 2020, peaked three
+    weeks after the market did and needed four months to come halfway back. A
+    mix that is mostly a 5-day EWMA reacts within days, and its 63- and 252-day
+    parts keep it from collapsing in a quiet week. Every component sees the same
+    pairs on the same days, so they turn finite together.
+    """
+    out = None
+    for w, hl in mix:
+        P = float(w) * ewma_cov_path(F, float(hl), min_obs)
+        out = P if out is None else out + P
     return out
 
 
