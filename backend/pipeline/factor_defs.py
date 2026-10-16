@@ -141,7 +141,9 @@ FACTORS: list[dict] = [
      "method": "single", "inputs": {"instrument": "IGLT.L", "fx": "GBP"},
      "orth": ["rt_us_level"],
      "note": "No daily gilt curve exists anywhere in the warehouse, so this is an "
-             "ETF total return converted to base currency rather than a curve factor."},
+             "ETF total return converted to base currency rather than a curve factor. "
+             "The GBP leg is the NY-close spot move from FXB: the warehouse FX table "
+             "it used to come from stopped on 2026-07-09 and was a day late anyway."},
 
     {"id": "rt_breakeven", "block": "rates", "name": "Inflation Breakeven", "level": 0,
      "method": "synthetic_bond", "inputs": {"series": "FRED:T10YIE", "tenor": 10.0,
@@ -188,25 +190,28 @@ FACTORS: list[dict] = [
     # -----------------------------------------------------------------------
     # 5. FX. Spot is complete; forward points exist nowhere in the warehouse, so
     #    carry is approximated from policy-rate differentials (covered interest
-    #    parity). Breadth is limited to the four policy rates available.
+    #    parity). Breadth is limited to the four policy rates available. Every
+    #    currency leg is the NY-close spot move built from its CurrencyShares
+    #    trust (seed.FX_SPOT), not Yahoo's `=X` close, which is a day late.
     # -----------------------------------------------------------------------
     {"id": "fx_usd", "block": "fx", "name": "USD Broad", "level": 0,
      "method": "single", "inputs": {"instrument": "DX-Y.NYB", "excess": False}, "orth": [],
      "note": "Dollar index return. Not a funded position, so no cash leg."},
 
     {"id": "fx_jpy", "block": "fx", "name": "JPY (ex-USD)", "level": 1,
-     "method": "single", "inputs": {"instrument": "USDJPY=X", "excess": False, "sign": -1},
+     "method": "fx_spot", "inputs": {"fx": "JPY"},
      "orth": ["fx_usd"],
-     "note": "Sign flipped so a positive value means a stronger yen, the usual "
-             "risk-off direction."},
+     "note": "USD per yen, so a positive value is a stronger yen, the usual risk-off "
+             "direction. NY-close timing from FXY: Yahoo's USDJPY=X is a day late "
+             "since August 2010, and on it this factor correlated +0.01 with "
+             "eq_global on the same day and -0.15 on the next."},
 
     {"id": "fx_em", "block": "fx", "name": "EM FX", "level": 1,
      "method": "single", "inputs": {"instrument": "CEW"}, "orth": ["fx_usd"]},
 
     {"id": "fx_carry", "block": "fx", "name": "FX Carry (G4 approximation)", "level": 1,
      "method": "fx_carry",
-     "inputs": {"pairs": {"EUR": "EURUSD=X", "JPY": "USDJPY=X", "CHF": "USDCHF=X"},
-                "inverted": ["JPY", "CHF"]},
+     "inputs": {"fx": ["EUR", "JPY", "CHF"]},
      "orth": ["fx_usd", "fx_jpy"],
      "note": "APPROXIMATION. Built from policy-rate differentials because the "
              "warehouse has no forward points, and limited to the three non-USD "

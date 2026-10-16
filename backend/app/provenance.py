@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.pipeline import seed
+
 # What `ref_instrument.source_table` means in an analyst's terms.
 #
 # The distinction that matters is fetched-here versus mirrored: the nightly ingest
@@ -68,6 +70,10 @@ def walk_inputs(node: Any, out: list[str] | None = None) -> list[str]:
     elif isinstance(node, dict):
         for key, v in node.items():
             if key in _RECIPE_KEYS:
+                continue
+            if key == "fx":
+                # A currency code: its leg is built from a trust and a Yahoo pair.
+                walk_inputs(seed.fx_instruments(v), out)
                 continue
             walk_inputs(v, out)
     return list(dict.fromkeys(out))

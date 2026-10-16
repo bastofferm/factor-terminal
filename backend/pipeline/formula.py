@@ -217,9 +217,72 @@ def _rescale_note(target_vol: float) -> tuple[str, str, Symbol, str]:
     return plain, latex, sym, step
 
 
+FX_W = seed.FX_ACCRUAL_WINDOW
+
+
+def _fx_spot_parts(ccy: str) -> tuple[str, str, list[Symbol], list[str | Step]]:
+    """The NY-close spot leg s_t of one currency (build_factors.py::fx_spot_return)."""
+    trust, pair = seed.FX_SPOT[ccy]
+    c, t = _tex(ccy), _tex(trust)
+    plain = (f"s_t^{ccy} = r_t^{trust} - a_t^{ccy},   "
+             f"a_t^{ccy} = (ln(P_t-1^{trust} / P_t-{FX_W + 1}^{trust}) "
+             f"- ln(S_t-1^{ccy} / S_t-{FX_W + 1}^{ccy})) / {FX_W}")
+    latex = (rf"s^{{\text{{{c}}}}}_t = r^{{\text{{{t}}}}}_t - a^{{\text{{{c}}}}}_t, \qquad "
+             rf"a^{{\text{{{c}}}}}_t = \frac{{1}}{{{FX_W}}}\Bigl["
+             rf"\ln\frac{{P^{{\text{{{t}}}}}_{{t-1}}}}{{P^{{\text{{{t}}}}}_{{t-{FX_W + 1}}}}}"
+             rf" - \ln\frac{{S^{{\text{{{c}}}}}_{{t-1}}}}{{S^{{\text{{{c}}}}}_{{t-{FX_W + 1}}}}}"
+             rf"\Bigr]")
+    inverted = pair.startswith("USD")
+    where = [
+        _instrument(trust, f"the NY-listed trust holding {ccy}, which supplies the "
+                           f"timing; P is its cumulated total return"),
+        Symbol(f"S_t^{ccy}", rf"S^{{\text{{{c}}}}}_t",
+               f"USD per {ccy}, Yahoo's {pair} close"
+               + (" inverted" if inverted else "")
+               + "; used only for the trust's drift, because Yahoo dates it by "
+                 "London midnight and so runs a day behind the NY close",
+               "instrument", pair),
+    ]
+    steps: list[str | Step] = [
+        f"Take the {ccy} spot move from {trust}, which closes in New York with every "
+        f"other factor input. Yahoo's {pair} close is the rate at London midnight "
+        f"starting the day, and since {seed.YAHOO_FX_LAGGED_FROM} that is the NY move "
+        f"of the day before.",
+        Step(f"Strip the trust's deposit income less its fee: a_t^{ccy} is its drift "
+             f"over spot across the trailing {FX_W} days, ending at t-1. Over a year "
+             f"Yahoo's one-day lag moves that drift by a fraction of a basis point.",
+             rf"Strip the trust's deposit income less its fee: "
+             rf"$a^{{\text{{{c}}}}}_t$ is its drift over spot across the trailing "
+             rf"{FX_W} days, ending at $t-1$. Over a year Yahoo's one-day lag moves "
+             rf"that drift by a fraction of a basis point."),
+        Step(f"Before {seed.YAHOO_FX_LAGGED_FROM}, while Yahoo was still on the NY "
+             f"clock, its spot change stands in where the trust has no drift yet: "
+             f"s_t^{ccy} = dln(S_t^{ccy}).",
+             rf"Before {seed.YAHOO_FX_LAGGED_FROM}, while Yahoo was still on the NY "
+             rf"clock, its spot change stands in where the trust has no drift yet: "
+             rf"$s^{{\text{{{c}}}}}_t = \Delta \ln S^{{\text{{{c}}}}}_t$."),
+    ]
+    return plain, latex, where, steps
+
+
 # ---------------------------------------------------------------------------
 # one renderer per construction method
 # ---------------------------------------------------------------------------
+
+def _f_fx_spot(inputs: dict) -> Formula:
+    ccy = inputs["fx"]
+    sign = float(inputs.get("sign", 1))
+    spot_plain, spot_latex, where, steps = _fx_spot_parts(ccy)
+    c = _tex(ccy)
+    if sign != 1:
+        plain = f"{spot_plain}\nf_t = {sign:g} * s_t^{ccy}"
+        latex = rf"{spot_latex}" "\n\n" rf"f_t = {sign:g}\,s^{{\text{{{c}}}}}_t"
+    else:
+        plain = f"{spot_plain}\nf_t = s_t^{ccy}"
+        latex = rf"{spot_latex}" "\n\n" rf"f_t = s^{{\text{{{c}}}}}_t"
+    steps = list(steps) + ["No cash leg: a spot move is not a funded position."]
+    return Formula(plain, latex, where, steps)
+
 
 def _f_single(inputs: dict) -> Formula:
     inst = inputs["instrument"]
@@ -245,16 +308,18 @@ def _f_single(inputs: dict) -> Formula:
         steps.append("No cash leg: this is not a funded position, so there is nothing "
                      "to fund.")
 
+    spot_plain = spot_latex = None
     if ccy:
-        core_plain = f"({core_plain} + dln(e_t^{ccy}))"
+        core_plain = f"({core_plain} + s_t^{ccy})"
         core_latex = (rf"\bigl({core_latex} "
-                      rf"+ \Delta \ln e^{{\text{{{_tex(ccy)}}}}}_t\bigr)")
-        where.append(Symbol(f"e_t^{ccy}", rf"e^{{\text{{{_tex(ccy)}}}}}_t",
-                            f"USD per unit of {ccy}; its log change converts the local "
-                            f"return into the base currency, which is exact in logs",
-                            "level", ccy))
-        steps.append(f"Convert to the base currency by adding the log change in "
-                     f"{ccy}/USD. In logs the conversion is a sum, with no cross term.")
+                      rf"+ s^{{\text{{{_tex(ccy)}}}}}_t\bigr)")
+        spot_plain, spot_latex, spot_where, spot_steps = _fx_spot_parts(ccy)
+        where += spot_where
+        steps.append(f"Convert to the base currency by adding the NY-close log change "
+                     f"in USD per {ccy}. In logs the conversion is a sum, with no cross "
+                     f"term, and marking at the NY close is what a dollar holder's "
+                     f"position is worth on the model's clock.")
+        steps += spot_steps
 
     if sign != 1:
         plain = f"f_t = {sign:g} * {core_plain}"
@@ -265,6 +330,9 @@ def _f_single(inputs: dict) -> Formula:
         plain = f"f_t = {core_plain}"
         latex = rf"f_t = {core_latex}"
 
+    if spot_plain:
+        plain = f"{spot_plain}\n{plain}"
+        latex = f"{spot_latex}\n\n{latex}"
     return Formula(plain, latex, where, steps)
 
 
@@ -651,46 +719,64 @@ def _f_xs_momentum(inputs: dict) -> Formula:
 
 
 def _f_fx_carry(inputs: dict) -> Formula:
-    pairs: dict[str, str] = dict(inputs["pairs"])
-    inverted = set(inputs.get("inverted", []))
+    codes: list[str] = list(inputs["fx"])
     usd_rate = seed.POLICY_RATES["USD"]
 
-    legs = ", ".join(sorted(pairs))
+    legs = ", ".join(sorted(codes))
     plain = (
+        f"s_jt   = r_t^Tj - a_jt,   a_jt = (ln(P_t-1^Tj / P_t-{FX_W + 1}^Tj) "
+        f"- ln(S_j,t-1 / S_j,t-{FX_W + 1})) / {FX_W}\n"
         f"k_jt   = (i_j,t-1 - i_USD,t-1) / 100 / {TRADING_DAYS}\n"
         "p_jt   = sign(k_jt)\n"
-        "leg_jt = p_jt * (s_j * r_t^Xj + k_jt)\n"
-        f"f_t    = (1/{len(pairs)}) * sum over j of leg_jt"
+        "leg_jt = p_jt * (s_jt + k_jt)\n"
+        f"f_t    = (1/{len(codes)}) * sum over j of leg_jt"
     )
     latex = (
+        rf"s_{{j,t}} = r^{{T_j}}_t - a_{{j,t}}, \qquad "
+        rf"a_{{j,t}} = \frac{{1}}{{{FX_W}}}\Bigl["
+        rf"\ln\frac{{P^{{T_j}}_{{t-1}}}}{{P^{{T_j}}_{{t-{FX_W + 1}}}}}"
+        rf" - \ln\frac{{S_{{j,t-1}}}}{{S_{{j,t-{FX_W + 1}}}}}\Bigr]"
+        "\n\n"
         r"\kappa_{j,t} = \frac{i_{j,t-1} - i_{\text{USD},t-1}}{100 \cdot 252}, \qquad "
         r"p_{j,t} = \operatorname{sign}(\kappa_{j,t})"
         "\n\n"
-        rf"f_t = \frac{{1}}{{{len(pairs)}}}\sum_j p_{{j,t}}"
-        r"\bigl(s_j\,r^{X_j}_t + \kappa_{j,t}\bigr)"
+        rf"f_t = \frac{{1}}{{{len(codes)}}}\sum_j p_{{j,t}}"
+        r"\bigl(s_{j,t} + \kappa_{j,t}\bigr)"
     )
 
     where: list[Symbol] = []
-    for ccy, ticker in sorted(pairs.items()):
+    for ccy in sorted(codes):
         sid = seed.POLICY_RATES.get(ccy)
-        flipped = ccy in inverted
+        trust, pair = seed.FX_SPOT[ccy]
         where.append(_instrument(
-            ticker,
-            f"{ccy} spot leg" + (", sign flipped so the quoted pair reads as long the "
-                                 "foreign currency against the dollar" if flipped
-                                 else "")))
+            trust, f"{ccy} spot leg T_j: the NY-listed trust holding {ccy}, long the "
+                   f"currency against the dollar; P is its cumulated total return"))
+        where.append(Symbol(
+            f"S_{ccy}", rf"S_{{\text{{{_tex(ccy)}}}}}",
+            f"USD per {ccy}, Yahoo's {pair} close"
+            + (" inverted" if pair.startswith("USD") else "")
+            + "; enters only the trust's drift a_jt", "instrument", pair))
         if sid:
             where.append(_level(
                 sid, f"{ccy} policy rate i_{ccy}, annualised percent",
                 rf"{ccy} policy rate $i_{{\text{{{_tex(ccy)}}}}}$, annualised percent"))
     where.append(_level(usd_rate, "USD policy rate, the funding leg"))
-    where.append(Symbol("s_j", "s_j",
-                        "+1 or -1, whichever orients the quoted pair as long the "
-                        "foreign currency against the dollar", "constant"))
 
     return Formula(
         plain, latex, where,
-        [f"Carry is approximated from policy-rate differentials ({legs} against USD) "
+        [Step(f"Each spot leg s_jt is the NY-close move of its currency against the "
+              f"dollar: the trust's return less its own deposit income, which is its "
+              f"drift a_jt over Yahoo spot across the trailing {FX_W} days. Without "
+              f"that the carry below would be counted twice. Before "
+              f"{seed.YAHOO_FX_LAGGED_FROM}, where a trust has no drift yet, Yahoo's "
+              f"spot change stands in.",
+              rf"Each spot leg $s_{{j,t}}$ is the NY-close move of its currency against "
+              rf"the dollar: the trust's return less its own deposit income, which is "
+              rf"its drift $a_{{j,t}}$ over Yahoo spot across the trailing {FX_W} days. "
+              rf"Without that the carry below would be counted twice. Before "
+              rf"{seed.YAHOO_FX_LAGGED_FROM}, where a trust has no drift yet, Yahoo's "
+              rf"spot change stands in."),
+         f"Carry is approximated from policy-rate differentials ({legs} against USD) "
          f"because the warehouse holds no forward points. Covered interest parity says "
          f"the forward discount equals the rate differential, so this stands in for "
          f"it.",
@@ -717,6 +803,7 @@ _RENDERERS = {
     "abs_return_surprise": _f_abs_return_surprise,
     "tsmom": _f_tsmom,
     "xs_momentum": _f_xs_momentum,
+    "fx_spot": _f_fx_spot,
     "fx_carry": _f_fx_carry,
 }
 
@@ -872,6 +959,8 @@ _BUILDER_HELPERS: dict[str, list[tuple[str, str]]] = {
     "spread_level": [("backend.core.transforms", "diff_standardized")],
     "abs_return_surprise": [("backend.core.transforms", "abs_return_surprise")],
     "single": [("backend.core.transforms", "to_excess_return")],
+    "fx_spot": [("backend.pipeline.build_factors", "fx_spot_return")],
+    "fx_carry": [("backend.pipeline.build_factors", "fx_spot_return")],
 }
 
 
@@ -917,15 +1006,17 @@ def source_code(method: str, inputs: dict[str, Any] | None = None) -> dict:
             "curve": "_curve", "synthetic_bond": "_synthetic_bond",
             "spread_level": "_spread_level", "level_transform": "_level_transform",
             "abs_return_surprise": "_abs_return_surprise", "tsmom": "_tsmom",
-            "xs_momentum": "_xs_momentum", "fx_carry": "_fx_carry",
+            "xs_momentum": "_xs_momentum", "fx_spot": "_fx_spot",
+            "fx_carry": "_fx_carry",
         }.get(method)
     if entry is None:
         return {"method": method, "builder": None, "helpers": [], "call": ""}
 
     builder = _source_of("backend.pipeline.build_factors", entry)
-    helpers = [h for h in (_source_of(m, f)
-                          for m, f in _BUILDER_HELPERS.get(method, []))
-               if h is not None]
+    named = list(_BUILDER_HELPERS.get(method, []))
+    if method == "single" and (inputs or {}).get("fx"):
+        named.append(("backend.pipeline.build_factors", "fx_spot_return"))
+    helpers = [h for h in (_source_of(m, f) for m, f in named) if h is not None]
 
     rendered = _json.dumps(inputs or {}, indent=4, sort_keys=True)
     call = (f"# backend/pipeline/build_factors.py, in build_one()\n"

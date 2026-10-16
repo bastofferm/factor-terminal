@@ -238,16 +238,9 @@ async def _load(kind: str, series_id: str, start: date | None,
             await _instrument_sources(named)
             + await _level_sources(named, inputs.get("tenors")))
 
-        # A currency named in the inputs is converted through fact_input_fx rather
-        # than being an instrument or a level series, so it resolves to neither of
-        # the queries above and would otherwise vanish from the source list.
-        ccy = inputs.get("fx")
-        if ccy:
-            meta["sources"].append({
-                "id": ccy, "kind": "fx", "label": ccy,
-                "source": "xbrl_sec warehouse",
-                "name": f"USD per {ccy}",
-            })
+        # A currency named in the inputs (`fx`) is expanded by walk_inputs into
+        # the trust and the Yahoo pair its leg is built from, so it resolves as
+        # two instruments above rather than as the warehouse FX table.
 
         meta["code"] = fm.source_code(construction.get("method"), inputs)
     else:

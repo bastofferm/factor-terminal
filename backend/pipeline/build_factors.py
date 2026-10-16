@@ -38,7 +38,7 @@ class Panels:
                  fx: pd.DataFrame, cash: pd.Series) -> None:
         self.returns = returns          # date x instrument, log returns
         self.levels = levels            # date x series_id, raw levels
-        self.fx = fx                    # date x ccy, usd_per_unit
+        self.fx = fx                    # date x ccy, usd_per_unit (Yahoo spot)
         self.cash = cash                # date, annualised percent
         self.index = returns.index
         self.built: dict[str, pd.Series] = {}
@@ -60,15 +60,63 @@ class Panels:
         out = tr.to_excess_return(r.to_numpy(), self.cash.to_numpy())
         return pd.Series(out, index=self.index)
 
+    def fx_spot(self, ccy: str) -> pd.Series:
+        """Log change in USD per unit of `ccy`, from one NY close to the next."""
+        if ccy not in seed.FX_SPOT:
+            raise KeyError(f"no NY-close FX leg defined for {ccy!r}")
+        trust, _pair = seed.FX_SPOT[ccy]
+        if ccy not in self.fx.columns:
+            raise KeyError(f"no spot level for {ccy!r}")
+        return fx_spot_return(self.ret(trust), self.fx[ccy])
+
     def in_base_ccy(self, s: pd.Series, ccy: str) -> pd.Series:
-        """r_base = r_local + r_fx, exact in logs."""
+        """r_base = r_local + r_fx, exact in logs.
+
+        The FX leg is the NY-close spot move. A London-listed gilt last priced at
+        16:30 London is worth, to a dollar investor at the NY close, that price at
+        that evening's exchange rate, so this is the conversion that marks the
+        position on the model's clock rather than an approximation to it.
+        """
         base = get_settings().base_ccy
         if ccy == base:
             return s
-        if ccy not in self.fx.columns:
-            raise KeyError(f"no FX series for {ccy!r}; cannot convert to {base}")
-        r_fx = pd.Series(tr.log_diff(self.fx[ccy].to_numpy()), index=self.index)
-        return s + r_fx
+        return s + self.fx_spot(ccy)
+
+
+def fx_spot_return(trust: pd.Series, spot: pd.Series,
+                   lagged_from: str = seed.YAHOO_FX_LAGGED_FROM,
+                   window: int = seed.FX_ACCRUAL_WINDOW) -> pd.Series:
+    """NY-close spot return of a currency, from its NY-listed trust.
+
+        s_t = r_t^trust - a_t
+        a_t = [ln(P_{t-1}/P_{t-1-W}) - ln(S_{t-1}/S_{t-1-W})] / W
+
+    The trust closes with every other factor input, so it carries the timing. Its
+    total return also carries the deposit rate the trust earns less its fee, and
+    a_t takes that out: the trust's drift over the spot level S across the trailing
+    W days, which ends at t-1 so day t's own return is never in it. S is Yahoo's,
+    a day late since August 2010, but over a year that shifts the drift by one
+    day's move divided by W - a fraction of a basis point. Being a trailing average,
+    it follows a moving deposit rate with about half a year's lag: on the trusts the
+    yearly residual against spot is 0.2-0.35% a year, against 1-3% unstripped.
+
+    Where the trust has no drift yet - before it listed, and for its first W days -
+    the Yahoo spot change stands in, but only before `lagged_from`, while Yahoo was
+    still on the NY clock. After it a missing trust day stays missing.
+    """
+    idx = trust.index
+    log_p = trust.cumsum().ffill()            # cumsum skips gaps; the level holds
+    log_s = np.log(spot.reindex(idx))
+    drift = (log_p - log_s).shift(1).diff(window) / window
+    # The drift is a one-year average; a spot gap of a few weeks barely moves it,
+    # but it is not carried any further than that.
+    drift = drift.ffill(limit=21)
+    out = trust - drift
+
+    fallback = log_s.diff()
+    early = out.isna() & (idx < pd.Timestamp(lagged_from))
+    out[early] = fallback[early]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +179,65 @@ def roll_onto_calendar(s: pd.Series, idx: pd.DatetimeIndex) -> pd.Series:
     return rolled.groupby(level=0).last().reindex(idx)
 
 
+def spot_levels(rows: pd.DataFrame) -> pd.DataFrame:
+    """USD per unit of each FX_SPOT currency, from its Yahoo pair's closes.
+
+    `rows` has columns date, instrument_id, close. A USDxxx=X pair quotes the
+    foreign currency per dollar and is inverted, so every column reads the same
+    way round as the trust that holds the currency.
+    """
+    out = {}
+    for ccy, (_trust, pair) in seed.FX_SPOT.items():
+        s = rows.loc[rows["instrument_id"] == pair].set_index("date")["close"].astype(float)
+        if s.empty:
+            continue
+        s.index = pd.to_datetime(s.index)
+        out[ccy] = 1.0 / s if pair.startswith("USD") else s
+    return pd.DataFrame(out).sort_index()
+
+
+def align_spot(fx: pd.DataFrame, idx: pd.DatetimeIndex) -> pd.DataFrame:
+    """Spot levels on the trading calendar, carried over a short gap and no further.
+
+    A level carried forward without limit is a currency that stopped moving: every
+    later change is exactly zero, and nothing downstream can tell that from a quiet
+    market. Past FX_FFILL_LIMIT days the level is missing and so is every return
+    built on it.
+    """
+    return fx.reindex(idx).ffill(limit=seed.FX_FFILL_LIMIT)
+
+
+def load_spot_levels(cur: Any) -> pd.DataFrame:
+    """Spot levels from the Yahoo pairs in fact_input_return, which ingest_yahoo
+    refreshes nightly. Not fact_input_fx: that table is the warehouse's copy of the
+    same Yahoo source, refreshed only when the warehouse job runs, and it stopped on
+    2026-07-09."""
+    pairs = [pair for _trust, pair in seed.FX_SPOT.values()]
+    cur.execute(
+        "SELECT date, instrument_id, adj_close FROM fact_input_return "
+        "WHERE instrument_id = ANY(%s) AND adj_close > 0",
+        (pairs,),
+    )
+    return spot_levels(pd.DataFrame(cur.fetchall(), columns=["date", "instrument_id", "close"]))
+
+
+def ny_spot(cur: Any, ccy: str) -> tuple[pd.Series, pd.Series]:
+    """(NY-close spot log returns, Yahoo spot level) of `ccy` on the trading
+    calendar - the same leg the factors convert with, for a security that is
+    converted outside the panel (sync.sync_security)."""
+    trust, _pair = seed.FX_SPOT[ccy]
+    idx = pd.DatetimeIndex(sorted(pd.to_datetime(list(trading_calendar(cur)))))
+    cur.execute("SELECT date, ret_log FROM fact_input_return "
+                "WHERE instrument_id = %s AND ret_log IS NOT NULL", (trust,))
+    rows = cur.fetchall()
+    r = pd.Series([float(v) for _, v in rows], index=pd.to_datetime([d for d, _ in rows]),
+                  dtype=float).reindex(idx)
+    fx = align_spot(load_spot_levels(cur), idx)
+    if ccy not in fx.columns:
+        raise KeyError(f"no spot level for {ccy!r}")
+    return fx_spot_return(r, fx[ccy]), fx[ccy]
+
+
 def load_panels(cur: Any) -> Panels:
     calendar = trading_calendar(cur)
     cur.execute(
@@ -150,10 +257,7 @@ def load_panels(cur: Any) -> Panels:
     levels = ldf.pivot(index="date", columns="series_id", values="value").sort_index()
     levels.index = pd.to_datetime(levels.index)
 
-    cur.execute("SELECT date, ccy, usd_per_unit FROM fact_input_fx")
-    fdf = pd.DataFrame(cur.fetchall(), columns=["date", "ccy", "usd_per_unit"])
-    fx = fdf.pivot(index="date", columns="ccy", values="usd_per_unit").sort_index()
-    fx.index = pd.to_datetime(fx.index)
+    fx = load_spot_levels(cur)
 
     # The trading calendar is the equity-return calendar. Level series are
     # reindexed onto it; macro series that only print weekly are NOT forward
@@ -164,7 +268,7 @@ def load_panels(cur: Any) -> Panels:
     levels = levels.reindex(idx)
     for c, rolled in released.items():
         levels[c] = rolled
-    fx = fx.reindex(idx).ffill()
+    fx = align_spot(fx, idx)
 
     # The cash rate is an overnight rate quoted every business day; forward filling
     # a holiday is a statement about an unchanged policy rate, not invented data.
@@ -368,6 +472,11 @@ def _xs_momentum(p: Panels, inputs: dict) -> pd.Series:
     return (weight * R).sum(axis=1).where(n_long.notna() & n_short.notna())
 
 
+def _fx_spot(p: Panels, inputs: dict) -> pd.Series:
+    """A currency's NY-close spot return against the dollar. Unfunded: no cash leg."""
+    return p.fx_spot(inputs["fx"]) * float(inputs.get("sign", 1))
+
+
 def _fx_carry(p: Panels, inputs: dict) -> pd.Series:
     """Carry basket from policy-rate differentials.
 
@@ -375,18 +484,19 @@ def _fx_carry(p: Panels, inputs: dict) -> pd.Series:
     parity is used to stand in for the forward discount. Breadth is three non-USD
     currencies, so this is narrower and noisier than a real G10 carry basket.
     """
-    pairs = inputs["pairs"]
-    inverted = set(inputs.get("inverted", []))
-
     usd_rate = p.level(seed.POLICY_RATES["USD"]).ffill()
     legs: list[pd.Series] = []
-    for ccy, ticker in pairs.items():
+    for ccy in inputs["fx"]:
         rate_sid = seed.POLICY_RATES.get(ccy)
-        if rate_sid is None or rate_sid not in p.levels.columns or ticker not in p.returns.columns:
+        trust = seed.FX_SPOT.get(ccy, (None, None))[0]
+        if (rate_sid is None or rate_sid not in p.levels.columns
+                or trust not in p.returns.columns):
             continue
         foreign = p.level(rate_sid).ffill()
-        # Spot return expressed as "long the foreign currency against USD".
-        spot = p.ret(ticker) * (-1.0 if ccy in inverted else 1.0)
+        # Spot return, long the foreign currency against USD. The trust's own
+        # deposit income is stripped out of it, so the carry below is not counted
+        # twice.
+        spot = p.fx_spot(ccy)
         carry = (foreign - usd_rate).shift(1) / 100.0 / tr.TRADING_DAYS
         # Sign the position by the rate differential: long high-yielders.
         position = np.sign(carry)
@@ -408,6 +518,7 @@ BUILDERS = {
     "abs_return_surprise": _abs_return_surprise,
     "tsmom": _tsmom,
     "xs_momentum": _xs_momentum,
+    "fx_spot": _fx_spot,
     "fx_carry": _fx_carry,
 }
 
