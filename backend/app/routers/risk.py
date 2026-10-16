@@ -33,6 +33,16 @@ def _run_blocking(instruments: list[str], spec_id: str, horizon: int, method: st
     rr.run(instruments, spec_id, horizon, method, quiet=True)
 
 
+def _returns(instrument_id: str) -> pd.Series:
+    """The security's excess returns, as the forecasts were made and scored on."""
+    from backend.pipeline import run_estimation as est
+    from backend.pipeline.dbsync import connect
+    with connect() as conn, conn.cursor() as cur:
+        y = est.load_instrument(cur, instrument_id)
+    y.index = pd.to_datetime(y.index)
+    return y
+
+
 @router.post("/security")
 async def security_risk(req: RiskRequest) -> dict:
     """Ex-ante forecast against the realised outcome, plus the full backtest.
@@ -76,6 +86,18 @@ async def security_risk(req: RiskRequest) -> dict:
     )
     if not forecasts:
         raise HTTPException(422, "no forecasts could be produced for this combination")
+
+    # What the one-day forecast is a forecast of: the volatility of the day after
+    # its date, measured over the five days centred on that day. The h-day forecast
+    # is paired with sigma_realized_ann, the h days after its date, as stored.
+    y = await asyncio.to_thread(_returns, req.instrument_id)
+    ctr = pd.Series(rk.centred_realized(y.to_numpy(), 5), index=y.index)
+    nxt = y.index.searchsorted(pd.DatetimeIndex([f["as_of_date"] for f in forecasts]),
+                               side="right")
+    for f, k in zip(forecasts, nxt):
+        ok = k < len(y) and np.isfinite(ctr.iloc[k])
+        f["next_date"] = y.index[k].date() if k < len(y) else None
+        f["realized_centred_ann"] = float(ctr.iloc[k]) if ok else None
 
     # The full-history backtest, and - for a model the agent chose - the one on the
     # held-out span its search never saw. Only the second is evidence about the

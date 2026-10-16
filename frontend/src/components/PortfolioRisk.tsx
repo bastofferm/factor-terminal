@@ -17,6 +17,7 @@ import { Chart, PALETTE, Panel } from "@/components/Chart";
 import { InfoTip } from "@/components/InfoTip";
 import { MetricCard, MetricStrip, alignFor } from "@/components/MetricCard";
 import { SecuritySearch } from "@/components/SecuritySearch";
+import { VolPair, VolPairToggle, volPairCaption } from "@/components/VolPairToggle";
 import {
   api, Fund, num, pct, PortfolioHolding, PortfolioJob, PortfolioPreset, pval,
 } from "@/lib/api";
@@ -42,7 +43,8 @@ export function PortfolioRisk() {
   const [rows, setRows] = useState<Row[]>([]);
   const [benchmark, setBenchmark] = useState<string>("");
   const [horizon, setHorizon] = useState(21);
-  const [covHalflife, setCovHalflife] = useState(42);
+  // null: the calibrated multi-speed covariance; a number: one EWMA half-life.
+  const [covHalflife, setCovHalflife] = useState<number | null>(null);
 
   // fund filters
   const [fundGroup, setFundGroup] = useState("all");
@@ -183,12 +185,14 @@ export function PortfolioRisk() {
             </select>
           </div>
           <div>
-            <label className="label">Covariance half-life</label>
-            <select className="field mt-1 w-48" value={covHalflife} disabled={running}
-                    onChange={(e) => setCovHalflife(Number(e.target.value))}>
-              <option value={42}>42 days (calibrated)</option>
-              <option value={21}>21 days (fast)</option>
-              <option value={63}>63 days (slow)</option>
+            <label className="label">Factor covariance</label>
+            <select className="field mt-1 w-56" value={covHalflife ?? "mix"} disabled={running}
+                    onChange={(e) => setCovHalflife(e.target.value === "mix"
+                                                    ? null : Number(e.target.value))}>
+              <option value="mix">Multi-speed (calibrated)</option>
+              <option value={21}>Half-life 21 days</option>
+              <option value={42}>Half-life 42 days</option>
+              <option value={63}>Half-life 63 days</option>
             </select>
           </div>
           <button className="btn ml-auto min-w-[150px]" onClick={start} disabled={running}>
@@ -361,6 +365,36 @@ function outlier(b: Record<string, any>): string {
        + ` (z ${num(z, 1)})`;
 }
 
+/** A forecast against the realised measure of what it forecasts, either pair. */
+function PairChart({ title, series, horizon, what, label, colors, lead }: {
+  title: string;
+  series: NonNullable<PortfolioJob["result"]>["series"][string];
+  horizon: number;
+  what: string;
+  label: string;
+  colors: [string, string];
+  lead?: string;
+}) {
+  const [pair, setPair] = useState<VolPair>("horizon");
+  const h = pair === "horizon";
+  return (
+    <Panel title={title}
+           caption={(lead ? lead + " " : "") + volPairCaption(pair, horizon, what)}
+           actions={<VolPairToggle value={pair} onChange={setPair} horizon={horizon} />}>
+      <Chart height={300} data={[
+        { x: series.dates, y: h ? series.predicted_horizon : series.predicted,
+          type: "scatter", mode: "lines",
+          name: h ? `${label} (${horizon}-day)` : `${label} (next day)`,
+          line: { color: colors[0], width: 1.4 } },
+        { x: series.dates, y: h ? series.realised_forward : series.realised_centred,
+          type: "scatter", mode: "lines",
+          name: h ? `realised (next ${horizon} days)` : "realised (5 days centred)",
+          line: { color: colors[1], width: 1.1 } },
+      ]} layout={{ yaxis: { title: `annualised ${what}`, tickformat: ".0%" } }} />
+    </Panel>
+  );
+}
+
 function Results({ res }: { res: NonNullable<PortfolioJob["result"]> }) {
   const f = res.forecast;
   const bt = res.backtest.portfolio as Record<string, any>;
@@ -371,7 +405,10 @@ function Results({ res }: { res: NonNullable<PortfolioJob["result"]> }) {
   const t = (label: string, value: string, sub: string, tone: Tone, metric: Metric): Tile =>
     ({ label, value, sub, tone, metric });
   const tiles: Tile[] = [
-    t("Predicted volatility", pct(f.vol), `as of ${res.as_of}`, "neutral", PM.predictedVol),
+    t("Predicted volatility", pct(f.vol),
+      `as of ${res.as_of}` + (f.vol_horizon != null
+        ? ` · next ${res.horizon} days ${pct(f.vol_horizon)}` : ""),
+      "neutral", PM.predictedVol),
     t("Systematic share", pct(f.systematic_share ?? null, 0),
       `systematic ${pct(f.systematic_vol)} · specific ${pct(f.specific_vol)}`, "neutral",
       PM.systematicShare),
@@ -404,8 +441,10 @@ function Results({ res }: { res: NonNullable<PortfolioJob["result"]> }) {
              caption={`As of ${res.as_of}. Backtested on ${res.start} to ${res.as_of}: every
                forecast used only data up to its own day. Model: ${res.model.window}-day OLS
                refitted every ${res.model.step} days on the orthogonalised panel, factor
-               covariance half-life ${res.cov_halflife} days, specific risk from
-               out-of-sample residuals, beta noise removed.`}>
+               covariance ${res.covariance}, specific risk from out-of-sample residuals,
+               beta noise removed. The ${res.horizon}-day forecast reverts toward the
+               252-day level, a shock decaying with a ${res.model.revert_halflife}-day
+               half-life.`}>
         <MetricStrip>
           {tiles.map((x, i) => (
             <MetricCard key={x.label} label={x.label} value={x.value} sub={x.sub}
@@ -422,32 +461,19 @@ function Results({ res }: { res: NonNullable<PortfolioJob["result"]> }) {
       </Panel>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <Panel title="Predicted versus realised volatility"
-               caption={`Predicted is the forecast for the next day; realised is the
-                 volatility of the following ${res.horizon} days. They should track.`}>
-          <Chart height={300} data={[
-            { x: s.dates, y: s.predicted, type: "scatter", mode: "lines", name: "predicted",
-              line: { color: PALETTE[0], width: 1.4 } },
-            { x: s.dates, y: s.realised, type: "scatter", mode: "lines",
-              name: `realised (next ${res.horizon} days)`,
-              line: { color: PALETTE[1], width: 1.1 } },
-          ]} layout={{ yaxis: { title: "annualised volatility", tickformat: ".0%" } }} />
-        </Panel>
+        <PairChart title="Predicted versus realised volatility" series={s}
+                   horizon={res.horizon} what="volatility" label="predicted"
+                   colors={[PALETTE[0], PALETTE[1]]} />
 
         {act && res.series.active && (
-          <Panel title={`Tracking error against ${act.benchmark}`}
-                 caption={`The same forecast on the active weights: the portfolio less one
-                   unit of ${act.benchmark_name}. Backtest bias statistic
-                   ${num(abt?.bias_stat, 3)} (band 1 ± ${num(abt?.bias_band, 3)})${
-                   abt ? outlier(abt) : ""}.`}>
-            <Chart height={300} data={[
-              { x: res.series.active.dates, y: res.series.active.predicted, type: "scatter",
-                mode: "lines", name: "predicted TE", line: { color: PALETTE[3], width: 1.4 } },
-              { x: res.series.active.dates, y: res.series.active.realised, type: "scatter",
-                mode: "lines", name: `realised (next ${res.horizon} days)`,
-                line: { color: PALETTE[4], width: 1.1 } },
-            ]} layout={{ yaxis: { title: "annualised tracking error", tickformat: ".0%" } }} />
-          </Panel>
+          <PairChart title={`Tracking error against ${act.benchmark}`}
+                     series={res.series.active} horizon={res.horizon}
+                     what="tracking error" label="predicted TE"
+                     colors={[PALETTE[3], PALETTE[4]]}
+                     lead={`The same forecast on the active weights: the portfolio less one
+                       unit of ${act.benchmark_name}. Backtest bias statistic
+                       ${num(abt?.bias_stat, 3)} (band 1 ± ${num(abt?.bias_band, 3)})${
+                       abt ? outlier(abt) : ""}.`} />
         )}
 
         <Panel title="Risk by factor block"

@@ -333,6 +333,38 @@ def horizon_covariance(daily_cov: np.ndarray, term: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# mean reversion over the horizon
+# ---------------------------------------------------------------------------
+
+def reversion_weight(halflife: float | None, horizon: int) -> float:
+    """How much of today's distance from the long-run variance an h-day forecast keeps.
+
+    Volatility reverts: if a variance shock decays as phi^j, phi = 0.5^(1/halflife),
+    the expected variance of day t+1+j is LR + phi^j (spot - LR), and the h-day
+    average of those is LR + g (spot - LR) with
+
+        g = (1 - phi^h) / (h (1 - phi)).
+
+    One day ahead g = 1, so the daily forecast is the spot. Without it the h-day
+    forecast is the spot scaled by sqrt(h): a crash month is forecast to last the
+    whole horizon, and so is a calm one. `halflife` None or 0 means no reversion.
+    """
+    if not halflife or horizon <= 1:
+        return 1.0
+    phi = 0.5 ** (1.0 / float(halflife))
+    return float((1.0 - phi**horizon) / (horizon * (1.0 - phi)))
+
+
+def revert_to_long_run(spot, long_run, halflife: float | None, horizon: int):
+    """LR + g (spot - LR): a variance or covariance matrix for the h-day average."""
+    g = reversion_weight(halflife, horizon)
+    if g == 1.0:
+        return spot
+    return np.asarray(long_run, dtype=float) + g * (np.asarray(spot, dtype=float)
+                                                    - np.asarray(long_run, dtype=float))
+
+
+# ---------------------------------------------------------------------------
 # specific risk
 # ---------------------------------------------------------------------------
 

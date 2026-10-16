@@ -277,6 +277,11 @@ export function CandidateCard({
                         √{d.run.horizon_days}{e.dimson_lags ? ", with the betas summed "
                           + "over lags" : ""}. The lead-lag count is chosen after the
                         search, for the winner only.</>}
+                  {r.revert_halflife
+                    ? <> It then reverts toward the long-run covariance and specific
+                        variance, a shock decaying with a {r.revert_halflife}-day
+                        half-life.</>
+                    : null}
                 </Row>
               </Rows>
               <Formulas lines={riskLines(e, r, d.factors.length, d.run.horizon_days)} />

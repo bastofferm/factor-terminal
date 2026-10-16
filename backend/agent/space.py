@@ -26,7 +26,9 @@ from backend.pipeline.run_risk import RiskSpec
 WINDOWS = (126, 252, 378, 504, 756)
 EWMA_HALFLIVES = (42, 63, 126, 252)
 RIDGE_LAMBDAS = (0.01, 0.03, 0.1, 0.3, 1.0)
-COV_HALFLIVES = (21, 42, 60, 126)
+# 5 and 10 days: with the blend's long-run matrix underneath, a covariance that
+# reacts within days to a shock and still does not collapse in a quiet week.
+COV_HALFLIVES = (5, 10, 21, 42, 60, 126)
 EWMA_WEIGHTS = (0.4, 0.6, 0.8, 1.0)
 COV_WINDOWS = (252, 504, 756)
 SPECIFIC_HALFLIVES = (21, 63, 126)
@@ -35,6 +37,11 @@ SPECIFIC_HALFLIVES = (21, 63, 126)
 # them. A stage after the search picks the count on the validation span's h-day
 # loss (graph.horizon_node).
 NW_LAGS = (0, 1, 2, 3, 5)
+# Mean reversion of the h-day forecast toward the long-run covariance, as the
+# half-life of a variance shock; 0 for none. Chosen after the search like the
+# lead-lag lags, and for the same reason. Weakest first: 126 days keeps 0.92 of
+# today's distance from the long run over 21 days, 21 days keeps 0.68.
+REVERT_HALFLIVES = (0, 126, 63, 21)
 
 # Every candidate is scored on the same monthly grid, so the roll-forward step is
 # not a choice the search makes.
@@ -124,7 +131,7 @@ class RiskChoice(_Strict):
     """How a forecast is assembled from the betas."""
 
     cov_method: Literal["sample", "ewma", "ledoit_wolf", "blend"] = "blend"
-    halflife: Literal[21, 42, 60, 126] = 60
+    halflife: Literal[5, 10, 21, 42, 60, 126] = 60
     ewma_weight: Literal[0.4, 0.6, 0.8, 1.0] = 0.6
     cov_window: Literal[252, 504, 756] = 504
     specific: Literal["insample", "ewma"] = "insample"
@@ -133,6 +140,7 @@ class RiskChoice(_Strict):
     refresh: Literal["window", "daily"] = "window"
     var_dist: Literal["normal", "t"] = "normal"
     nw_lags: Literal[0, 1, 2, 3, 5] = 0
+    revert_halflife: Literal[0, 21, 63, 126] = 0
 
     def to_spec(self) -> RiskSpec:
         return RiskSpec(cov_method=self.cov_method, halflife=float(self.halflife),
@@ -140,7 +148,8 @@ class RiskChoice(_Strict):
                         specific=self.specific,
                         specific_halflife=float(self.specific_halflife),
                         debias=self.debias, refresh=self.refresh, var_dist=self.var_dist,
-                        nw_lags=int(self.nw_lags))
+                        nw_lags=int(self.nw_lags),
+                        revert_halflife=float(self.revert_halflife))
 
 
 # The original model, expressed in the search space: the reference point every
@@ -149,7 +158,8 @@ class RiskChoice(_Strict):
 LEGACY_RISK = RiskChoice()
 
 
-_KEY_OPTIONAL = (("estimation", "sector", "none"), ("risk", "nw_lags", 0))
+_KEY_OPTIONAL = (("estimation", "sector", "none"), ("risk", "nw_lags", 0),
+                 ("risk", "revert_halflife", 0))
 
 
 class Candidate(_Strict):
@@ -198,6 +208,8 @@ class Candidate(_Strict):
             risk.append("t-VaR")
         if r.nw_lags:
             risk.append(f"lead-lag{r.nw_lags}")
+        if r.revert_halflife:
+            risk.append(f"revert{r.revert_halflife}")
         return " ".join(bits) + " | " + " ".join(risk)
 
 
@@ -292,7 +304,7 @@ def schema_text() -> str:
             "estimator 'ridge' requires ridge_lambda; others require null",
             "dimson_lags 0 requires dimson_set 'none'; dimson_lags > 0 requires another set",
             "sector 'own' requires a sector_factor in the security profile",
-            "the lead-lag adjustment of the h-day forecast is chosen by code after the "
-            "search; it is not part of a candidate",
+            "the lead-lag adjustment and the mean reversion of the h-day forecast are "
+            "chosen by code after the search; they are not part of a candidate",
         ],
     }, indent=1)

@@ -61,6 +61,13 @@ def hints(leader: sp.Candidate, metrics: dict, profile: dict) -> list[Hint]:
                 f"with a short EWMA and track specific risk out of sample.",
                 {"risk": {"refresh": "daily", "cov_method": "ewma", "halflife": 21,
                           "specific": "ewma", "specific_halflife": 21, "debias": True}}))
+        elif r.halflife > 5:
+            out.append(Hint(
+                f"Daily and on a {r.halflife}-day covariance, the forecast still loses to "
+                f"the own EWMA ({label} {q:.4f} vs {q0:.4f}). Let a 5-day EWMA carry 80% "
+                f"of the matrix and the shrunk long-run one the rest: it reacts within "
+                f"days and does not collapse in a quiet week.",
+                {"risk": {"cov_method": "blend", "halflife": 5, "ewma_weight": 0.8}}))
 
     bias = _g(metrics, "mean_bias")
     if bias is not None and bias < 0.95 and not r.debias:

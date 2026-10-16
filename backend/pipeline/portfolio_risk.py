@@ -9,8 +9,10 @@ structure: how holdings move together. This runs the model on a portfolio:
     panel, on its asset-class factor template - a stock with its own sector
     factor, a sector fund with its sector's;
   * the forecast for day t+1 is x' Sigma_F x less the beta-noise term plus the
-    weighted specific variances, with Sigma_F a causal EWMA (half-life 42 days by
-    default) and specific risk tracked from out-of-sample residuals;
+    weighted specific variances, with Sigma_F a causal mix of 5-, 63- and 252-day
+    EWMAs by default (or one half-life) and specific risk tracked from
+    out-of-sample residuals; the h-day forecast reverts from there toward the
+    252-day level, since a shock rarely lasts the whole horizon;
   * it is backtested on the portfolio's own returns, decomposed by holding and by
     factor block on the latest day, and - against a benchmark fund - turned into
     a tracking error.
@@ -179,17 +181,34 @@ def ensure_fit(model: HoldingModel, y: pd.Series, F: pd.DataFrame,
 # the portfolio
 # ---------------------------------------------------------------------------
 
-def _forward_vol(r: pd.Series, h: int) -> pd.Series:
-    """Annualised standard deviation of the h returns after each day."""
-    fwd = r[::-1].rolling(h, min_periods=max(2, h // 2)).std()[::-1].shift(-1)
-    return fwd * np.sqrt(rk.TRADING_DAYS)
+# The chart offers two like-for-like pairs, each forecast against a measure of
+# what it forecasts:
+#   h-day  the h-day forecast made on day t against the realised volatility of
+#          days t+1 .. t+h - the pairing the bias statistic scores;
+#   daily  the next-day forecast against the realised volatility of the five days
+#          centred on the day it is for - close to that day's variance, readable.
+# A one-day forecast drawn against an h-day window is neither, and the window's
+# placement then decides how far one line seems to lead the other.
+CENTRED_WINDOW = 5
+
+
+def _pairs(r: pd.Series, sig: pd.Series, sig_h: pd.Series, horizon: int) -> dict:
+    fwd = pd.Series(rk.forward_realized(r.to_numpy(), horizon), index=r.index)
+    # The daily forecast dated t is for day t+1, so it is drawn on t+1, the day
+    # its centred window is centred on.
+    ctr = pd.Series(rk.centred_realized(r.to_numpy(), CENTRED_WINDOW), index=r.index)
+    return {"predicted": sig.shift(1), "realised_centred": ctr,
+            "predicted_horizon": sig_h, "realised_forward": fwd}
 
 
 def run(holdings: list[tuple[str, float]], benchmark: str | None = None,
-        horizon: int = 21, cov_halflife: float = rp.COV_HALFLIFE,
+        horizon: int = 21, cov_halflife: float | None = None,
         progress: Callable[[str], None] | None = None) -> dict:
     """Forecast, backtest and decompose a portfolio. Weights are as given -
-    long-only weights summing to one, or anything else."""
+    long-only weights summing to one, or anything else. `cov_halflife` None is the
+    calibrated multi-speed covariance (run_portfolio.COV_MIX); a number is one
+    EWMA half-life."""
+    cov = rp.COV_MIX if cov_halflife is None else float(cov_halflife)
     say = progress or (lambda m: None)
     weights: dict[str, float] = {}
     for iid, w in holdings:
@@ -271,7 +290,8 @@ def run(holdings: list[tuple[str, float]], benchmark: str | None = None,
             W[i, 1] = 1.0 if iid == benchmark else 0.0
             W[i, 2] = W[i, 0] - W[i, 1]
     a = rp.assemble({i: ys[i] for i in usable_ids}, F, {i: fits[i] for i in usable_ids},
-                    days, W, cov_halflife=cov_halflife)
+                    days, W, cov_halflife=cov, horizon=horizon,
+                    revert_halflife=rp.REVERT_HALFLIFE)
 
     R = np.nan_to_num(a["Y"])
     out_series, backtests = {}, {}
@@ -279,12 +299,13 @@ def run(holdings: list[tuple[str, float]], benchmark: str | None = None,
     for j, c in enumerate(cols):
         r = pd.Series(R @ W[:, j], index=days)
         sig = pd.Series(a["sig"][:, j], index=days)
-        backtests[c] = pf.score(r, sig, horizon)
+        sig_h = pd.Series(a["sig_h"][:, j], index=days)
+        backtests[c] = pf.score(r, sig, horizon, sig_h)
         keep = usable
         out_series[c] = {
             "dates": [d.date().isoformat() for d in days[keep]],
-            "predicted": _clean(sig[keep].to_numpy()),
-            "realised": _clean(_forward_vol(r, horizon)[keep].to_numpy()),
+            **{k: _clean(v[keep].to_numpy())
+               for k, v in _pairs(r, sig, sig_h, horizon).items()},
         }
 
     # The latest day with a forecast: the decomposition and the numbers on top.
@@ -347,6 +368,7 @@ def run(holdings: list[tuple[str, float]], benchmark: str | None = None,
         bench.pop("_d")
         active = {"benchmark": benchmark, "benchmark_name": names.get(benchmark, benchmark),
                   "benchmark_vol": bench["vol"], "tracking_error": act["vol"],
+                  "tracking_error_horizon": _f(a["sig_h"][t, 2]),
                   "by_block": act["by_block"], "factors": act["factors"],
                   "systematic_share": act["systematic_share"]}
 
@@ -377,8 +399,10 @@ def run(holdings: list[tuple[str, float]], benchmark: str | None = None,
         "as_of": days[t].date().isoformat(),
         "start": days[np.flatnonzero(usable)[0]].date().isoformat(),
         "horizon": horizon, "cov_halflife": cov_halflife,
+        "covariance": rp.describe_cov(cov),
         "n_holdings": int(np.sum(W[:, 0] != 0)), "net_weight": net, "gross_weight": gross,
-        "forecast": {**port, "var_95": var_n[0.95], "var_99": var_n[0.99],
+        "forecast": {**port, "vol_horizon": _f(a["sig_h"][t, 0]),
+                     "var_95": var_n[0.95], "var_99": var_n[0.99],
                      "var_95_t": var_t[0.95] if var_t else None,
                      "var_99_t": var_t[0.99] if var_t else None,
                      "t_df": _f(df)},
@@ -388,6 +412,8 @@ def run(holdings: list[tuple[str, float]], benchmark: str | None = None,
         "series": out_series,
         "model": {"window": WINDOW, "step": STEP, "estimator": "ols",
                   "panel": "orthogonalised", "cov_halflife": cov_halflife,
+                  "cov_mix": [list(m) for m in rp.cov_mix(cov)],
+                  "revert_halflife": rp.REVERT_HALFLIFE,
                   "specific_halflife": rp.SPECIFIC_HALFLIFE, "debias": True,
                   "refresh": "daily"},
         "warnings": warnings,

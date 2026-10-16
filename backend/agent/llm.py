@@ -264,9 +264,10 @@ def parse(text: str, ctx: dict) -> tuple[Proposal | None, list[str]]:
         if not isinstance(est_u, dict) or not isinstance(risk_u, dict):
             errors.append(f"candidate {i}: 'estimation' and 'risk' must be objects")
             continue
-        if "nw_lags" in risk_u:
-            errors.append(f"candidate {i}: nw_lags is chosen by code after the search, "
-                          f"not proposed")
+        chosen_later = [k for k in ("nw_lags", "revert_halflife") if k in risk_u]
+        if chosen_later:
+            errors.append(f"candidate {i}: {', '.join(chosen_later)} is chosen by code "
+                          f"after the search, not proposed")
             continue
         e.update(est_u)
         r.update(risk_u)

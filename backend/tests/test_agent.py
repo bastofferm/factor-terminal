@@ -298,6 +298,7 @@ def test_new_fields_leave_existing_candidate_keys_alone():
     d = c.model_dump(mode="json")
     d["estimation"].pop("sector")
     d["risk"].pop("nw_lags")
+    d["risk"].pop("revert_halflife")
     legacy = hashlib.sha256(json.dumps(d, sort_keys=True, separators=(",", ":"))
                             .encode()).hexdigest()[:12]
     assert c.key() == legacy

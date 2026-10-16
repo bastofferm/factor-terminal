@@ -233,17 +233,44 @@ a calibration screen before parsimony (`selection.calibrated`), and the stock's 
 sector factor is not charged as a parameter, because its value is in portfolio
 risk, which one stock's loss cannot see. Results in [§ Results](#what-pooling-and-the-screen-did-to-the-choice).
 
+### 13. The forecast lagged volatility, and the chart made it look worse (16 October)
+
+The Risk Lens drew the *next-day* forecast against realised volatility over the
+next h days. That pairs a point forecast with an h-day average: a shock in March
+lifts the realised line from December, and no causal forecast can follow it
+there. On the global multi-asset portfolio the 42-day forecast lines up exactly
+with *trailing* 63-day realised volatility, and even a 5-day EWMA trails the
+forward line by 55 days. The charts now offer two like-for-like pairs behind a
+toggle: the h-day forecast against the realised volatility of the next h days,
+both on the forecast date (the pairing the bias statistic scores), and the
+next-day forecast against the five days centred on the day it is for
+(`risk.centred_realized`), close to a point estimate of that day's volatility.
+On the daily pair the multi-speed forecast peaks on 17 March 2020, a day after
+realised.
+
+The part that was the model's: one 42-day half-life. In February 2020 it took
+twelve trading days to double, peaked three weeks after the market and needed 94
+trading days to come halfway back; long-only portfolios lost to their own EWMA
+day by day. An equal-weighted sample is worse, not better - a 252-day window has
+an average age of 126 days and holds a shock at full weight for a year, then
+drops it in a day. The portfolio forecast now uses a mix of 5-, 63- and 252-day
+EWMAs (0.8 / 0.1 / 0.1), and its h-day forecast reverts toward the 252-day level
+with a 63-day shock half-life (`portfolio.mixed_cov_path`,
+`covariance.reversion_weight`). The agent can choose the single-security
+equivalents: half-lives of 5 and 10 days in the blend, and the h-day reversion
+in the stage after the search ([model agent](model-agent.md#23-mean-reversion-of-the-h-day-forecast)).
+
 ### Still open
 
 - **`vol_variance_premium`** is r²-based and will dominate the covariance after a
   crash day, as `vol_rates` did; the same surprise construction would fit it.
 - **The agent's per-security choices are not aggregated.** The portfolio test uses
   one configuration for every stock.
-- **Long-only portfolios do not beat their own EWMA volatility day by day** at
-  the 42-day covariance; at 21 days they do, with sector factors, at a cost in
-  calibration (§ Results). Fund portfolios show the same trade: at 42 days all
-  five lose to their own EWMA (DM p ≤ 0.005). At 21 days four tie with it, and
-  the fitted-t 99% VaR fails Kupiec for four of five at either half-life.
+- **The 99% tail at the multi-speed covariance.** It beats the portfolios' own
+  EWMA day by day, but the fitted-t 99% VaR passes Kupiec for fewer sector
+  baskets (73% against 82%) and cross-sector spreads (91% against 100%) than the
+  42-day covariance did, and for the all-weather fund portfolio it breaches 60
+  times against about 40 expected (§ Results).
 - **Ridge and the noise correction.** The tr(ΣV) correction assumes unbiased
   betas; ridge betas are shrunk, so the two together understate risk. The
   calibration screen keeps such fits from being chosen; it does not correct them.
@@ -397,6 +424,29 @@ formal statistic. The trade between speed and tails is the same one the stock
 portfolios showed. A 21-day covariance ties with the portfolio's own EWMA where a
 42-day one loses to it, and it breaches the 99% VaR more often. The 60/40 loses
 at either speed.
+
+### Multi-speed covariance and h-day reversion (16 October)
+
+The 54-stock universe again, 21-day horizon, own sector factors, scored from
+2017. Mean daily loss minus each portfolio's own EWMA's (negative is better than
+own EWMA), share of portfolios beating own EWMA by the daily loss, share with
+the bias statistic in band (median in brackets), share whose fitted-t 99% VaR
+passes Kupiec:
+
+| | Daily loss − own EWMA | Beats own EWMA | In band | t-VaR 99% |
+|---|---|---|---|---|
+| 42-day | +0.042 | market 0, sectors 0, random 0, cross 36% | market 0% (1.14), sectors 73%, random 90% (1.10), cross 82% | sectors 82%, cross 100%, random 80% |
+| 21-day | −0.003 | market 1, sectors 55%, random 60%, cross 82% | market 0% (1.18), sectors 73%, random 70% (1.12), cross 82% | sectors 55%, cross 100%, random 30% |
+| Multi-speed, reverting | **−0.046** | market 1, sectors 100%, random 100%, cross 91% | market 100% (1.05), sectors 73%, random **100%** (1.03), cross 82% | sectors 73%, cross 91%, random 80% |
+
+The reversion changes no daily number; it moves the 21-day bias statistics
+toward 1 (random baskets 1.06 to 1.03, the market 1.09 to 1.05). On the fund
+portfolios at a 63-day horizon the daily Diebold-Mariano statistic against own
+EWMA goes from +2.8, +4.7 and +3.3 (global multi-asset, 60/40, all-weather; the
+42-day covariance losing) to −3.3, −1.8 and −1.0. The global multi-asset bias
+statistic rises from 1.45 to 1.55, all of it in the block from 19 December 2019:
+without it, 0.82. The weights were chosen on fund portfolios up to June 2020 and
+held out after; the stock universe was not used to choose them.
 
 ### What the agent chose
 

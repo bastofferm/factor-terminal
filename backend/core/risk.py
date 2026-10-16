@@ -93,6 +93,30 @@ def forward_realized(returns: np.ndarray, horizon: int) -> np.ndarray:
     return out
 
 
+def centred_realized(returns: np.ndarray, window: int = 5) -> np.ndarray:
+    """Realised volatility of the `window` days centred on t, annualised.
+
+    What a one-day forecast is a forecast of is that day's variance, and the
+    squared return is its only unbiased measure - but one so noisy (its standard
+    deviation is about 1.4 times its mean) that drawn as a line it is a cloud. Five
+    days around t keep it close to a point estimate and make it readable. Zero-mean,
+    as the forecasts are: over five days a sample mean is noise, and subtracting
+    it would take a degree of freedom from four. NaN where fewer than window - 1
+    of the days are observed, so the ends of the series are left out.
+    """
+    r2 = np.asarray(returns, dtype=float) ** 2
+    ok = np.isfinite(r2)
+    k = np.ones(int(window))
+    s = np.convolve(np.where(ok, r2, 0.0), k, mode="same")
+    n = np.convolve(ok.astype(float), k, mode="same")
+    half = int(window) // 2
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = np.where(n >= window - 1, np.sqrt(s / n * TRADING_DAYS), np.nan)
+    out[:half] = np.nan
+    out[len(out) - half:] = np.nan
+    return out
+
+
 # ---------------------------------------------------------------------------
 # bias
 # ---------------------------------------------------------------------------

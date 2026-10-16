@@ -84,6 +84,11 @@ class RiskSpec:
         covariance.lead_lag_term). Changes sigma_horizon_ann only: the daily
         forecast, its VaR and its daily loss are untouched, because a day's
         return does not contain tomorrow's catch-up.
+    revert_halflife: mean reversion of the h-day forecast, 0 for none. The
+        factor covariance moves toward the Ledoit-Wolf matrix of the same window
+        and the out-of-sample specific variance toward the window's in-sample
+        one, keeping covariance.reversion_weight(revert_halflife, h) of the
+        distance. sigma_horizon_ann only, like nw_lags.
     """
 
     cov_method: str = "blend"
@@ -96,13 +101,15 @@ class RiskSpec:
     refresh: str = "window"
     var_dist: str = "normal"
     nw_lags: int = 0
+    revert_halflife: float = 0.0
 
     def as_dict(self) -> dict:
         d = asdict(self)
-        # Added after agent labels were first stored: left out at its default so
-        # every existing label still names the same assembly.
-        if not d.get("nw_lags"):
-            d.pop("nw_lags", None)
+        # Added after agent labels were first stored: left out at their defaults
+        # so every existing label still names the same assembly.
+        for k in ("nw_lags", "revert_halflife"):
+            if not d.get(k):
+                d.pop(k, None)
         return d
 
     def is_legacy(self) -> bool:
@@ -259,6 +266,12 @@ def factor_covariance(F: pd.DataFrame, pos: int, names: Sequence[str], risk: Ris
     return C, usable
 
 
+def _long_run(risk: RiskSpec) -> RiskSpec:
+    """The level an h-day forecast reverts toward: the shrunk sample covariance
+    of the same trailing window."""
+    return RiskSpec(cov_method="ledoit_wolf", cov_window=risk.cov_window)
+
+
 def horizon_factor_covariance(F: pd.DataFrame, pos: int, usable: list[str], risk: RiskSpec,
                               horizon: int, daily: np.ndarray,
                               cache: dict | None = None) -> np.ndarray:
@@ -266,8 +279,10 @@ def horizon_factor_covariance(F: pd.DataFrame, pos: int, usable: list[str], risk
     `risk.nw_lags` lags, from the same trailing window and the same weights."""
     if risk.nw_lags <= 0 or horizon <= 1:
         return daily
+    # `daily` may already be reverted toward the long run, so the reversion is
+    # part of what the cached matrix depends on.
     key = ("horizon", pos, tuple(usable), risk.cov_method, risk.halflife,
-           risk.ewma_weight, risk.cov_window, risk.nw_lags, horizon)
+           risk.ewma_weight, risk.cov_window, risk.nw_lags, horizon, risk.revert_halflife)
     if cache is not None and key in cache:
         return cache[key]
     lo = max(0, pos - risk.cov_window + 1)
@@ -424,11 +439,12 @@ def forecast(
     many candidates computes it once.
 
     `sigma_pred_ann` is the volatility of a day's return; `sigma_horizon_ann` that
-    of the h-day return, per day and annualised. They differ in two cases. With
+    of the h-day return, per day and annualised. They differ in three cases. With
     `nw_lags` the factor covariance gains the cross-day terms of factors that
     close at different times. With a Dimson design the beta is the collapsed sum
     over lags, whose cross-lag terms belong to a multi-day return and not to a
-    day's. The h-day figure is computed on grid rows and the last row only: it is
+    day's. With `revert_halflife` the covariance and specific variance move
+    toward their long-run levels, since a shock rarely lasts the horizon. The h-day figure is computed on grid rows and the last row only: it is
     scored on the grid, and a daily path of it would double the cost of a daily
     refresh for numbers nothing reads.
     """
@@ -529,11 +545,20 @@ def forecast(
         # The h-day forecast. The stored beta of a Dimson window is already the
         # collapsed sum over lags, and its stored covariance is the sum's.
         sigma_h = total
-        if risk.nw_lags > 0 or dimson:
+        if risk.nw_lags > 0 or dimson or risk.revert_halflife:
             sigma_h = np.nan
             if risk.refresh == "window" or as_of in on_grid or as_of == last_date:
-                Ch = horizon_factor_covariance(F, pos, usable, risk, horizon, C, cache)
-                sigma_h = cv.predicted_volatility(beta, Ch, spec_var, beta_cov=V)[0]
+                C_d, spec_h = C, spec_var
+                if risk.revert_halflife:
+                    C_lr, lr_usable = factor_covariance(F, pos, usable, _long_run(risk), cache)
+                    if C_lr is not None and lr_usable == usable:
+                        C_d = cv.revert_to_long_run(C, C_lr, risk.revert_halflife, horizon)
+                    if spec_path is not None:
+                        spec_h = max(float(cv.revert_to_long_run(
+                            spec_var, max(insample, SPECIFIC_FLOOR_ANN**2),
+                            risk.revert_halflife, horizon)), SPECIFIC_FLOOR_ANN**2)
+                Ch = horizon_factor_covariance(F, pos, usable, risk, horizon, C_d, cache)
+                sigma_h = cv.predicted_volatility(beta, Ch, spec_h, beta_cov=V)[0]
         ok, reason = reliability(float(meta["cond"]), float(meta["vif"]), orthogonalized)
         df = float(df_path.get(as_of, np.nan)) if df_path is not None else np.nan
         dist, dfv = ("t", df) if np.isfinite(df) else ("normal", 5.0)

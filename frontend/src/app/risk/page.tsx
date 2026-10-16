@@ -21,6 +21,7 @@ import { SecuritySearch } from "@/components/SecuritySearch";
 import { backtest } from "@/lib/verdict";
 import { usePublishSnapshot } from "@/lib/chat-context";
 import { PortfolioRisk } from "@/components/PortfolioRisk";
+import { VolPair, VolPairToggle, volPairCaption } from "@/components/VolPairToggle";
 
 const HORIZONS = [
   [5, "1 week"], [21, "1 month"], [63, "3 months"], [126, "6 months"],
@@ -71,6 +72,7 @@ function SecurityRisk() {
   const [result, setResult] = useState<RiskResult | null>(null);
   const [std, setStd] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const [pair, setPair] = useState<VolPair>("horizon");
   const [error, setError] = useState<string | null>(null);
 
   /**
@@ -140,6 +142,11 @@ function SecurityRisk() {
   const bt = result?.backtest as any;
   const reliable = (result?.forecasts ?? []).filter((f) => f.is_reliable);
   const scored = reliable.filter((f) => f.sigma_realized_ann !== null);
+  // The h-day forecast exists on every row, or - for a daily refresh with a lead-lag
+  // or reversion adjustment - on grid rows only; stored before it existed, nowhere.
+  const anyHorizon = scored.some((f) => f.sigma_horizon_ann != null);
+  const horizonRows = anyHorizon ? scored.filter((f) => f.sigma_horizon_ann != null) : scored;
+  const dailyRows = reliable.filter((f) => f.next_date && f.realized_centred_ann != null);
 
   const latest = reliable[reliable.length - 1];
   usePublishSnapshot(
@@ -306,17 +313,31 @@ function SecurityRisk() {
         {scored.length > 0 && (
           <Panel
             title="Predicted versus realised volatility"
-            caption="Predicted uses only information available at each date; realised covers the following horizon. The two should track, not merely average out."
+            caption={volPairCaption(pair, result!.horizon_days)}
+            actions={<VolPairToggle value={pair} onChange={setPair}
+                                    horizon={result!.horizon_days} />}
           >
             <Chart
               height={300}
-              data={[
-                { x: scored.map((f) => f.as_of_date), y: scored.map((f) => f.sigma_pred_ann),
-                  type: "scatter", mode: "lines", name: "predicted",
+              data={pair === "horizon" ? [
+                { x: horizonRows.map((f) => f.as_of_date),
+                  y: horizonRows.map((f) => f.sigma_horizon_ann ?? f.sigma_pred_ann),
+                  type: "scatter", mode: "lines",
+                  name: `predicted (${result!.horizon_days}-day)`,
                   line: { color: PALETTE[0], width: 1.5 } },
-                { x: scored.map((f) => f.as_of_date),
-                  y: scored.map((f) => f.sigma_realized_ann),
-                  type: "scatter", mode: "lines", name: "realised (forward)",
+                { x: horizonRows.map((f) => f.as_of_date),
+                  y: horizonRows.map((f) => f.sigma_realized_ann),
+                  type: "scatter", mode: "lines",
+                  name: `realised (next ${result!.horizon_days} days)`,
+                  line: { color: PALETTE[1], width: 1.5 } },
+              ] : [
+                { x: dailyRows.map((f) => f.next_date!),
+                  y: dailyRows.map((f) => f.sigma_pred_ann),
+                  type: "scatter", mode: "lines", name: "predicted (next day)",
+                  line: { color: PALETTE[0], width: 1.5 } },
+                { x: dailyRows.map((f) => f.next_date!),
+                  y: dailyRows.map((f) => f.realized_centred_ann ?? null),
+                  type: "scatter", mode: "lines", name: "realised (5 days centred)",
                   line: { color: PALETTE[1], width: 1.5 } },
               ]}
               layout={{ yaxis: { title: "annualised volatility", tickformat: ".0%" } }}
