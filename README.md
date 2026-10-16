@@ -77,6 +77,14 @@ its HTML, follows every asset each one references, and restarts the web app when
 any of them fails to resolve. The route list comes from the prerendered pages on
 disk, so adding a page cannot leave it unchecked.
 
+After a `git pull`, run it again and it runs the pulled code. Each part records
+the git tree it was built or started from. The API is restarted if `backend/`
+has changed since it started, the frontend is rebuilt if `frontend/` has changed
+since its build, and the web dependencies are reinstalled if the lock file has
+changed. Only committed changes count; for live edits use the commands below.
+The first run after this was added restarts and rebuilds once, since nothing
+had been recorded yet.
+
 To stop, close the two minimised *Factor Terminal* windows.
 
 ---
