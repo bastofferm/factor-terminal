@@ -2,7 +2,8 @@
 
 Every transfer is a single server-side INSERT ... SELECT over postgres_fdw, so no
 row ever passes through Python. Incremental by watermark: each table resumes from
-its own MAX(date).
+its own MAX(date). The one exception is a foreign-currency security pulled on
+demand, a few thousand rows converted to USD at the NY close (`convert_to_base`).
 
 The equity analysis universe (5,376 US + 4,500 JP names) is deliberately *not*
 mirrored wholesale — that would be 31M rows for a tool that examines one security
@@ -16,6 +17,9 @@ from __future__ import annotations
 import argparse
 import sys
 from typing import Any
+
+import numpy as np
+import pandas as pd
 
 from backend.app.settings import get_settings
 from backend.pipeline import seed
@@ -274,6 +278,65 @@ def sync_reference_factors(cur: Any, full: bool) -> int:
     return cur.rowcount
 
 
+def convert_to_base(local: pd.DataFrame, spot: pd.Series, level: pd.Series) -> pd.DataFrame:
+    """A foreign security's returns in the base currency, marked at the NY close.
+
+    `local` is indexed by the security's own trading dates, with close, adj_close,
+    log_return and volume; `spot` is the NY-close log change in base currency per
+    unit of the local one on the model's trading calendar, `level` the spot level
+    there.
+
+    A Tokyo close at t held by a dollar investor is worth, at that evening's NY
+    close, the yen price times that evening's exchange rate. So
+
+        r_usd,t = r_local,t + sum of spot_d over NY days d in (t_prev, t]
+
+    where t_prev is the security's previous trading date. The sum carries a US
+    trading day on which Tokyo was shut into the next Tokyo return, and a US
+    holiday adds nothing, so every FX move is counted exactly once. A row whose
+    interval holds a missing FX day, or that is newer than the last NY close on
+    the calendar, is dropped: its FX move is not known yet.
+
+    Prices are converted at a level that cumulates the same NY-close moves,
+    anchored at the newest Yahoo spot, so ln(adj_usd_t / adj_usd_prev) is r_usd,t
+    exactly.
+    """
+    idx = spot.index
+    cum = spot.fillna(0.0).cumsum().to_numpy()
+    holes = spot.isna().cumsum().to_numpy()
+    dates = pd.DatetimeIndex(local.index)
+    pos = idx.searchsorted(dates, side="right") - 1
+    known = (pos >= 0) & (dates <= idx[-1])
+
+    p = np.where(known, pos, 0)
+    L = np.where(known, cum[p], np.nan)
+    H = np.where(known, holes[p], -1)
+    L_prev = np.concatenate([[np.nan], L[:-1]])
+    H_prev = np.concatenate([[-1], H[:-1]])
+    ok = known & np.concatenate([[False], known[:-1]]) & (H == H_prev)
+    # The first day of the spot series has no change behind it.
+    ok &= p > 0
+
+    fx_leg = np.where(ok, L - L_prev, np.nan)
+    ret_log = local["log_return"].to_numpy(dtype=float) + fx_leg
+
+    valid_level = level.notna().to_numpy()
+    anchor = int(np.flatnonzero(valid_level)[-1]) if valid_level.any() else None
+    if anchor is None:
+        rate = np.full(len(dates), np.nan)
+    else:
+        rate = float(level.iloc[anchor]) * np.exp(L - cum[anchor])
+
+    out = pd.DataFrame({
+        "close": local["close"].to_numpy(dtype=float) * rate,
+        "adj_close": local["adj_close"].to_numpy(dtype=float) * rate,
+        "ret_simple": np.expm1(ret_log),
+        "ret_log": ret_log,
+        "volume": local["volume"].to_numpy(),
+    }, index=dates)
+    return out[np.isfinite(out["ret_log"])]
+
+
 def sync_security(cur: Any, instrument_id: str) -> int:
     """Pull one equity on demand, in the base currency.
 
@@ -287,15 +350,18 @@ def sync_security(cur: Any, instrument_id: str) -> int:
     almost exactly, and an adjusted R-squared of 0.098 against 0.282 on the
     converted series.
 
-    The warehouse carries the converted columns already, so this is a column
-    choice, not a computation. For US names the two are bit-identical and either
-    would do; the branch is on the currency rather than the jurisdiction so a third
-    market added later is converted by default rather than by remembering to.
+    The conversion is done here, not taken from the warehouse's USD columns. Those
+    use the warehouse FX table, which is Yahoo's London-midnight rate - a day behind
+    the NY close since 2010 - and which stopped in June 2026, taking every Japanese
+    USD return with it. Here the local return gets the same NY-close spot leg the
+    factors use (convert_to_base), so the currency part of a Japanese stock lines
+    up with fx_jpy on the same day instead of the day before. The branch is on the
+    currency rather than the jurisdiction so a third market added later is
+    converted by default rather than by remembering to.
 
-    Days where the FX rate is missing are dropped rather than filled with the local
-    return. That loses 17 days of 6,620 for JP:1904, and the alternative is a series
-    that is USD on most days and yen on a few, which is the bug this fixes wearing a
-    smaller hat.
+    Days where the FX move is unknown are dropped rather than filled with the local
+    return; the alternative is a series that is USD on most days and yen on a few,
+    which is the bug this fixes wearing a smaller hat.
     """
     try:
         juris, ticker = instrument_id.split(":", 1)
@@ -311,9 +377,6 @@ def sync_security(cur: Any, instrument_id: str) -> int:
     local_ccy = {"US": "USD", "JP": "JPY"}[juris]
     convert = local_ccy != base
 
-    cols = ("close_usd, adj_close_usd, return_usd, log_return_usd" if convert
-            else "close, adj_close, return, log_return")
-    guard = "log_return_usd IS NOT NULL" if convert else "log_return IS NOT NULL"
     note = (f"on-demand security, {local_ccy} converted to {base}" if convert
             else "on-demand security")
 
@@ -328,14 +391,16 @@ def sync_security(cur: Any, instrument_id: str) -> int:
         """,
         (instrument_id, ticker, table, base, note),
     )
+    if convert:
+        return _sync_converted(cur, instrument_id, table, ticker, local_ccy, base)
     cur.execute(
         f"""
         INSERT INTO fact_input_return
             (instrument_id, date, close, adj_close, ret_simple, ret_log, volume,
              currency, source)
-        SELECT %s, date, {cols}, volume, %s, 'warehouse'
+        SELECT %s, date, close, adj_close, return, log_return, volume, %s, 'warehouse'
         FROM warehouse_sec.{table}
-        WHERE ticker = %s AND {guard}
+        WHERE ticker = %s AND log_return IS NOT NULL
           -- The first observation of a series has no prior price, so whatever sits
           -- in its return column is not a return. The warehouse computes one
           -- anyway: AAPL gets -5.775 on 2000-01-03, a log return of minus five,
@@ -354,6 +419,62 @@ def sync_security(cur: Any, instrument_id: str) -> int:
         (instrument_id, base, ticker, ticker),
     )
     return cur.rowcount
+
+
+def _sync_converted(cur: Any, instrument_id: str, table: str, ticker: str,
+                    local_ccy: str, base: str) -> int:
+    """The foreign-currency path of sync_security: local prices, NY-close FX.
+
+    The whole series is re-derived and replaced, so a name pulled under the old
+    warehouse conversion does not keep rows of both kinds.
+    """
+    from psycopg2.extras import execute_values
+
+    from backend.pipeline import build_factors as bf
+
+    if base != "USD":
+        raise SystemExit(f"FX legs are quoted in USD; cannot convert to {base}")
+    spot, level = bf.ny_spot(cur, local_ccy)
+
+    cur.execute(
+        f"SELECT date, close, adj_close, log_return, volume FROM warehouse_sec.{table} "
+        f"WHERE ticker = %s AND close IS NOT NULL ORDER BY date",
+        (ticker,),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return 0
+    local = pd.DataFrame(rows, columns=["date", "close", "adj_close", "log_return", "volume"])
+    local.index = pd.to_datetime(local.pop("date"))
+    local[["close", "adj_close", "log_return"]] = local[["close", "adj_close",
+                                                         "log_return"]].astype(float)
+    out = convert_to_base(local, spot, level)
+    # The warehouse's first row has no prior price behind its return (see the US
+    # path above); dropped by position.
+    out = out[out.index > local.index.min()]
+
+    cur.execute("DELETE FROM fact_input_return WHERE instrument_id = %s", (instrument_id,))
+    payload = [
+        (instrument_id, d.date(), _num(r.close), _num(r.adj_close), float(r.ret_simple),
+         float(r.ret_log), None if pd.isna(r.volume) else int(r.volume), base, "warehouse")
+        for d, r in out.iterrows()
+    ]
+    execute_values(
+        cur,
+        """
+        INSERT INTO fact_input_return
+            (instrument_id, date, close, adj_close, ret_simple, ret_log, volume,
+             currency, source)
+        VALUES %s
+        """,
+        payload,
+        page_size=1000,
+    )
+    return len(payload)
+
+
+def _num(v: Any) -> float | None:
+    return float(v) if v is not None and np.isfinite(v) else None
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +505,48 @@ def refresh_coverage(cur: Any) -> int:
         """,
         (s.liveness_stale_days,),
     )
-    return cur.rowcount
+    n = cur.rowcount
+    return n + refresh_fx_coverage(cur, s.liveness_stale_days)
+
+
+def refresh_fx_coverage(cur: Any, stale_days: int) -> int:
+    """The same gate for fact_input_fx, which is keyed by currency.
+
+    Measured against the newest return date, not against the table's own newest
+    date: a table that stops all at once is stale in every currency, and judged by
+    its own maximum it would look perfectly fresh. That is how this one stopped on
+    2026-07-09 without anything noticing.
+
+    The factors no longer read this table - their FX legs are the NY-listed trusts
+    and Yahoo pairs in fact_input_return, gated above - but the warehouse's USD
+    columns for Japanese equities are converted from the same source, so a stale
+    currency here is a warning about every on-demand JP security too.
+    """
+    cur.execute(
+        """
+        WITH cov AS (
+            SELECT ccy, min(date) AS f, max(date) AS l, count(*) AS n
+            FROM fact_input_fx GROUP BY 1
+        ),
+        asof AS (SELECT max(date) AS d FROM fact_input_return)
+        INSERT INTO ref_fx_coverage (ccy, first_obs, last_obs, n_obs, is_live, updated_at)
+        SELECT ccy, f, l, n, l >= (SELECT d FROM asof) - %s, now() FROM cov
+        ON CONFLICT (ccy) DO UPDATE SET
+            first_obs = EXCLUDED.first_obs, last_obs = EXCLUDED.last_obs,
+            n_obs = EXCLUDED.n_obs, is_live = EXCLUDED.is_live,
+            updated_at = EXCLUDED.updated_at
+        """,
+        (stale_days,),
+    )
+    n = cur.rowcount
+    cur.execute("SELECT ccy, last_obs FROM ref_fx_coverage "
+                "WHERE NOT is_live AND ccy = ANY(%s) ORDER BY ccy",
+                (sorted(seed.FX_SPOT),))
+    stale = cur.fetchall()
+    if stale:
+        print("  fact_input_fx is stale: "
+              + ", ".join(f"{c} (last {d})" for c, d in stale), file=sys.stderr)
+    return n
 
 
 def rebuild_calendar(cur: Any) -> int:

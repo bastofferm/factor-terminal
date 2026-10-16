@@ -52,28 +52,51 @@ def test_on_demand_securities_are_stored_in_the_base_currency(cur):
     assert cur.fetchall() == []
 
 
-def test_a_japanese_security_matches_the_warehouse_usd_series(cur):
-    """Not merely labelled USD: the values have to be the converted ones."""
+def test_a_japanese_security_is_converted_at_the_ny_close(cur):
+    """Not merely labelled USD: the values carry the yen's move, and the move to
+    the NY close of the same day.
+
+    The warehouse's own USD column converts at Yahoo's London-midnight rate, which
+    since August 2010 is the NY close of the day before - so its currency leg lined
+    up with yesterday's FXY. Before then Yahoo was synchronous and the two
+    conversions agree.
+    """
     import psycopg2
 
     stored = dict(_rows(cur,
         "SELECT date, ret_log FROM fact_input_return WHERE instrument_id='JP:1904'"))
     if not stored:
         pytest.skip("JP:1904 has not been pulled")
+    fxy = dict(_rows(cur, "SELECT date, ret_log FROM fact_input_return "
+                          "WHERE instrument_id='FXY' AND ret_log IS NOT NULL"))
 
     with psycopg2.connect(get_settings().warehouse_database_url) as wc, wc.cursor() as wcur:
         wcur.execute("SELECT date, log_return, log_return_usd FROM sec.fact_prices_jp "
-                     "WHERE ticker='1904' AND log_return_usd IS NOT NULL")
+                     "WHERE ticker='1904' AND log_return IS NOT NULL")
         wh = {d: (loc, usd) for d, loc, usd in wcur.fetchall()}
 
-    common = [d for d in stored if d in wh]
+    common = sorted(d for d in stored if d in wh)
     assert len(common) > 1000
     got = np.array([stored[d] for d in common], dtype=float)
-    usd = np.array([wh[d][1] for d in common], dtype=float)
     local = np.array([wh[d][0] for d in common], dtype=float)
-
-    assert np.allclose(got, usd, atol=1e-12), "stored series is not the USD one"
     assert not np.allclose(got, local, atol=1e-12), "stored series is still local"
+
+    # The currency leg moves with FXY on the same NY day, not the day before.
+    import datetime as dt
+    later = [i for i, d in enumerate(common) if d >= dt.date(2011, 1, 1)]
+    leg = (got - local)[later]
+    days = [common[i] for i in later]
+    prev = {d: p for p, d in zip(sorted(fxy), sorted(fxy)[1:])}
+    ok = [k for k, d in enumerate(days) if d in fxy and d in prev]
+    same = np.corrcoef(leg[ok], [fxy[days[k]] for k in ok])[0, 1]
+    lag = np.corrcoef(leg[ok], [fxy[prev[days[k]]] for k in ok])[0, 1]
+    assert same > 0.9 and same > lag, f"FX leg vs FXY: same day {same:.2f}, previous {lag:.2f}"
+
+    # Before August 2010 the warehouse conversion was synchronous too: they agree.
+    early = [i for i, d in enumerate(common)
+             if d < dt.date(2010, 7, 1) and wh[d][1] is not None]
+    usd = np.array([wh[common[i]][1] for i in early], dtype=float)
+    assert np.median(np.abs(got[early] - usd)) < 1e-6
 
 
 def test_the_currency_leg_no_longer_shows_up_as_a_factor_loading(cur):

@@ -25,6 +25,7 @@ import pandas as pd
 
 from backend.core import regression as reg
 from backend.core import transforms as tr
+from backend.pipeline import seed
 from backend.pipeline.dbsync import bulk_insert, connect, etl_run, mark_item_done, run_failed
 
 JOB = "run_estimation"
@@ -184,6 +185,10 @@ def factor_constituents(cur: Any) -> dict[str, set[str]]:
                 if key in ("instrument", "long", "short", "universe", "underlying",
                            "vix", "pairs", "minuend", "subtrahend"):
                     yield from walk(v)
+                elif key == "fx":
+                    # The trust carries an FX leg's daily moves; the Yahoo pair only
+                    # its slow drift, so regressing the pair on it is not circular.
+                    yield from seed.fx_instruments(v, trusts_only=True)
 
     for factor_id, inputs in cur.fetchall():
         for name in walk(inputs or {}):

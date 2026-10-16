@@ -33,7 +33,7 @@ TRADING_DAYS = 252
 TICKERS = sorted({
     "ACWI", "IVV", "VGK", "EWJ", "EEM", "IWM", "IWB", "IGLT.L", "USDJPY=X",
     "EURUSD=X", "USDCHF=X", "DX-Y.NYB", "CEW", "TLT", "UUP", "GLD", "HYG", "SPY",
-    "EFA", "IEF", "DBC", "USO", "LQD", "FXE", "FXY", "VIXY", "DBA", "CPER", "EMB",
+    "EFA", "IEF", "DBC", "USO", "LQD", "FXE", "FXY", "FXB", "FXF", "VIXY", "DBA", "CPER", "EMB",
     "EMLC", "BKLN", "VLUE", "MTUM", "QUAL", "USMV", "XLI", "XLB", "XLE", "XLF",
     "XLY", "XLP", "XLU", "XLV", "XLK", "XLRE", "XLC",
 })
@@ -73,8 +73,11 @@ def panels() -> bf.Panels:
     weekly[::5] = np.cumsum(rng.standard_normal(len(weekly[::5])) * 0.1)
     levels[SPARSE_SERIES] = weekly
 
-    fx = pd.DataFrame({"GBP": 1.3 * np.exp(np.cumsum(
-        rng.standard_normal(N_DAYS) * 0.004))}, index=idx)
+    # Spot levels for every currency leg a tested factor reads. Independent of the
+    # trusts' returns, so the trust drift a_t is a genuine moving series here.
+    fx = pd.DataFrame({ccy: start * np.exp(np.cumsum(rng.standard_normal(N_DAYS) * 0.004))
+                       for ccy, start in (("GBP", 1.3), ("EUR", 1.1), ("JPY", 0.009),
+                                          ("CHF", 1.05))}, index=idx)
 
     cash = levels[seed.CASH_RATE_SERIES]
     return bf.Panels(returns, levels, fx, cash)
@@ -167,21 +170,51 @@ def test_single_is_the_excess_return(panels):
     same(built(panels, "eq_global").to_numpy(), expected)
 
 
-def test_single_converts_to_base_currency_by_adding_the_log_fx_change(panels):
-    """f_t = (x_t^IGLT.L + dln(e_t^GBP))"""
-    plain = rendered("rt_uk")["construction"]["plain"]
-    assert plain == "f_t = (x_t^IGLT.L + dln(e_t^GBP))"
+def ny_spot(panels: bf.Panels, ccy: str) -> np.ndarray:
+    """s_t = r_t^T - a_t, a_t = (ln(P_t-1/P_t-253) - ln(S_t-1/S_t-253)) / 252,
+    written out from the formula: P is the trust's cumulated return, S the spot."""
+    trust, _ = seed.FX_SPOT[ccy]
+    r = panels.ret(trust).to_numpy()
+    ln_p = np.cumsum(r)
+    ln_s = np.log(panels.fx[ccy].to_numpy())
+    W = seed.FX_ACCRUAL_WINDOW
+    a = np.full(r.size, np.nan)
+    for t in range(W + 1, r.size):
+        a[t] = ((ln_p[t - 1] - ln_p[t - 1 - W]) - (ln_s[t - 1] - ln_s[t - 1 - W])) / W
+    return r - a
 
-    e = panels.fx["GBP"].to_numpy()
-    d_ln_e = np.diff(np.log(e), prepend=np.nan)
-    expected = panels.ret("IGLT.L").to_numpy() - cash_leg(panels) + d_ln_e
+
+def test_single_converts_to_base_currency_by_adding_the_ny_close_fx_change(panels):
+    """f_t = (x_t^IGLT.L + s_t^GBP), s from the NY-listed trust net of its drift."""
+    plain = rendered("rt_uk")["construction"]["plain"]
+    assert plain.splitlines()[-1] == "f_t = (x_t^IGLT.L + s_t^GBP)"
+    assert plain.splitlines()[0].startswith("s_t^GBP = r_t^FXB - a_t^GBP")
+
+    expected = panels.ret("IGLT.L").to_numpy() - cash_leg(panels) + ny_spot(panels, "GBP")
     same(built(panels, "rt_uk").to_numpy(), expected)
 
 
-def test_single_applies_the_sign_and_skips_the_cash_leg(panels):
-    """f_t = -1 * r_t^USDJPY=X -- unfunded, so no cash leg, and flipped."""
-    assert rendered("fx_jpy")["construction"]["plain"] == "f_t = -1 * r_t^USDJPY=X"
-    same(built(panels, "fx_jpy").to_numpy(), -panels.ret("USDJPY=X").to_numpy())
+def test_fx_spot_is_the_trust_less_its_drift_with_no_cash_leg(panels):
+    """f_t = s_t^JPY -- unfunded, so no cash leg; USD per yen, so no flip."""
+    plain = rendered("fx_jpy")["construction"]["plain"]
+    assert plain.splitlines()[-1] == "f_t = s_t^JPY"
+    same(built(panels, "fx_jpy").to_numpy(), ny_spot(panels, "JPY"))
+
+
+def test_the_trust_drift_is_what_the_trust_earns_over_spot(panels):
+    """Over the window, sum(s) tracks the spot change, not the trust's: the
+    deposit accrual is gone. Checked on a trust that is spot plus 3% a year."""
+    W = seed.FX_ACCRUAL_WINDOW
+    idx = panels.index
+    spot = panels.fx["GBP"]
+    accrual = 0.03 / TRADING_DAYS
+    trust = np.log(spot).diff() + accrual
+    s = bf.fx_spot_return(trust, spot, lagged_from="1990-01-01")
+    late = s.iloc[2 * W:]
+    assert abs(late.mean() - np.log(spot).diff().iloc[2 * W:].mean()) < 1e-12
+    assert np.allclose(trust.iloc[2 * W:] - late, accrual, atol=1e-12)
+    assert s.iloc[:W + 1].isna().all(), "no drift yet and past the Yahoo cutoff: missing"
+    assert len(s) == len(idx)
 
 
 def test_spread_has_no_cash_leg(panels):
@@ -356,18 +389,17 @@ def test_xs_momentum_is_dollar_neutral(panels):
 def test_fx_carry_lags_the_rate_differential(panels):
     plain = rendered("fx_carry")["construction"]["plain"]
     assert "k_jt   = (i_j,t-1 - i_USD,t-1) / 100 / 252" in plain
+    assert "leg_jt = p_jt * (s_jt + k_jt)" in plain
 
     inputs = spec("fx_carry")["inputs"]
-    inverted = set(inputs["inverted"])
     usd = panels.level(seed.POLICY_RATES["USD"]).to_numpy()
 
     legs = []
-    for ccy, ticker in inputs["pairs"].items():
+    for ccy in inputs["fx"]:
         foreign = panels.level(seed.POLICY_RATES[ccy]).to_numpy()
         diff = (foreign - usd) / 100.0 / TRADING_DAYS
         k = np.concatenate([[np.nan], diff[:-1]])
-        s = -1.0 if ccy in inverted else 1.0
-        legs.append(np.sign(k) * (s * panels.ret(ticker).to_numpy() + k))
+        legs.append(np.sign(k) * (ny_spot(panels, ccy) + k))
 
     same(built(panels, "fx_carry").to_numpy(), np.nanmean(np.array(legs), axis=0))
 
@@ -440,7 +472,7 @@ def test_every_factor_renders_both_formulas():
     assert len(all_rendered) == len(factor_defs.FACTORS)
     for fid, r in all_rendered.items():
         assert r["construction"]["plain"].startswith(("f_t", "s_t", "v_t", "S_it",
-                                                      "M_it", "k_jt")), fid
+                                                      "M_it", "s_jt")), fid
         assert r["construction"]["latex"], fid
         assert r["orthogonalisation"]["plain"], fid
         assert r["construction"]["steps"], fid
@@ -452,7 +484,8 @@ def test_every_symbol_that_claims_a_source_names_one_the_builder_reads():
 
     The check is against the factor's own construction inputs plus the constants the
     builder reaches for on its own -- the cash rate, the VIX level, the curve members
-    behind a tenor list, the policy rates behind an FX pair. Nothing else may appear.
+    behind a tenor list, the policy rates behind a carry leg, the trust and Yahoo
+    pair behind a currency code. Nothing else may appear.
     """
     known_factors = {f["id"] for f in factor_defs.FACTORS}
     ambient_levels = ({seed.CASH_RATE_SERIES, "FRED:VIXCLS"}
@@ -464,6 +497,9 @@ def test_every_symbol_that_claims_a_source_names_one_the_builder_reads():
         declared: list[str] = []
         _collect(f["inputs"], declared)
         allowed = set(declared) | ambient_levels
+        if "fx" in f["inputs"]:
+            # A currency code stands for its trust and its Yahoo pair.
+            allowed |= set(seed.fx_instruments(f["inputs"]["fx"]))
         r = formula.for_factor(f)
 
         for block in ("construction", "orthogonalisation"):
@@ -473,9 +509,6 @@ def test_every_symbol_that_claims_a_source_names_one_the_builder_reads():
                     continue
                 if kind == "factor":
                     assert ref in known_factors, f"{f['id']}: unknown factor {ref}"
-                elif kind == "level" and len(ref) == 3:
-                    # A currency code: FX lives in fact_input_fx, not as a level series.
-                    assert ref == f["inputs"].get("fx"), f"{f['id']}: stray ccy {ref}"
                 else:
                     assert ref in allowed, f"{f['id']}: {kind} {ref} is not an input"
 

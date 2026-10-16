@@ -15,6 +15,7 @@ from backend.core import distribution as dist
 from backend.core import stationarity as st
 from backend.core import summary as summ
 from backend.pipeline import formula as fm
+from backend.pipeline import seed
 
 router = APIRouter()
 
@@ -125,9 +126,10 @@ async def inputs(factor_id: str, start: date | None = None,
     if not names:
         return {"factor_id": factor_id, "series": [], "note": "no stored inputs"}
 
-    # A construction names four different kinds of thing and they live in four
+    # A construction names three different kinds of thing and they live in three
     # tables. Resolving by lookup rather than by the key it sat under means a
-    # factor that mixes them - a gilt ETF priced in GBP, say - comes back whole.
+    # factor that mixes them - a gilt ETF priced in GBP, say - comes back whole;
+    # its currency leg arrives as the trust and the Yahoo pair (_walk_inputs).
     instruments = {r["id"]: r for r in await db.fetch(
         "SELECT instrument_id AS id, currency, asset_class FROM ref_instrument "
         "WHERE instrument_id = ANY($1)", names)}
@@ -137,8 +139,6 @@ async def inputs(factor_id: str, start: date | None = None,
     curves = {r["curve_id"] for r in await db.fetch(
         "SELECT DISTINCT curve_id FROM ref_level_series "
         "WHERE curve_id = ANY($1)", names)}
-    currencies = {r["ccy"] for r in await db.fetch(
-        "SELECT DISTINCT ccy FROM fact_input_fx WHERE ccy = ANY($1)", names)}
 
     # A curve input carries the tenors it wants; without them the whole curve is
     # the honest answer rather than an arbitrary subset.
@@ -193,17 +193,6 @@ async def inputs(factor_id: str, start: date | None = None,
                     leg["series_id"], "level",
                     leg["name"] or f"{name} {float(leg['tenor_years']):g}y",
                     leg["unit"] or "percent", await level_rows(leg["series_id"])))
-
-        elif name in currencies:
-            rows = await db.fetch(
-                """
-                SELECT date, usd_per_unit AS value FROM fact_input_fx
-                WHERE ccy = $1 AND usd_per_unit IS NOT NULL
-                  AND ($2::date IS NULL OR date >= $2)
-                  AND ($3::date IS NULL OR date <= $3)
-                ORDER BY date
-                """, name, start, end)
-            series.append(packed(name, "fx", f"{name} per USD", "USD", rows))
 
         else:
             # Named in the construction but not stored under that id anywhere.
@@ -471,6 +460,10 @@ def _walk_inputs(node, out: list[str]) -> None:
             # inputs it does not have.
             if key in ("shape", "transform", "window", "lookback", "sparse", "halflife",
                        "inverted", "sign", "scale_to_vol"):
+                continue
+            # A currency code names a leg built from a trust and a Yahoo pair.
+            if key == "fx":
+                _walk_inputs(seed.fx_instruments(v), out)
                 continue
             _walk_inputs(v, out)
 
