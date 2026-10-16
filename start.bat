@@ -16,6 +16,16 @@ rem about what they serve: a panel four months stale opens looking exactly like
 rem a current one. Saying so costs a second. Refreshing costs minutes, and a
 rem launcher that spends them without being asked is one nobody uses to look
 rem something up quickly.
+rem
+rem After a git pull it runs the code that was pulled. "Already serving" used to
+rem mean "fine": an API started before the pull kept the old Python in memory,
+rem and an existing frontend build was started as it was, so a pulled change
+rem never showed. Each part now records the git tree it was built or started
+rem from - frontend\.next\BUILT_FROM, frontend\node_modules\.installed_from,
+rem .venv\.api_source - and a part whose tree has moved since is reinstalled,
+rem rebuilt or restarted. Only committed code counts: uncommitted edits are what
+rem `npm run dev` and `uvicorn --reload` are for. Without git, or outside a
+rem checkout, nothing is compared and the script behaves as it did before.
 rem ---------------------------------------------------------------------------
 
 cd /d "%~dp0"
@@ -26,6 +36,10 @@ set "PY=.venv\Scripts\python.exe"
 set "API_URL=http://127.0.0.1:%API_PORT%/api/health"
 set "WEB_URL=http://127.0.0.1:%WEB_PORT%/"
 set "OPEN_URL=http://localhost:%WEB_PORT%"
+
+set "API_MARK=.venv\.api_source"
+set "WEB_MARK=frontend\.next\BUILT_FROM"
+set "DEPS_MARK=frontend\node_modules\.installed_from"
 
 set "REFRESH=0"
 if /i "%~1"=="--refresh" set "REFRESH=1"
@@ -66,6 +80,22 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem --- which code is on disk ------------------------------------------------
+rem
+rem Git tree hashes: one per part, so a commit that touches only the docs
+rem restarts nothing, and a pull that changes only the frontend leaves the API
+rem running. Empty when git is missing or this is not a checkout.
+
+set "API_SRC="
+set "WEB_SRC="
+set "DEPS_SRC="
+where git >nul 2>&1
+if not errorlevel 1 (
+    for /f "usebackq delims=" %%h in (`git rev-parse HEAD:backend 2^>nul`) do set "API_SRC=%%h"
+    for /f "usebackq delims=" %%h in (`git rev-parse HEAD:frontend 2^>nul`) do set "WEB_SRC=%%h"
+    for /f "usebackq delims=" %%h in (`git rev-parse HEAD:frontend/package-lock.json 2^>nul`) do set "DEPS_SRC=%%h"
+)
+
 rem --- data ------------------------------------------------------------------
 rem
 rem Before the services, because the chain writes what they will serve and the
@@ -93,32 +123,64 @@ echo.
 rem --- backend ---------------------------------------------------------------
 
 call :is_up "%API_URL%"
+if "!UP!"=="1" if defined API_SRC (
+    set "RAN="
+    if exist "%API_MARK%" set /p RAN=<"%API_MARK%"
+    if not "!RAN!"=="!API_SRC!" (
+        echo   [*] API is running older code than is on disk - restarting it.
+        call :kill_port %API_PORT%
+        call :sleep 2
+        set "UP=0"
+    )
+)
 if "!UP!"=="1" (
     echo   [=] API already serving on port %API_PORT%
 ) else (
     echo   [^>] Starting API on port %API_PORT% ...
     start "Factor Terminal - API" /min cmd /c ^
         ""%PY%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port %API_PORT%"
+    if defined API_SRC (>"%API_MARK%" echo !API_SRC!)
 )
 
 rem --- frontend --------------------------------------------------------------
 
+set "REBUILD=0"
+if not exist "frontend\.next\BUILD_ID" set "REBUILD=1"
+if defined WEB_SRC (
+    set "BUILT="
+    if exist "%WEB_MARK%" set /p BUILT=<"%WEB_MARK%"
+    if not "!BUILT!"=="!WEB_SRC!" set "REBUILD=1"
+)
+set "REINSTALL=0"
+if not exist "frontend\node_modules" set "REINSTALL=1"
+if defined DEPS_SRC (
+    set "INSTALLED="
+    if exist "%DEPS_MARK%" set /p INSTALLED=<"%DEPS_MARK%"
+    if not "!INSTALLED!"=="!DEPS_SRC!" set "REINSTALL=1"
+)
+
 call :is_up "%WEB_URL%"
 if "!UP!"=="1" (
-    call :web_is_stale
-    if "!STALE!"=="1" (
-        rem Not [!]: delayed expansion eats a bare ! in an echo, printing "[]".
-        echo   [*] Web app is serving a build that is no longer on disk - restarting it.
+    if "!REBUILD!"=="1" (
+        echo   [*] The web app's code has changed since it was built - rebuilding it.
         call :kill_port %WEB_PORT%
         call :sleep 2
     ) else (
-        echo   [=] Web app already serving on port %WEB_PORT%
-        goto :wait_for_both
+        call :web_is_stale
+        if "!STALE!"=="1" (
+            rem Not [!]: delayed expansion eats a bare ! in an echo, printing "[]".
+            echo   [*] Web app is serving a build that is no longer on disk - restarting it.
+            call :kill_port %WEB_PORT%
+            call :sleep 2
+        ) else (
+            echo   [=] Web app already serving on port %WEB_PORT%
+            goto :wait_for_both
+        )
     )
 )
 
-if not exist "frontend\node_modules" (
-    echo   [^>] Installing web dependencies, this takes a minute on first run ...
+if "!REINSTALL!"=="1" (
+    echo   [^>] Installing web dependencies, this takes a minute ...
     pushd frontend
     call npm install --no-audit --no-fund
     if errorlevel 1 (
@@ -128,10 +190,11 @@ if not exist "frontend\node_modules" (
         exit /b 1
     )
     popd
+    if defined DEPS_SRC (>"%DEPS_MARK%" echo !DEPS_SRC!)
 )
 
-if not exist "frontend\.next\BUILD_ID" (
-    echo   [^>] Building the web app, this takes a minute on first run ...
+if "!REBUILD!"=="1" (
+    echo   [^>] Building the web app, this takes a minute ...
     pushd frontend
     call npm run build
     if errorlevel 1 (
@@ -141,6 +204,7 @@ if not exist "frontend\.next\BUILD_ID" (
         exit /b 1
     )
     popd
+    if defined WEB_SRC (>"%WEB_MARK%" echo !WEB_SRC!)
 )
 
 echo   [^>] Starting web app on port %WEB_PORT% ...
