@@ -274,7 +274,7 @@ def ny_spot(cur: Any, ccy: str) -> tuple[pd.Series, pd.Series]:
     calendar - the same leg the factors convert with, for a security that is
     converted outside the panel (sync.sync_security)."""
     trust, _pair = seed.FX_SPOT[ccy]
-    idx = pd.DatetimeIndex(sorted(pd.to_datetime(list(trading_calendar(cur)))))
+    idx = pd.DatetimeIndex(sorted(pd.to_datetime(list(trading_calendar(cur, warn=False)))))
     cur.execute("SELECT date, ret_log FROM fact_input_return "
                 "WHERE instrument_id = %s AND ret_log IS NOT NULL", (trust,))
     rows = cur.fetchall()
