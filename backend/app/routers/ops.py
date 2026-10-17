@@ -84,9 +84,11 @@ STAGES: list[dict[str, Any]] = [
          "gilts. A factor built on a price-return index quietly drops the "
          "dividend, which is most of the difference between two regional equity "
          "blocks.",
-         "Incremental by watermark, with instruments that share a start date "
-         "batched into one download — the trick that makes a daily refresh cheap "
-         "— and every request retried with backoff.",
+         "Incremental, but every run re-fetches the last five stored days and "
+         "overwrites them, so a day missing from one run or a price that was "
+         "still moving is repaired by the next. A bar is stored only once its "
+         "exchange's session has closed, and returns are computed from the "
+         "stored adjusted closes. Every request is retried with backoff.",
          "A symbol that has stopped publishing shows up here as a failed "
          "download and does not fail the stage. It becomes visible two stages "
          "later, when coverage marks it no longer live.",
