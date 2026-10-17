@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import numpy as np
@@ -23,7 +23,7 @@ import pandas as pd
 from backend.app.settings import get_settings
 from backend.core import orthogonalize as og
 from backend.core import transforms as tr
-from backend.pipeline import factor_defs, seed
+from backend.pipeline import calendars, factor_defs, seed
 from backend.pipeline.dbsync import (
     bulk_insert, connect, etl_run, mark_item_done, mark_items, prune_items, run_failed,
 )
@@ -128,8 +128,55 @@ def fx_spot_return(trust: pd.Series, spot: pd.Series,
 # holiday leaves too few markets open for a cross-asset factor to mean anything.
 MIN_CALENDAR_COVERAGE = 0.30
 
+# Quorum misses older than this are reported as one count, newer ones one by one.
+WARN_RECENT_DAYS = 365
 
-def trading_calendar(cur: Any) -> set:
+
+def calendar_counts(cur: Any) -> list[tuple[date, int]]:
+    """(weekday, number of non-crypto factor instruments with a return), by date."""
+    cur.execute(
+        """
+        SELECT r.date, count(*) AS n
+        FROM fact_input_return r
+        JOIN ref_instrument i USING (instrument_id)
+        WHERE r.ret_log IS NOT NULL
+          AND i.role IN ('factor_input', 'both')
+          AND COALESCE(i.asset_class, '') <> 'Crypto'
+          AND EXTRACT(dow FROM r.date) BETWEEN 1 AND 5
+        GROUP BY r.date
+        ORDER BY r.date
+        """
+    )
+    return cur.fetchall()
+
+
+def quorum(counts: list[tuple[date, int]]) -> int:
+    peak = max((n for _, n in counts), default=0)
+    return max(1, int(peak * MIN_CALENDAR_COVERAGE))
+
+
+def dropped_sessions(counts: list[tuple[date, int]]) -> list[tuple[date, int, int]]:
+    """NYSE sessions the quorum drops, from the calendar's first day on.
+
+    The quorum is meant to remove holidays. A session that fails it is missing
+    data, and dropping it is not neutral: the instruments that did report lose that
+    day's return, and those that did not book two days on the next one. That is what
+    happened to 2026-09-22. So these are reported, not dropped in silence.
+
+    Returns (date, instruments reporting, quorum).
+    """
+    if not counts:
+        return []
+    need = quorum(counts)
+    n = dict(counts)
+    kept = [d for d, k in counts if k >= need]
+    if not kept:
+        return []
+    return [(d, n.get(d, 0), need)
+            for d in calendars.sessions(kept[0], counts[-1][0]) if n.get(d, 0) < need]
+
+
+def trading_calendar(cur: Any, warn: bool = True) -> set:
     """Days on which the factor universe actually traded.
 
     Not simply every date present in fact_input_return. Crypto prices seven days a
@@ -142,25 +189,26 @@ def trading_calendar(cur: Any) -> set:
 
     Crypto is outside the factor universe anyway (role 'analysis'), so the
     calendar is taken from the factor instruments, restricted to weekdays, and
-    requires a quorum of them to report.
+    requires a quorum of them to report. An NYSE session that misses the quorum is
+    warned about (see dropped_sessions).
     """
-    cur.execute(
-        """
-        SELECT r.date, count(*) AS n
-        FROM fact_input_return r
-        JOIN ref_instrument i USING (instrument_id)
-        WHERE r.ret_log IS NOT NULL
-          AND i.role IN ('factor_input', 'both')
-          AND COALESCE(i.asset_class, '') <> 'Crypto'
-          AND EXTRACT(dow FROM r.date) BETWEEN 1 AND 5
-        GROUP BY r.date
-        """
-    )
-    rows = cur.fetchall()
+    rows = calendar_counts(cur)
     if not rows:
         return set()
-    peak = max(n for _, n in rows)
-    threshold = max(1, int(peak * MIN_CALENDAR_COVERAGE))
+    if warn:
+        dropped = dropped_sessions(rows)
+        # Old holes in Yahoo's history cannot be refetched; named once as a count,
+        # so a new one is not lost among them.
+        recent = rows[-1][0] - timedelta(days=WARN_RECENT_DAYS)
+        old = [d for d, _, _ in dropped if d < recent]
+        if old:
+            print(f"  WARNING calendar: {len(old)} older session(s) below quorum, "
+                  f"{old[0]} .. {old[-1]}", file=sys.stderr)
+        for d, n, need in dropped:
+            if d >= recent:
+                print(f"  WARNING calendar: session {d} dropped, {n} instruments reported "
+                      f"(quorum {need}); missing data, not a holiday", file=sys.stderr)
+    threshold = quorum(rows)
     return {d for d, n in rows if n >= threshold}
 
 
@@ -226,7 +274,7 @@ def ny_spot(cur: Any, ccy: str) -> tuple[pd.Series, pd.Series]:
     calendar - the same leg the factors convert with, for a security that is
     converted outside the panel (sync.sync_security)."""
     trust, _pair = seed.FX_SPOT[ccy]
-    idx = pd.DatetimeIndex(sorted(pd.to_datetime(list(trading_calendar(cur)))))
+    idx = pd.DatetimeIndex(sorted(pd.to_datetime(list(trading_calendar(cur, warn=False)))))
     cur.execute("SELECT date, ret_log FROM fact_input_return "
                 "WHERE instrument_id = %s AND ret_log IS NOT NULL", (trust,))
     rows = cur.fetchall()
@@ -305,6 +353,22 @@ def _basket(p: Panels, inputs: dict) -> pd.Series:
     return out
 
 
+def ffill_inside(s: pd.Series, limit: int | None = None) -> pd.Series:
+    """Forward fill gaps between observations, never past the last one.
+
+    Bridging a local holiday inside a yield series is fine. Filling past its last
+    print is not: on the day equities have closed and FRED has not yet published,
+    the filled yield makes the rate change exactly zero, and `rt_us_level` showed
+    pure carry on the newest day of every build (0.000052 on 2026-10-07). That day
+    is unknown, not unchanged.
+    """
+    last = s.last_valid_index()
+    out = s.ffill(limit=limit)
+    if last is not None:
+        out[out.index > last] = np.nan
+    return out
+
+
 def _synthetic_bond_returns(p: Panels, curve: str, tenors: list[float]) -> dict[float, pd.Series]:
     """One synthetic par-bond total return per requested tenor."""
     members = {tenor: sid for sid, tenor in seed.CURVES[curve]}
@@ -313,7 +377,7 @@ def _synthetic_bond_returns(p: Panels, curve: str, tenors: list[float]) -> dict[
         sid = members.get(tenor)
         if sid is None:
             raise KeyError(f"curve {curve} has no {tenor}y tenor registered")
-        y = p.level(sid).ffill(limit=5)  # tolerate a local holiday, not a gap
+        y = ffill_inside(p.level(sid), limit=5)  # tolerate a local holiday, not a gap
         r = tr.yield_change_to_return(y.to_numpy(), tenor_years=tenor,
                                       cash_rate_pct=p.cash.to_numpy())
         out[tenor] = pd.Series(r, index=p.index)
@@ -334,7 +398,7 @@ def _curve(p: Panels, inputs: dict) -> pd.Series:
     by_tenor = {tenor: sid for sid, tenor in seed.CURVES[curve]}
     unit: dict[float, pd.Series] = {}
     for tenor, r in bonds.items():
-        y = p.level(by_tenor[tenor]).ffill(limit=5).to_numpy() / 100.0
+        y = ffill_inside(p.level(by_tenor[tenor]), limit=5).to_numpy() / 100.0
         y_prev = np.concatenate([[np.nan], y[:-1]])
         dur = tr.par_bond_modified_duration(tenor, y_prev)
         unit[tenor] = r / pd.Series(dur, index=p.index)
@@ -352,7 +416,7 @@ def _curve(p: Panels, inputs: dict) -> pd.Series:
 
 
 def _synthetic_bond(p: Panels, inputs: dict) -> pd.Series:
-    y = p.level(inputs["series"]).ffill(limit=5)
+    y = ffill_inside(p.level(inputs["series"]), limit=5)
     cash = p.cash.to_numpy() if inputs.get("carry", True) else None
     r = tr.yield_change_to_return(y.to_numpy(), tenor_years=float(inputs["tenor"]),
                                   cash_rate_pct=cash)
@@ -543,7 +607,7 @@ def build_one(p: Panels, spec: dict) -> pd.Series:
         vix_level = p.levels.get("FRED:VIXCLS")
         if vix_level is None:
             raise KeyError("FRED:VIXCLS missing; cannot build the variance premium")
-        out = _variance_premium(p, spec["inputs"], vix_level.ffill(limit=3))
+        out = _variance_premium(p, spec["inputs"], ffill_inside(vix_level, limit=3))
     elif method not in BUILDERS:
         raise ValueError(f"unknown construction method {method!r}")
     else:
@@ -616,6 +680,34 @@ def write_factor(cur: Any, factor_id: str, raw: pd.Series, orth: pd.Series) -> i
     )
 
 
+# A factor whose last value is at most this many sessions behind the newest one is
+# at the ragged edge and holds the panel back: FRED publishes a day after the
+# equity close, and a holiday adds one. A factor further behind does not drag the
+# others with it. The warehouse-only EA and JP curves often lag by most of a week,
+# and holding the panel for them would make every risk number a week old; they
+# end in NaN instead, which ffill_inside guarantees is not a manufactured zero.
+EDGE_SESSIONS = 2
+
+
+def common_as_of(series: dict[str, pd.Series], max_lag: int = EDGE_SESSIONS):
+    """The last date on which every factor at the data edge has a value.
+
+    Returns (as_of, factors ending there), or (None, []) for an empty panel. Rates
+    come from FRED a day after the equity close, so on most nights the newest day
+    has equity factors and no rates factors. A panel cut at the common date is one
+    in which every row is complete.
+    """
+    last = {fid: s.last_valid_index() for fid, s in series.items()}
+    last = {fid: d for fid, d in last.items() if d is not None}
+    if not last:
+        return None, []
+    idx = next(iter(series.values())).index
+    newest = idx.get_loc(max(last.values()))
+    edge = {fid: d for fid, d in last.items() if idx.get_loc(d) >= newest - max_lag}
+    as_of = min(edge.values())
+    return as_of, sorted(fid for fid, d in edge.items() if d == as_of)
+
+
 # ---------------------------------------------------------------------------
 
 def run(orth_mode: str = "rolling", only: str | None = None, quiet: bool = False) -> int:
@@ -635,6 +727,8 @@ def run(orth_mode: str = "rolling", only: str | None = None, quiet: bool = False
 
     with etl_run(JOB, mode=orth_mode, scope={"orth_mode": orth_mode}) as run_id:
         mark_items(run_id, JOB, targets)
+        # Built in full first, written after: the as-of cut needs every factor.
+        built: dict[str, tuple[pd.Series, pd.Series]] = {}
         for spec in order:
             fid = spec["id"]
             if only and fid != only:
@@ -658,7 +752,21 @@ def run(orth_mode: str = "rolling", only: str | None = None, quiet: bool = False
                 # Downstream factors residualise against the orthogonalised series,
                 # so the hierarchy compounds rather than each level starting over.
                 panels.built[fid] = orth
+                built[fid] = (raw, orth)
+            except Exception as exc:
+                mark_item_done(run_id, JOB, fid, "failed", error=str(exc))
+                print(f"  {fid:22s} FAILED: {exc}", file=sys.stderr)
 
+        as_of, holding = common_as_of({fid: orth for fid, (_, orth) in built.items()})
+        if as_of is not None and as_of < panels.index.max():
+            shown = ", ".join(holding[:4]) + (" ..." if len(holding) > 4 else "")
+            print(f"  factor panel cut at {as_of.date()} (inputs reach "
+                  f"{panels.index.max().date()}; {shown} end there)")
+
+        for fid, (raw, orth) in built.items():
+            try:
+                if as_of is not None:
+                    raw, orth = raw[raw.index <= as_of], orth[orth.index <= as_of]
                 with connect() as conn, conn.cursor() as cur:
                     n = write_factor(cur, fid, raw, orth)
 

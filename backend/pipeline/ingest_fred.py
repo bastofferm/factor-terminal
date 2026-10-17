@@ -42,6 +42,12 @@ ON CONFLICT (series_id, date) DO UPDATE SET
     value = EXCLUDED.value, source = EXCLUDED.source
 """
 
+# Calendar days before the watermark that every incremental run fetches again and
+# overwrites. FRED back-fills a missed day and revises recent prints; resuming at
+# max(date)+1 kept the first version for good, and dropped any day that arrived
+# after a later one was already stored.
+OVERLAP_DAYS = 10
+
 
 def fetch_series(client: httpx.Client, api_key: str, series_id: str,
                  start: date) -> list[tuple[date, float]]:
@@ -277,10 +283,7 @@ def fetch(full: bool = False, only: str | None = None, scope: str = "registered"
                 namespaced = f"FRED:{sid}"
                 start = default_start
                 if not full and namespaced in marks:
-                    start = marks[namespaced] + timedelta(days=1)
-                if start > date.today():
-                    mark_item_done(run_id, JOB, sid, "skipped", rows_out=0)
-                    continue
+                    start = marks[namespaced] - timedelta(days=OVERLAP_DAYS)
 
                 limiter.acquire()
                 try:
