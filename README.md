@@ -50,6 +50,10 @@ architecture.
 **[Documentation/amzn-case-study.pdf](Documentation/amzn-case-study.pdf)** works one
 security end to end on both factor panels — eleven charts, and the argument for the
 hierarchy made out of sample on a single name.
+**[Documentation/factor-model-cookbook.pdf](Documentation/factor-model-cookbook.pdf)**
+is the whole workflow as a cookbook, in plain language: each step - from building
+the factors to the agent's verdict - written as a recipe you could follow by hand,
+with worked numbers.
 **[Documentation/model-agent.md](Documentation/model-agent.md)** is the agent:
 the LangGraph workflow, the search space, the validation/test protocol, the model
 confidence set and the verdict's gates.
