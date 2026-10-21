@@ -394,9 +394,13 @@ ON CONFLICT (instrument_id, date) DO UPDATE SET
 
 So a job can be re-run after a failure, or run twice, without duplicating rows or
 needing a cleanup step. Incremental runs read a watermark — the newest date
-already stored — and fetch only what is past it; `--full` ignores the watermark
-and re-fetches everything, which is what `Full rebuild` in the Operations tab
-does.
+already stored — and fetch from there; `--full` ignores the watermark and
+re-fetches everything, which is what `Full rebuild` in the Operations tab does.
+The two ingests do not start *after* the watermark but before it: Yahoo
+re-fetches the last five stored days and FRED the last ten calendar days, and
+both overwrite what they find. Yahoo stores a bar only once its exchange's
+session has closed and computes returns from the stored adjusted closes, so a
+corrected price also corrects the next day's return.
 
 `build_factors` is the exception: it deletes a factor's rows before writing
 them rather than only upserting, because a definition change has to be able to
