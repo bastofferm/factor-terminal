@@ -586,18 +586,20 @@ const PAGES = [
     when: "One security's betas, and whether they hold still." },
   { href: "/risk", label: "Risk Lens", glyph: "bell",
     when: "The forecast tested: bias, Mincer-Zarnowitz, VaR coverage." },
+  { href: "/returns", label: "Return Forecasts", glyph: "horizon",
+    when: "Ten-year expected returns from building blocks, with their band and track record." },
   { href: "/ops", label: "Operations", glyph: "refresh",
     when: "Refresh the data, or see what the last run did." },
   { href: "/health", label: "Data Health", glyph: "pulse",
     when: "Whether an input went stale or died." },
 ];
 
-/** Seven tiles on one line, each a way in. */
+/** Eight tiles on one line, each a way in. */
 function Tiles() {
   return (
     <div>
       <h2 className="label mb-2 px-0.5">Where to look</h2>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-8">
         {PAGES.map((p, i) => (
           <Link
             key={p.href}
@@ -611,7 +613,7 @@ function Tiles() {
             style={{
               animationDelay: `${240 + i * 45}ms`,
               // Read by the stylesheet so each mark draws in the order its
-              // tile arrived, rather than all seven at once.
+              // tile arrived, rather than all eight at once.
               ["--draw-delay" as string]: `${420 + i * 55}ms`,
             } as React.CSSProperties}
           >
@@ -681,6 +683,12 @@ function Glyph({ name }: { name: string }) {
         {name === "beta" && (
           <>
             <path d="M3 5 H15" /><path d="M3 10 H10" /><path d="M3 15 H17" />
+          </>
+        )}
+        {name === "horizon" && (
+          <>
+            <path d="M2 15 H18" /><path d="M4 12 L8 9 L11 10.5 L16 5" />
+            <path d="M13 5 H16 V8" />
           </>
         )}
         {name === "bell" && (

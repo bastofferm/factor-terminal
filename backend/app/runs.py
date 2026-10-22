@@ -45,6 +45,11 @@ _WHAT_IT_DOES: dict[str, str] = {
                    "Treasury curve, funding spreads and financial-conditions "
                    "indices. Levels are stored raw and made stationary later, at "
                    "construction time.",
+    "ingest_external": "Loads the hand-downloaded valuation files behind the "
+                       "Return Forecasts page: Shiller's monthly US data from 1871, "
+                       "Barclays' country CAPE from 1981 and the JST Macrohistory "
+                       "panel. Each load replaces its source's rows, because the "
+                       "sources revise.",
     "build_factors": "Constructs the forty factors from the "
                      "instrument and level panels, in block-hierarchy order, and "
                      "residualises each one against the factors above it. Writes "

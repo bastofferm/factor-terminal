@@ -58,5 +58,11 @@ screenshots/_film/
 *.log
 scratch/
 
+# External valuation files for the Return Forecasts page (Shiller, Barclays CAPE,
+# JST Macrohistory). Downloaded by hand and loaded by ingest_external; two of the
+# three are licensed for non-commercial or internal use only, so they are never
+# committed or redistributed. ref_data_licence records the terms.
+data/external/
+
 # TypeScript incremental build cache
 *.tsbuildinfo

@@ -630,6 +630,164 @@ export interface PortfolioJob {
   error: string | null;
 }
 
+// --- return forecasts ----------------------------------------------------
+
+/** Where one block's number comes from, and when it was last observed. */
+export interface ReturnSource {
+  block: string;
+  source: string;
+  as_of: string | null;
+  note: string | null;
+}
+
+/** Percentiles of the simulated ten-year compound annual return. */
+export interface ReturnBand {
+  mean: number; p5: number; p25: number; p50: number; p75: number; p95: number;
+}
+
+export interface NaiveHistory {
+  geo: number | null; start: string | null; years: number | null;
+}
+
+export interface ReturnBlockRow {
+  key: string;
+  income: number; buyback: number; real_growth: number; inflation: number;
+  valuation: number; other: number; total: number;
+  arithmetic: number;
+  vol: number;
+  vol_factor: number | null;
+  vol_quarterly: number | null;
+  band: ReturnBand;
+  history: { full?: NaiveHistory; trailing10?: NaiveHistory };
+  sources: ReturnSource[];
+  check: Record<string, any>;
+}
+
+export interface ReturnClass { key: string; label: string; etf: string | null; kind: string }
+
+export interface ReturnVector {
+  label: string;
+  group: "conviction" | "concern" | "reference" | "blend";
+  /** Arithmetic annual excess returns over cash, in RISKY class order. */
+  values: number[];
+  /** Effective weight in the blend; null for vectors outside it. */
+  weight: number | null;
+}
+
+export interface ReturnPortfolio {
+  id: string; name: string; kind: "preset" | "reference" | "optimal";
+  weights: Record<string, number>;
+  band: ReturnBand;
+}
+
+export interface PerspectiveCell {
+  portfolio: string; vector: string;
+  excess: number; risk: number; sharpe: number | null; gap: number | null;
+}
+
+export interface DataLicence {
+  source: string; name: string; licence: string; attribution: string;
+  url: string | null; accessed_on: string | null; restriction: string | null;
+}
+
+export interface ReturnForecast {
+  run_id?: string;
+  created_at?: string;
+  as_of: string;
+  horizon: number;
+  assumptions: Record<string, any>;
+  classes: ReturnClass[];
+  cash: { total: number; sources: ReturnSource[] };
+  blocks: ReturnBlockRow[];
+  meta: {
+    real_growth: { value: number; se: number; used: number; se_used: number; decades?: number;
+                   from?: number; to?: string };
+    inflation: { value: number; source: string; as_of: string };
+    yield_change_sd: number;
+    cash: number;
+  };
+  covariance: {
+    keys: string[]; matrix: number[][]; basis: string;
+    start: Record<string, string | null>; months: Record<string, number>; repaired: boolean;
+  };
+  composites: Record<string, Record<string, number>>;
+  lambda: { value: number; basis: string };
+  vectors: Record<string, ReturnVector>;
+  vector_order: string[];
+  portfolio_order: string[];
+  portfolios: ReturnPortfolio[];
+  frontiers: Record<string, { risk: number[]; ret: number[] }>;
+  matrix: PerspectiveCell[];
+  licences: DataLicence[];
+}
+
+export interface ReturnJob {
+  job_id: string;
+  status: "running" | "succeeded" | "failed";
+  elapsed: number;
+  messages: string[];
+  result: ReturnForecast | null;
+  error: string | null;
+}
+
+export interface ReturnDefaults {
+  assumptions: Record<string, any>;
+  classes: ReturnClass[];
+  fund_presets: string[];
+}
+
+export interface TrackScore {
+  n: number;
+  corr?: number | null; mean_error?: number | null; rmse?: number | null;
+  rmse_benchmark?: number | null; oos_r2?: number | null;
+  dm_t?: number | null; dm_p?: number | null;
+  from?: string | number; to?: string | number;
+}
+
+export interface PooledScore {
+  n: number; decades: number; countries: number;
+  oos_r2: number | null; t_stat: number | null; mean_error: number | null;
+}
+
+export interface TrackRecord {
+  us: {
+    periods: TrackScore[];
+    nonoverlapping: TrackScore;
+    rear_view: TrackScore;
+    predictors: { n: number; caey_corr: number; rear_corr: number; from: number; to: number };
+    series: { date: string; forecast: number | null; realised: number | null;
+              mean: number | null; rear: number | null; cape: number | null }[];
+  };
+  bonds: {
+    shiller: {
+      n: number; corr: number; mean_error: number; rmse: number; from: number; to: number;
+      nonoverlapping: { n: number; corr: number; mean_error: number };
+      series: { date: string; yield: number | null; realised: number | null }[];
+    };
+    etfs: Record<string, { n: number; corr: number | null; mean_error: number | null;
+                           from: string | null; to: string | null; independent_decades: number }>;
+  };
+  panel: {
+    countries: { iso: string; country: string; n: number; corr: number | null;
+                 mean_error: number | null; oos_r2: number | null;
+                 oos_r2_no_valuation: number | null; from: number; to: number }[];
+    pooled_ex_us: PooledScore; pooled_all: PooledScore;
+    pooled_ex_us_no_valuation: PooledScore; pooled_all_no_valuation: PooledScore;
+  } | null;
+  cape_intl: { country: string; n: number; corr: number | null; independent_decades: number;
+               from: number; to: number }[];
+  licences: DataLicence[];
+  settings: { horizon: number; report_lag_months: number; reversion_years: number };
+}
+
+export interface ExternalCma {
+  source: string;
+  as_of: string;
+  note: string | null;
+  /** Class key -> compound annual return, decimal. */
+  values: Record<string, number>;
+}
+
 // --- endpoints -----------------------------------------------------------
 
 export const api = {
@@ -719,6 +877,18 @@ export const api = {
   portfolioRun: (body: Record<string, unknown>) =>
     post<{ job_id: string }>("/api/portfolio/run", body),
   portfolioGet: (jobId: string) => get<PortfolioJob>(`/api/portfolio/run/${jobId}`),
+
+  returnsDefaults: () => get<ReturnDefaults>("/api/returns/defaults"),
+  returnsLatest: () => get<ReturnForecast | null>("/api/returns/latest"),
+  returnsRun: (assumptions: Record<string, unknown> | null) =>
+    post<{ job_id: string }>("/api/returns/run", { assumptions }),
+  returnsGet: (jobId: string) => get<ReturnJob>(`/api/returns/run/${jobId}`),
+  returnsTrackRecord: () => get<TrackRecord>("/api/returns/track-record"),
+  returnsExternal: () => get<ExternalCma[]>("/api/returns/cma-external"),
+  returnsExternalSave: (body: ExternalCma) =>
+    post<{ stored: number; complete: boolean }>("/api/returns/cma-external", body),
+  returnsExternalRemove: (source: string, as_of: string) =>
+    post<{ removed: boolean }>("/api/returns/cma-external/remove", { source, as_of }),
   agentCandidate: (runId: string, candidateId: string) =>
     get<AgentCandidateDetail>(`/api/agent/run/${runId}/candidate/${candidateId}`),
 

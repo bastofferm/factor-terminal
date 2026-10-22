@@ -138,6 +138,9 @@ def seed_level_series(cur: Any) -> int:
         if series_id != seed.CASH_RATE_SERIES:
             payload.append((series_id, f"{ccy} policy rate", "rates", "percent", "level", None, None))
 
+    for series_id, name in seed.RETURN_INPUT_LEVELS:
+        payload.append((series_id, name, "rates", "percent", "level", None, None))
+
     for s in seed.NEW_FRED_SERIES:
         payload.append((f"FRED:{s['series_id']}", s["name"], s["category"],
                         "percent", s["transform"], None, None))

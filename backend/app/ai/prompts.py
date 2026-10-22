@@ -121,4 +121,9 @@ STARTERS: dict[str, list[str]] = {
         "Why is the Mincer-Zarnowitz slope below 1?",
         "The VaR count looks right but Christoffersen rejects — what does that mean?",
     ],
+    "/returns": [
+        "Which block drives this asset class's ten-year forecast?",
+        "Why does the forecast differ so much from the historical average?",
+        "How should I read the gap in the perspectives matrix?",
+    ],
 }
