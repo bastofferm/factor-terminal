@@ -123,6 +123,15 @@ STRESS_LEVELS: list[tuple[str, str, str]] = [
 # The cash rate. Used to turn total returns into excess returns; never a factor.
 CASH_RATE_SERIES = "FRED:DFF"
 
+# Inputs to the ten-year return forecast, never factors. The Adrian-Crump-Moench
+# term premium splits the 10-year yield into the expected average short rate and
+# the premium for holding duration; the forecast's cash block is the first part,
+# DGS10 - ACM_TP10. Stored as levels.
+RETURN_INPUT_LEVELS: list[tuple[str, str]] = [
+    ("NYFED:ACM_TP10",  "NY Fed ACM 10Y term premium (return forecast input)"),
+    ("NYFED:ACM_FIT10", "NY Fed ACM 10Y fitted yield (return forecast input)"),
+]
+
 # Policy rates for the FX carry approximation. The warehouse has no forward points,
 # so carry is built from short-rate differentials (covered-interest-parity
 # approximation). Documented as an approximation in the factor construction.

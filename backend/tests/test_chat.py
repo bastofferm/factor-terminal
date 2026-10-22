@@ -185,7 +185,7 @@ def test_system_prompt_states_the_numeric_contract():
 
 
 def test_every_page_has_starter_questions():
-    for page in ("/", "/factors", "/matrix", "/loadings", "/risk"):
+    for page in ("/", "/factors", "/matrix", "/loadings", "/risk", "/returns"):
         assert prompts.STARTERS.get(page), f"no starters for {page}"
 
 

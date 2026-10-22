@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app import db
 from backend.app.routers import (
-    agent, chat, factors, loadings, matrix, meta, ops, portfolio, raw, risk,
+    agent, chat, factors, loadings, matrix, meta, ops, portfolio, raw, returns, risk,
 )
 from backend.app.settings import get_settings
 
@@ -57,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(ops.router, prefix="/api/ops", tags=["ops"])
     app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
     app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"])
+    app.include_router(returns.router, prefix="/api/returns", tags=["returns"])
 
     @app.get("/api/health")
     async def health() -> dict:

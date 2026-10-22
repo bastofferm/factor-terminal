@@ -21,11 +21,11 @@ every statistical procedure.
 flowchart TB
     SRC["<b>Sources</b><br/>xbrl_sec warehouse (postgres_fdw)<br/>Yahoo Finance · FRED"]
     NIGHT["<b>Nightly chain</b> — backend/pipeline<br/>sync · ingest_yahoo · ingest_fred<br/>liveness · build_factors · run_diagnostics"]
-    STORE[("<b>factors database</b> — 29 tables, 3 views<br/>ref_* registries · fact_input_* observations<br/>fact_factor_return with ret_excess AND ret_orth")]
+    STORE[("<b>factors database</b> — 41 tables, 3 views<br/>ref_* registries · fact_input_* observations<br/>fact_factor_return with ret_excess AND ret_orth")]
     DEMAND["<b>On demand</b> — backend/pipeline<br/>run_estimation → spec_id<br/>run_risk → Σ, forecast, backtest"]
     CACHE[("dim_model_spec · fact_loading<br/>fact_regression_meta · fact_risk_*<br/>all keyed by spec_id")]
-    API["<b>backend/app</b> — FastAPI over asyncpg<br/>39 endpoints, thin over SQL, no statistics"]
-    UI["<b>frontend</b> — Next.js, 7 pages"]
+    API["<b>backend/app</b> — FastAPI over asyncpg<br/>60 endpoints, thin over SQL, no statistics"]
+    UI["<b>frontend</b> — Next.js, 9 pages"]
     CORE["<b>backend/core</b><br/>pure functions over arrays<br/>no database, no I/O"]
 
     SRC --> NIGHT
@@ -97,6 +97,10 @@ VIEW` — so re-running is safe.
 | `013_beta_overlap.sql` | `fact_regression_meta.beta_overlap` column |
 | `014_block_names_en.sql` | block name corrections |
 | `015_security_catalogue.sql` | `ref_security` |
+| `016_model_agent.sql` | `fact_loading_cov`, `agent_run`, `agent_candidate`, `agent_step`, scoring columns on the risk tables |
+| `017_sectors_horizon_portfolios.sql` | `ref_factor.role`, the sector block, `fact_risk_forecast.sigma_horizon_ann`, portfolio validation columns |
+| `018_fx_coverage.sql` | `ref_fx_coverage` |
+| `019_return_forecasts.sql` | `fact_shiller_us`, `fact_cape_country`, `fact_macrohistory`, `ref_cma_external`, `return_forecast_run`, `ref_data_licence` |
 
 009 and 010 are split because `IMPORT FOREIGN SCHEMA` is not idempotent —
 dropping and re-importing is how a warehouse schema change gets picked up — and

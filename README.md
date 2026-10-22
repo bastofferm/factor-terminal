@@ -37,6 +37,11 @@ never says the model predicts a return, because it does not: it forecasts risk,
 and a promo that contradicted the product would be the one thing here that was
 not checkable.
 
+The risk model still predicts no returns. The **Return Forecasts** page, added
+after the film, is the one place that does, and only at ten years: capital market
+assumptions built from yields, growth and valuation beside the risk model, not by
+it, and scored on 150 years of public data rather than asserted.
+
 **[Documentation/return-based-multi-asset-factor-model.md](Documentation/return-based-multi-asset-factor-model.md)**
 is the model write-up: what each block needs, what the data actually supported, the
 decisions taken where the two differed, and the measured validation.
@@ -57,6 +62,9 @@ confidence set and the verdict's gates.
 the October 2026 review of the model, measured on the live database: what was
 wrong with how the risk forecast was scored, what was wrong with the forecast,
 what was fixed and what is still open.
+**[Documentation/return-forecasts.md](Documentation/return-forecasts.md)** is the
+Return Forecasts page: the ten-year building blocks, the data and its licences, the
+strategic covariance, and the track record on Shiller's US data and the JST panel.
 
 ---
 
@@ -184,16 +192,16 @@ computed on demand — and does not back-fill a restated history, which is what
 ## Layout
 
 ```
-sql/            16 idempotent migrations, applied in order, fail-fast
+sql/            19 idempotent migrations, applied in order, fail-fast
 backend/
   core/         pure numpy — no database access, so every statistic is testable
                 stationarity · transforms · orthogonalize · regression
-                covariance · risk · distribution
+                covariance · risk · distribution · returns
   pipeline/     ingestion, construction and estimation jobs
   agent/        the model agent: a LangGraph search over specifications
   app/          FastAPI: thin routers over raw SQL, plus the DeepSeek assistant
   tests/        517 tests, mostly against simulated data with known parameters
-frontend/       Next.js 14 + Plotly, eight pages
+frontend/       Next.js 14 + Plotly, nine pages
 scripts/        model probe, backfills, screenshots, the narrated film, and the
                 two document builds
 HowToSetupTerminalLocally/
@@ -386,6 +394,49 @@ multi-asset fund portfolio is the harder case. Its bias statistic is 1.69, but
 0.91 once the 21-day block that began on 21 February 2020 (z = −17) is removed,
 so the view shows both figures. It also loses to its own EWMA volatility on daily
 loss (DM p = 0.005), and the view shows that too.
+
+---
+
+## Return forecasts
+
+**Return Forecasts** (`/returns`) forecasts thirteen asset classes over ten years
+from building blocks: a fund's distribution yield, real growth per share measured
+on Shiller's data since 1871, the 10-year breakeven, and a valuation change toward
+each market's own history. The US valuation uses Shiller's CAPE, Europe and Japan
+use Barclays' country CAPE, and EM and REITs their dividend yield. Bonds earn their
+starting yield, roll-down and hedge carry, less default losses. Every block shows
+its source and date, every judgement is an editable assumption stored with the
+run, and the result is a band from a Monte Carlo rather than a point.
+
+Four views:
+
+- **Building blocks**: each class block by block, with its band and the fund's own
+  history beside it.
+- **Implied vectors**: what the market, 1/N and minimum-variance portfolios would
+  have to believe, from μ = λΣw, plus hand-entered published CMAs.
+- **Perspectives**: two-stage weights between the vectors, a frontier under each,
+  and every fund preset scored under every vector.
+- **Track record**: the method rebuilt month by month on Shiller's US data, the JST
+  panel of 16 countries and Barclays' CAPE since 1982, each against the historical
+  mean.
+
+The weights are the user's: a ten-year horizon leaves no held-out span for the
+model agent to judge on.
+
+The external files (Shiller, Barclays, JST) are downloaded by hand into
+`data/external/` and loaded with `python -m backend.pipeline.ingest_external`. Two
+of the three are licensed for internal or non-commercial use only, so they are
+never committed, and the page prints their terms. Results are in
+[Documentation/return-forecasts.md](Documentation/return-forecasts.md).
+
+The track record does not flatter the method:
+
+| Test | Result |
+|---|---|
+| US, out-of-sample R² against the historical mean | +0.06 from 1901, not significant |
+| US, the last decade as a forecast | significantly worse than the mean (DM t 4.0) |
+| Bonds, starting yield against the next decade | correlation 0.95 |
+| JST panel, dividend-yield reversion | lost to the mean, OOS R² −0.19 ex US |
 
 ---
 

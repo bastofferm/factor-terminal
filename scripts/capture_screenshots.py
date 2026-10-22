@@ -39,8 +39,9 @@ PAGES: list[tuple[str, str, str, bool]] = [
     ("/matrix",    "04-covariance-pca",  "Covariance & PCA", True),
     ("/loadings",  "05-loadings-lab",    "Loadings Lab",     True),
     ("/risk",      "06-risk-lens",       "Risk Lens",        True),
-    ("/ops",       "07-operations",      "Operations",       False),
-    ("/health",    "08-data-health",     "Data Health",      False),
+    ("/returns",   "07-return-forecasts", "Return Forecasts", True),
+    ("/ops",       "08-operations",      "Operations",       False),
+    ("/health",    "09-data-health",     "Data Health",      False),
 ]
 
 # Seconds each frame is held in the GIF. Long enough to read the panel headings.
