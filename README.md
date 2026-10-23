@@ -89,7 +89,15 @@ After a `git pull`, run it again and it runs the pulled code. Each part records
 the git tree it was built or started from. The API is restarted if `backend/`
 has changed since it started, the frontend is rebuilt if `frontend/` has changed
 since its build, and the web dependencies are reinstalled if the lock file has
-changed. Only committed changes count; for live edits use the commands below.
+changed. The same check covers what the code needs around it: Python packages
+are installed when `requirements.txt` has changed, and the migrations are applied
+when `sql/` has. A failed migration does not stop the launch; it is retried
+without the warehouse link (009/010), and in full on the next start. Only
+committed changes count; for live edits use the commands below.
+
+Under the data age it prints a second line for the Return Forecasts' valuation
+files (Shiller, Barclays' CAPE). These are loaded by hand, so this line is the
+only reminder that a monthly release has been missed.
 The first run after this was added restarts and rebuilds once, since nothing
 had been recorded yet.
 

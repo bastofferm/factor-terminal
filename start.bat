@@ -26,6 +26,13 @@ rem .venv\.api_source - and a part whose tree has moved since is reinstalled,
 rem rebuilt or restarted. Only committed code counts: uncommitted edits are what
 rem `npm run dev` and `uvicorn --reload` are for. Without git, or outside a
 rem checkout, nothing is compared and the script behaves as it did before.
+rem
+rem The same goes for what the code needs around it. A pull that adds a Python
+rem package (xlrd and openpyxl came with the Return Forecasts page) left an API
+rem that failed on import, and one that adds a migration (019) left a page whose
+rem tables did not exist. So requirements.txt and sql\ are tracked the same way -
+rem .venv\.requirements_from, .venv\.schema_from - and a change installs the
+rem packages or applies the migrations before anything starts.
 rem ---------------------------------------------------------------------------
 
 cd /d "%~dp0"
@@ -40,6 +47,8 @@ set "OPEN_URL=http://localhost:%WEB_PORT%"
 set "API_MARK=.venv\.api_source"
 set "WEB_MARK=frontend\.next\BUILT_FROM"
 set "DEPS_MARK=frontend\node_modules\.installed_from"
+set "REQ_MARK=.venv\.requirements_from"
+set "SQL_MARK=.venv\.schema_from"
 
 set "REFRESH=0"
 if /i "%~1"=="--refresh" set "REFRESH=1"
@@ -89,11 +98,63 @@ rem running. Empty when git is missing or this is not a checkout.
 set "API_SRC="
 set "WEB_SRC="
 set "DEPS_SRC="
+set "REQ_SRC="
+set "SQL_SRC="
 where git >nul 2>&1
 if not errorlevel 1 (
     for /f "usebackq delims=" %%h in (`git rev-parse HEAD:backend 2^>nul`) do set "API_SRC=%%h"
     for /f "usebackq delims=" %%h in (`git rev-parse HEAD:frontend 2^>nul`) do set "WEB_SRC=%%h"
     for /f "usebackq delims=" %%h in (`git rev-parse HEAD:frontend/package-lock.json 2^>nul`) do set "DEPS_SRC=%%h"
+    for /f "usebackq delims=" %%h in (`git rev-parse HEAD:requirements.txt 2^>nul`) do set "REQ_SRC=%%h"
+    for /f "usebackq delims=" %%h in (`git rev-parse HEAD:sql 2^>nul`) do set "SQL_SRC=%%h"
+)
+
+rem --- python packages and the schema ---------------------------------------
+rem
+rem Before the data and the services: the refresh and the API both import what
+rem requirements.txt lists, and both read tables the migrations create.
+rem
+rem A failed install stops the launch, because an API that cannot import does
+rem not start. A failed migration does not: the existing pages still work on
+rem the existing schema. Then the run is retried without 009/010, which need
+rem the warehouse, so a warehouse that is down does not hold back a migration
+rem that does not touch it; the marker is left unwritten either way, so the next
+rem start tries again in full.
+
+if defined REQ_SRC (
+    set "HAVE="
+    if exist "%REQ_MARK%" set /p HAVE=<"%REQ_MARK%"
+    if not "!HAVE!"=="!REQ_SRC!" (
+        echo   [^>] requirements.txt has changed - installing Python packages ...
+        "%PY%" -m pip install --disable-pip-version-check -q -r requirements.txt
+        if errorlevel 1 (
+            echo   [X] pip install failed. Run ".venv\Scripts\pip install -r requirements.txt"
+            echo       to see why.
+            pause
+            exit /b 1
+        )
+        >"%REQ_MARK%" echo !REQ_SRC!
+    )
+)
+
+if defined SQL_SRC (
+    set "HAVE="
+    if exist "%SQL_MARK%" set /p HAVE=<"%SQL_MARK%"
+    if not "!HAVE!"=="!SQL_SRC!" (
+        echo   [^>] sql\ has changed - applying the migrations ...
+        "%PY%" -m backend.pipeline.apply_schema >"%TEMP%\factor_terminal_schema.log" 2>&1
+        if errorlevel 1 (
+            "%PY%" -m backend.pipeline.apply_schema --skip-fdw >>"%TEMP%\factor_terminal_schema.log" 2>&1
+            if errorlevel 1 (
+                echo   [*] The migrations failed; starting on the existing schema.
+            ) else (
+                echo   [*] Applied without 009/010 - the warehouse link failed; retried next start.
+            )
+            echo       Log: %TEMP%\factor_terminal_schema.log
+        ) else (
+            >"%SQL_MARK%" echo !SQL_SRC!
+        )
+    )
 )
 
 rem --- data ------------------------------------------------------------------
@@ -118,6 +179,7 @@ if "!REFRESH!"=="1" (
 )
 
 "%PY%" -m scripts.data_age
+"%PY%" -m scripts.data_age --valuation
 echo.
 
 rem --- backend ---------------------------------------------------------------
