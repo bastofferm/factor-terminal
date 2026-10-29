@@ -17,17 +17,20 @@ import { ChatProvider, useChat } from "@/lib/chat-context";
 type Page = { href: string; label: string };
 type Group = { label: string; pages: Page[]; planned?: boolean };
 
+// The landing page stands on its own, ahead of the sections: it introduces all
+// four, so it belongs to none of them, and it has no second row.
+const HOME: Page = { href: "/", label: "Overview" };
+
 // Four sections in the order the work happens in: the inputs, the risk model
 // built on them, the ten-year return forecasts that sit beside it, and the
-// portfolios constructed from both. Inside Data, Raw Explorer comes first because
-// it is a way in; Data Health and Operations are where you go when something
-// looks wrong. The Overview sits with Factor Risk because what it explains is the
-// factor model; the logo goes there too.
+// portfolios constructed from both. Data is the state of the inputs - whether
+// they are current, and the run that makes them so. Looking at the series
+// themselves is Raw Explorer, which sits beside Factor Explorer because the two
+// answer the same question before and after the model touches the data.
 const GROUPS: Group[] = [
   {
     label: "Data",
     pages: [
-      { href: "/raw", label: "Raw Explorer" },
       { href: "/health", label: "Data Health" },
       { href: "/ops", label: "Operations" },
     ],
@@ -35,8 +38,8 @@ const GROUPS: Group[] = [
   {
     label: "Factor Risk",
     pages: [
-      { href: "/", label: "Overview" },
       { href: "/factors", label: "Factor Explorer" },
+      { href: "/raw", label: "Raw Explorer" },
       { href: "/matrix", label: "Covariance & PCA" },
       { href: "/loadings", label: "Loadings Lab" },
       { href: "/risk", label: "Risk Lens" },
@@ -86,6 +89,16 @@ function Chrome({ pathname, children }: { pathname: string; children: React.Reac
           </Link>
 
           <nav aria-label="Sections" className="flex gap-1 overflow-x-auto no-scrollbar">
+            <Link
+              href={HOME.href}
+              aria-current={pathname === HOME.href ? "page" : undefined}
+              className={`whitespace-nowrap rounded px-2.5 py-1 text-[12px] font-medium transition
+                ${pathname === HOME.href
+                  ? "bg-navy text-white"
+                  : "text-muted hover:bg-lineSoft hover:text-navy"}`}
+            >
+              {HOME.label}
+            </Link>
             {GROUPS.map((g) => {
               const active = g === current;
               return (

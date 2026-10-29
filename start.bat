@@ -311,9 +311,11 @@ start "" "%OPEN_URL%"
 
 echo   Opened %OPEN_URL%
 echo.
-rem The four sections of the top navigation, each at the page it opens on.
-echo   Sections   Data                     %OPEN_URL%/raw
-echo              Factor Risk              %OPEN_URL%/
+rem The landing page and the four sections of the top navigation, each at the
+rem page it opens on.
+echo   Sections   Overview                 %OPEN_URL%/
+echo              Data                     %OPEN_URL%/health
+echo              Factor Risk              %OPEN_URL%/factors
 echo              Return Forecasts         %OPEN_URL%/returns
 echo              Portfolio Optimization   %OPEN_URL%/portfolio   (in development)
 echo.
