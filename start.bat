@@ -311,6 +311,12 @@ start "" "%OPEN_URL%"
 
 echo   Opened %OPEN_URL%
 echo.
+rem The four sections of the top navigation, each at the page it opens on.
+echo   Sections   Data                     %OPEN_URL%/raw
+echo              Factor Risk              %OPEN_URL%/
+echo              Return Forecasts         %OPEN_URL%/returns
+echo              Portfolio Optimization   %OPEN_URL%/portfolio   (in development)
+echo.
 echo   API docs   http://127.0.0.1:%API_PORT%/docs
 echo   Logs       the two minimised "Factor Terminal" windows
 echo   To stop    close those two windows
