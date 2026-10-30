@@ -190,8 +190,27 @@ def seed_level_series(cur: Any) -> int:
 # data transfers
 # ---------------------------------------------------------------------------
 
+# A copied row replaces only a row the warehouse wrote. ingest_yahoo and
+# ingest_fred refresh the same tables directly, and an incremental sync never
+# meets their rows - it starts past the watermark - but a full one did: on
+# 2026-10-29 it put warehouse values into every Yahoo row of 133 factor inputs
+# and left the 'yahoo' label on them, carrying the warehouse's adjusted-close
+# re-basings in under the wrong source; 75 returns no longer matched their prices.
+OWN_ROWS_ONLY = "WHERE {table}.source = EXCLUDED.source"
+
+
 def sync_returns(cur: Any, full: bool) -> int:
-    """fact_cross_asset -> fact_input_return, for instruments we actually mirror."""
+    """fact_cross_asset -> fact_input_return, for instruments we actually mirror.
+
+    For an instrument another ingest maintains, the warehouse supplies only the
+    history before that ingest's first row - the days Yahoo no longer serves,
+    ^EVZ before 2025-03-05. Past it a copied row is a splice. The same full sync
+    extended 129 Yahoo-maintained inputs from 2026-10-15 with warehouse rows, the
+    next ingest_yahoo re-fetched the last five as its own, and the boundary between
+    the two sources left 2026-10-22 without a return for all of them, which dropped
+    the session from the calendar. An incremental sync does the same whenever the
+    warehouse is ahead of the last Yahoo run.
+    """
     clause = "" if full else "AND (w.wm IS NULL OR f.date > w.wm)"
     join = "" if full else (
         "LEFT JOIN (SELECT instrument_id, max(date) AS wm FROM fact_input_return "
@@ -204,12 +223,16 @@ def sync_returns(cur: Any, full: bool) -> int:
                f.volume, f.currency, 'warehouse'
         FROM warehouse_sec.fact_cross_asset f
         JOIN ref_instrument i ON i.instrument_id = f.ticker
+        LEFT JOIN (SELECT instrument_id, min(date) AS first_other FROM fact_input_return
+                   WHERE source <> 'warehouse' GROUP BY 1) o ON o.instrument_id = f.ticker
         {join}
         WHERE i.source_table = 'fact_cross_asset' {clause}
+          AND (o.first_other IS NULL OR f.date < o.first_other)
         ON CONFLICT (instrument_id, date) DO UPDATE SET
             close = EXCLUDED.close, adj_close = EXCLUDED.adj_close,
             ret_simple = EXCLUDED.ret_simple, ret_log = EXCLUDED.ret_log,
             volume = EXCLUDED.volume, currency = EXCLUDED.currency
+        {OWN_ROWS_ONLY.format(table="fact_input_return")}
         """
     )
     return cur.rowcount
@@ -230,6 +253,7 @@ def sync_levels(cur: Any, full: bool) -> int:
         {join}
         WHERE m.value IS NOT NULL {clause}
         ON CONFLICT (series_id, date) DO UPDATE SET value = EXCLUDED.value
+        {OWN_ROWS_ONLY.format(table="fact_input_level")}
         """
     )
     return cur.rowcount
