@@ -788,6 +788,122 @@ export interface ExternalCma {
   values: Record<string, number>;
 }
 
+// --- relative value and timing --------------------------------------------
+
+/** One of a view's four signals. Which fields are set depends on the signal. */
+export interface RvSignal {
+  /** z-score clipped at ±3, positive when the signal favours the long leg. */
+  z: number | null;
+  how?: string | null;
+  /** value and carry: the raw spread today, its history's mean, the latest
+   *  value's percentile in that history, and the span. */
+  raw?: number | null; mean?: number | null; pct?: number | null;
+  n?: number | null; from?: string | null; as_of?: string | null;
+  label?: string | null; unit?: string | null; licence?: string | null;
+  /** trend: the 12-1 month return, its volatility, the 10-month-average filter. */
+  ret?: number | null; vol?: number | null; above_sma?: boolean | null;
+  /** macro: the pair's signs in the growth x inflation quadrants. */
+  s_growth?: number; s_inflation?: number;
+}
+
+export type RvSignalKey = "value" | "carry" | "trend" | "macro";
+
+export interface RvView {
+  id: string; label: string; long: string; short: string | null; hedge: string | null;
+  note: string;
+  signals: Record<RvSignalKey, RvSignal | null>;
+  score: number | null;
+  weights_used: Record<string, number>;
+  stance: string;
+  previous: number | null;
+  change: number | null;
+  /** False when the month's change in the score is inside the no-trade band. */
+  act: boolean;
+  weight_short: number;
+  pair_vol: number | null;
+  pair_from: string | null;
+  history: { month: string; score: number }[];
+  anchor: { long_excess: number; short_excess: number | null; pair_excess: number;
+            per_risk: number | null } | null;
+  tilt: number | null;
+  te: number | null;
+  detail?: Record<string, number | string | null>;
+}
+
+export interface RvClassRow {
+  fund: string; key: string; label: string;
+  expected: number; excess: number | null; vol: number | null; per_risk: number | null;
+  trend_z: number | null; ret_12_1: number | null; above_sma: boolean | null;
+  source: string; rank: number;
+}
+
+export interface RvCreditLeg {
+  spread: number; pd: number; lgd: number; spread_duration: number;
+  el: number; excess: number; pd_star: number | null; cushion: number | null; cover: number | null;
+}
+
+export interface RvSummaryContent {
+  headline: string;
+  views: { id: string; read: string }[];
+  classes: string;
+  timing: string;
+  risks: string[];
+  caveats: string[];
+}
+
+export interface RvSummary {
+  summary_id: number; run_id: string; created_at: string; model: string;
+  content: RvSummaryContent;
+  attempts: number;
+  usage: { prompt_tokens: number | null; cached_tokens: number | null;
+           completion_tokens: number | null };
+}
+
+export interface RvMacroLeg { z: number | null; raw: number | null; as_of: string | null; how: string }
+
+export interface RelativeValueRun {
+  run_id?: string;
+  created_at?: string;
+  as_of: string;
+  data_as_of: string;
+  forecast_run: { run_id: string; as_of: string; created_at: string; cash: number } | null;
+  assumptions: Record<string, any>;
+  macro: {
+    growth: RvMacroLeg; inflation: RvMacroLeg; regime: string | null;
+    vix: { level: number; z: number; pct: number; as_of: string } | null;
+  };
+  views: RvView[];
+  sizing: { te_total: number; te_unscaled: number; scale: number; te_budget: number };
+  classes: RvClassRow[];
+  credit: {
+    as_of: string; hy_oas: number; ig_oas: number; ccc_oas: number | null; bbb_oas: number | null;
+    hy_oas_change_3m: number | null; oas_from: string;
+    hy: RvCreditLeg; hy_low_pd: RvCreditLeg; ig: RvCreditLeg;
+  } | null;
+  caveats: string[];
+  licences: DataLicence[];
+  summary: RvSummary | null;
+}
+
+interface Job<T> {
+  job_id: string;
+  status: "running" | "succeeded" | "failed";
+  elapsed: number;
+  messages: string[];
+  result: T | null;
+  error: string | null;
+}
+
+export type RvJob = Job<RelativeValueRun>;
+export type RvSummaryJob = Job<RvSummary | { unverified: string[] }>;
+
+export interface RvDefaults {
+  assumptions: Record<string, any>;
+  views: { id: string; label: string; long: string; short: string | null; hedge: string | null;
+           s_growth: number; s_inflation: number; note: string }[];
+  summary: { configured: boolean; model: string };
+}
+
 // --- endpoints -----------------------------------------------------------
 
 export const api = {
@@ -889,6 +1005,17 @@ export const api = {
     post<{ stored: number; complete: boolean }>("/api/returns/cma-external", body),
   returnsExternalRemove: (source: string, as_of: string) =>
     post<{ removed: boolean }>("/api/returns/cma-external/remove", { source, as_of }),
+
+  rvDefaults: () => get<RvDefaults>("/api/returns/relative/defaults"),
+  rvLatest: () => get<RelativeValueRun | null>("/api/returns/relative/latest"),
+  rvRun: (assumptions: Record<string, unknown> | null) =>
+    post<{ job_id: string }>("/api/returns/relative/run", { assumptions }),
+  rvGet: (jobId: string) => get<RvJob>(`/api/returns/relative/run/${jobId}`),
+  /** A stored summary of the same data comes back at once; otherwise a job to poll. */
+  rvSummarise: (runId: string | null, force = false) =>
+    post<{ summary?: RvSummary; job_id?: string }>("/api/returns/relative/summary",
+                                                   { run_id: runId, force }),
+  rvSummaryGet: (jobId: string) => get<RvSummaryJob>(`/api/returns/relative/summary/${jobId}`),
   agentCandidate: (runId: string, candidateId: string) =>
     get<AgentCandidateDetail>(`/api/agent/run/${runId}/candidate/${candidateId}`),
 

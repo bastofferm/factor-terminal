@@ -47,7 +47,10 @@ const GROUPS: Group[] = [
   },
   {
     label: "Return Forecasts",
-    pages: [{ href: "/returns", label: "Ten-Year Forecasts" }],
+    pages: [
+      { href: "/returns", label: "Ten-Year Forecasts" },
+      { href: "/returns/relative", label: "Relative Value & Timing" },
+    ],
   },
   {
     label: "Portfolio Optimization",
