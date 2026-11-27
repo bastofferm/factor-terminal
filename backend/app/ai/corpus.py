@@ -39,6 +39,7 @@ _CORE_MODULES: list[tuple[str, str]] = [
     ("backend.agent.evaluate", "How the model agent scores a candidate"),
     ("backend.core.portfolio", "Portfolio-level validation: does the risk aggregate?"),
     ("backend.core.distribution", "Density estimation for return distributions"),
+    ("backend.core.relative_value", "Relative value and timing signals"),
 ]
 
 # Written by hand because it has no natural home in the code: the shape of the

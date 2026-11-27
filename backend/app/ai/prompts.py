@@ -126,4 +126,9 @@ STARTERS: dict[str, list[str]] = {
         "Why does the forecast differ so much from the historical average?",
         "How should I read the gap in the perspectives matrix?",
     ],
+    "/returns/relative": [
+        "Which signal drives the strongest view, and do the others agree?",
+        "Where do value and trend disagree, and what does the band say?",
+        "How much of the credit view rests on the default-rate assumption?",
+    ],
 }

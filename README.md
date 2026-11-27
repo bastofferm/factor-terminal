@@ -200,7 +200,7 @@ computed on demand — and does not back-fill a restated history, which is what
 ## Layout
 
 ```
-sql/            19 idempotent migrations, applied in order, fail-fast
+sql/            20 idempotent migrations, applied in order, fail-fast
 backend/
   core/         pure numpy — no database access, so every statistic is testable
                 stationarity · transforms · orthogonalize · regression
@@ -445,6 +445,37 @@ The track record does not flatter the method:
 | US, the last decade as a forecast | significantly worse than the mean (DM t 4.0) |
 | Bonds, starting yield against the next decade | correlation 0.95 |
 | JST panel, dividend-yield reversion | lost to the mean, OOS R² −0.19 ex US |
+
+### Relative Value & Timing
+
+**Relative Value & Timing** (`/returns/relative`) sits beside the ten-year page at
+one to twelve months. Nine views - US equities vs TIPS, high yield vs investment
+grade, Europe, Japan and EM vs the US (Europe and Japan currency-hedged), TIPS vs
+nominal Treasuries, duration, commodities and gold - each get four signals, all
+z-scores clipped at ±3:
+
+- **value**: the valuation spread against the pair's own history, on an expanding
+  window so every month's z uses only what was known then;
+- **carry**: what the volatility-neutral pair earns if prices hold;
+- **trend**: the 12-1 month return over its volatility;
+- **macro**: growth and inflation momentum, signed by the pair's regime.
+
+A view's score is their weighted average. The score sets a stance and a tilt
+inside a tracking-error budget, and a no-trade band holds views whose score barely
+moved. The ten-year building blocks sit beside each view as the anchor.
+`python -m backend.pipeline.relative_value` scores and stores a run.
+
+**Summarise with DeepSeek** writes the page's summary from a stored run. The
+pipeline decides every stance; the model writes the prose. Every number in its
+answer is looked up in the data it was given, and a reply that quotes a figure the
+run does not contain is sent back once and then refused, never shown.
+
+The page names what the database cannot supply:
+- the OAS on FRED starts in May 2023, so the credit value signal uses fund yields;
+- there are no forward earnings;
+- euro-area and Japanese real yields are not observable;
+- macro rests on market proxies;
+- the signals' out-of-sample record is not yet measured.
 
 ---
 
